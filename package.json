@@ -1,5 +1,5 @@
 {
-  "name": "@bota/react-native-sdk",
+  "name": "@bota-dev/react-native-sdk",
   "version": "0.1.0",
   "description": "Bota React Native SDK for BLE device communication",
   "main": "lib/commonjs/index.js",
@@ -16,6 +16,7 @@
   ],
   "scripts": {
     "build": "bob build",
+    "prepublishOnly": "npm run build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
     "test": "jest",
@@ -31,17 +32,16 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/botalabs/bota.git",
-    "directory": "sdk/react-native"
+    "url": "https://github.com/bota-dev/react-native-sdk.git"
   },
-  "author": "Bota Labs",
+  "author": "Qi Zhang <qi@bota.dev>",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/botalabs/bota/issues"
+    "url": "https://github.com/bota-dev/react-native-sdk/issues"
   },
   "homepage": "https://docs.bota.dev",
   "publishConfig": {
-    "registry": "https://registry.npmjs.org/"
+    "registry": "https://npm.pkg.github.com"
   },
   "peerDependencies": {
     "react": ">=18.0.0",

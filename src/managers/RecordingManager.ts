@@ -191,7 +191,7 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
       });
 
       // Wait for upload to complete
-      yield* this.waitForUpload(task.id, audioData.length);
+      await this.waitForUpload(task.id);
 
       // Stage: Completing - Confirm sync to device
       yield {
@@ -239,10 +239,7 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
   /**
    * Wait for an upload task to complete
    */
-  private async *waitForUpload(
-    taskId: string,
-    _totalBytes: number
-  ): AsyncGenerator<SyncProgress> {
+  private async waitForUpload(taskId: string): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       const checkTask = () => {
         const task = this.storage.getUploadTask(taskId);

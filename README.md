@@ -1,13 +1,13 @@
-# @bota/react-native-sdk
+# @bota-dev/react-native-sdk
 
 Official React Native SDK for Bota wearable devices.
 
 ## Installation
 
 ```bash
-npm install @bota/react-native-sdk react-native-ble-plx
+npm install @bota-dev/react-native-sdk react-native-ble-plx
 # or
-yarn add @bota/react-native-sdk react-native-ble-plx
+yarn add @bota-dev/react-native-sdk react-native-ble-plx
 ```
 
 ### iOS Setup
@@ -44,7 +44,7 @@ cd ios && pod install
 ## Quick Start
 
 ```typescript
-import { BotaClient } from '@bota/react-native-sdk';
+import { BotaClient } from '@bota-dev/react-native-sdk';
 
 // Initialize SDK
 await BotaClient.configure({

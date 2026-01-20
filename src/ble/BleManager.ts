@@ -13,7 +13,7 @@ import { Buffer } from 'buffer';
 import EventEmitter from 'eventemitter3';
 
 import {
-  DEVICE_NAME_PREFIX,
+  // DEVICE_NAME_PREFIX, // TODO: Re-enable after debugging
   DEFAULT_MTU,
   MAX_MTU,
   CONNECTION_TIMEOUT,
@@ -171,9 +171,19 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
           return;
         }
 
-        if (!device || !device.name?.startsWith(DEVICE_NAME_PREFIX)) {
+        // Log all devices for debugging
+        if (device?.name) {
+          log.info('BLE device found', { name: device.name, id: device.id, rssi: device.rssi });
+        }
+
+        // For now, show all devices with a name (comment out Bota filter for debugging)
+        if (!device || !device.name) {
           return;
         }
+        // TODO: Re-enable this filter after debugging
+        // if (!device.name.startsWith(DEVICE_NAME_PREFIX)) {
+        //   return;
+        // }
 
         // Parse device information from advertisement
         const discovered = this.parseDiscoveredDevice(device);

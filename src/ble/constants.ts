@@ -102,6 +102,20 @@ export const ACK_TYPE_ABORT = 0x12;
 // Device command values
 export const DEVICE_CMD_ENTER_DFU = 0x03;
 
+// Recording control opcodes (for remote start/stop)
+export const RECORDING_CMD_LOCAL_START = 0x01;
+export const RECORDING_CMD_LOCAL_STOP = 0x02;
+export const RECORDING_CMD_GRANT_START = 0x10;
+export const RECORDING_CMD_GRANT_STOP = 0x11;
+
+// Recording control response codes
+export const RECORDING_RESULT_SUCCESS = 0x00;
+export const RECORDING_RESULT_ERROR = 0x01;
+export const RECORDING_RESULT_ALREADY_RECORDING = 0x02;
+export const RECORDING_RESULT_NOT_RECORDING = 0x03;
+export const RECORDING_RESULT_INVALID_GRANT = 0x04;
+export const RECORDING_RESULT_GRANT_EXPIRED = 0x05;
+
 // Device state values (from status)
 export const DEVICE_STATE_IDLE = 0x00;
 export const DEVICE_STATE_RECORDING = 0x01;

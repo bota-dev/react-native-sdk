@@ -162,3 +162,96 @@ export interface ProvisioningResult {
   success: boolean;
   error?: 'invalid_token' | 'storage_error' | 'chunk_error' | 'unknown';
 }
+
+// ============================================================================
+// Remote Recording Control Types
+// ============================================================================
+
+/**
+ * Recording command type
+ */
+export type RecordingCommandType = 'start_recording' | 'stop_recording';
+
+/**
+ * Recording command status
+ */
+export type RecordingCommandStatus =
+  | 'pending'
+  | 'delivered'
+  | 'executed'
+  | 'failed'
+  | 'expired'
+  | 'cancelled';
+
+/**
+ * Options for starting recording remotely
+ */
+export interface StartRecordingOptions {
+  /** Maximum recording duration in seconds (auto-stop) */
+  maxDurationSec?: number;
+  /** Metadata to attach to the recording */
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Options for stopping recording remotely
+ */
+export interface StopRecordingOptions {
+  /** Whether to trigger immediate upload after stopping */
+  uploadImmediately?: boolean;
+}
+
+/**
+ * Recording command result
+ */
+export interface RecordingCommandResult {
+  /** Command ID from backend */
+  commandId: string;
+  /** Recording ID (for start_recording) */
+  recordingId?: string;
+  /** When recording started */
+  startedAt?: Date;
+  /** When recording stopped */
+  stoppedAt?: Date;
+  /** Recording duration in seconds */
+  durationSeconds?: number;
+}
+
+/**
+ * Recording command error
+ */
+export interface RecordingCommandError {
+  code: string;
+  message: string;
+}
+
+/**
+ * Full recording command response
+ */
+export interface RecordingCommand {
+  id: string;
+  deviceId: string;
+  type: RecordingCommandType;
+  status: RecordingCommandStatus;
+  grantToken: string;
+  result?: RecordingCommandResult;
+  error?: RecordingCommandError;
+  expiresAt?: Date;
+  createdAt: Date;
+}
+
+/**
+ * Current recording state of the device
+ */
+export interface RecordingState {
+  /** Whether device is currently recording */
+  active: boolean;
+  /** Current recording ID (if recording) */
+  recordingId?: string;
+  /** When recording started */
+  startedAt?: Date;
+  /** Duration in seconds (updated periodically) */
+  durationSeconds?: number;
+  /** Who initiated the recording */
+  initiatedBy?: 'local' | 'remote';
+}

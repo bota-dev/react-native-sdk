@@ -19,6 +19,8 @@ import {
   CHAR_API_ENDPOINT,
   CHAR_PROVISIONING_RESULT,
   CHAR_DEVICE_STATUS,
+  CHAR_RECORDING_CONTROL,
+  CHAR_RECORDING_STATUS,
   CHAR_TIME_SYNC,
   API_ENDPOINT_PRODUCTION,
   API_ENDPOINT_SANDBOX,
@@ -27,6 +29,13 @@ import {
   PROVISIONING_STORAGE_ERROR,
   PROVISIONING_CHUNK_ERROR,
   OPERATION_TIMEOUT,
+  RECORDING_CMD_GRANT_START,
+  RECORDING_CMD_GRANT_STOP,
+  RECORDING_RESULT_SUCCESS,
+  RECORDING_RESULT_ALREADY_RECORDING,
+  RECORDING_RESULT_NOT_RECORDING,
+  RECORDING_RESULT_INVALID_GRANT,
+  RECORDING_RESULT_GRANT_EXPIRED,
 } from '../ble/constants';
 import {
   parsePairingState,
@@ -40,6 +49,10 @@ import type {
   ScanOptions,
   Environment,
   ProvisioningResult,
+  RecordingState,
+  // RecordingCommand, // TODO: Re-enable when used
+  StartRecordingOptions,
+  StopRecordingOptions,
 } from '../models/Device';
 import type { DeviceManagerEvents } from '../models/Status';
 import {
@@ -524,6 +537,243 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         }
       );
     });
+  }
+
+  // ============================================================================
+  // Remote Recording Control (MVP)
+  // ============================================================================
+
+  /**
+   * Request to start recording on a device remotely.
+   * This writes a signed grant token to the device via BLE.
+   *
+   * @param device - Connected device
+   * @param grantToken - Signed JWT grant token from backend
+   * @param _options - Optional recording options (for future use)
+   * @returns Recording command result
+   */
+  async requestStartRecording(
+    device: ConnectedDevice,
+    grantToken: string,
+    _options?: StartRecordingOptions
+  ): Promise<{ success: boolean; error?: string }> {
+    log.info('Requesting start recording', { deviceId: device.id });
+
+    if (!this.isConnected(device.id)) {
+      throw DeviceError.notConnected(device.id);
+    }
+
+    try {
+      // Create payload: [opcode, grant_token_bytes]
+      const tokenBuffer = Buffer.from(grantToken, 'utf8');
+      const payload = Buffer.alloc(1 + tokenBuffer.length);
+      payload.writeUInt8(RECORDING_CMD_GRANT_START, 0);
+      tokenBuffer.copy(payload, 1);
+
+      // Set up response listener before writing
+      const resultPromise = this.waitForRecordingResult(device.id);
+
+      // Write to recording control characteristic
+      await this.bleManager.writeCharacteristic(
+        device.id,
+        SERVICE_BOTA_CONTROL,
+        CHAR_RECORDING_CONTROL,
+        payload
+      );
+
+      // Wait for device response
+      const result = await resultPromise;
+
+      log.info('Start recording result', { deviceId: device.id, result });
+
+      return result;
+    } catch (error) {
+      log.error('Failed to start recording', error as Error, { deviceId: device.id });
+      throw error;
+    }
+  }
+
+  /**
+   * Request to stop recording on a device remotely.
+   * This writes a signed grant token to the device via BLE.
+   *
+   * @param device - Connected device
+   * @param grantToken - Signed JWT grant token from backend
+   * @param _options - Optional stop options (for future use)
+   * @returns Recording command result
+   */
+  async requestStopRecording(
+    device: ConnectedDevice,
+    grantToken: string,
+    _options?: StopRecordingOptions
+  ): Promise<{ success: boolean; error?: string }> {
+    log.info('Requesting stop recording', { deviceId: device.id });
+
+    if (!this.isConnected(device.id)) {
+      throw DeviceError.notConnected(device.id);
+    }
+
+    try {
+      // Create payload: [opcode, grant_token_bytes]
+      const tokenBuffer = Buffer.from(grantToken, 'utf8');
+      const payload = Buffer.alloc(1 + tokenBuffer.length);
+      payload.writeUInt8(RECORDING_CMD_GRANT_STOP, 0);
+      tokenBuffer.copy(payload, 1);
+
+      // Set up response listener before writing
+      const resultPromise = this.waitForRecordingResult(device.id);
+
+      // Write to recording control characteristic
+      await this.bleManager.writeCharacteristic(
+        device.id,
+        SERVICE_BOTA_CONTROL,
+        CHAR_RECORDING_CONTROL,
+        payload
+      );
+
+      // Wait for device response
+      const result = await resultPromise;
+
+      log.info('Stop recording result', { deviceId: device.id, result });
+
+      return result;
+    } catch (error) {
+      log.error('Failed to stop recording', error as Error, { deviceId: device.id });
+      throw error;
+    }
+  }
+
+  /**
+   * Get current recording state from device
+   */
+  async getRecordingState(device: ConnectedDevice): Promise<RecordingState> {
+    if (!this.isConnected(device.id)) {
+      throw DeviceError.notConnected(device.id);
+    }
+
+    const data = await this.bleManager.readCharacteristic(
+      device.id,
+      SERVICE_BOTA_CONTROL,
+      CHAR_RECORDING_STATUS
+    );
+
+    return this.parseRecordingState(data);
+  }
+
+  /**
+   * Subscribe to recording state changes
+   */
+  subscribeToRecordingState(
+    device: ConnectedDevice,
+    callback: (state: RecordingState) => void
+  ): () => void {
+    if (!this.isConnected(device.id)) {
+      throw DeviceError.notConnected(device.id);
+    }
+
+    const subscription = this.bleManager.subscribeToCharacteristic(
+      device.id,
+      SERVICE_BOTA_CONTROL,
+      CHAR_RECORDING_STATUS,
+      (data) => {
+        try {
+          const state = this.parseRecordingState(data);
+          callback(state);
+        } catch (error) {
+          log.error('Failed to parse recording state', error as Error);
+        }
+      },
+      (error) => {
+        log.error('Recording state subscription error', error);
+      }
+    );
+
+    return () => {
+      subscription.remove();
+    };
+  }
+
+  /**
+   * Wait for recording control result from device
+   */
+  private waitForRecordingResult(
+    deviceId: string
+  ): Promise<{ success: boolean; error?: string }> {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        subscription.remove();
+        resolve({ success: false, error: 'timeout' });
+      }, OPERATION_TIMEOUT);
+
+      const subscription = this.bleManager.subscribeToCharacteristic(
+        deviceId,
+        SERVICE_BOTA_CONTROL,
+        CHAR_RECORDING_STATUS,
+        (data) => {
+          clearTimeout(timeout);
+          subscription.remove();
+
+          if (data.length < 1) {
+            resolve({ success: false, error: 'invalid_response' });
+            return;
+          }
+
+          // Parse response: [state, timestamp(4), result_code, source]
+          const resultCode = data.length >= 6 ? data[5] : data[0];
+
+          switch (resultCode) {
+            case RECORDING_RESULT_SUCCESS:
+              resolve({ success: true });
+              break;
+            case RECORDING_RESULT_ALREADY_RECORDING:
+              resolve({ success: false, error: 'already_recording' });
+              break;
+            case RECORDING_RESULT_NOT_RECORDING:
+              resolve({ success: false, error: 'not_recording' });
+              break;
+            case RECORDING_RESULT_INVALID_GRANT:
+              resolve({ success: false, error: 'invalid_grant' });
+              break;
+            case RECORDING_RESULT_GRANT_EXPIRED:
+              resolve({ success: false, error: 'grant_expired' });
+              break;
+            default:
+              // State 0x01 = recording, 0x00 = idle
+              if (data[0] === 0x01 || data[0] === 0x00) {
+                resolve({ success: true });
+              } else {
+                resolve({ success: false, error: 'unknown_error' });
+              }
+          }
+        },
+        (error) => {
+          clearTimeout(timeout);
+          subscription.remove();
+          reject(new DeviceError(
+            `Recording control error: ${error.message}`,
+            'RECORDING_CONTROL_ERROR',
+            deviceId,
+            error
+          ));
+        }
+      );
+    });
+  }
+
+  /**
+   * Parse recording state from BLE data
+   */
+  private parseRecordingState(data: Buffer): RecordingState {
+    // Format: [state, timestamp(4), result_code, source]
+    const state = data.length >= 1 ? data[0] : 0;
+    const timestamp = data.length >= 5 ? data.readUInt32LE(1) : 0;
+    const source = data.length >= 7 ? data[6] : 0;
+
+    return {
+      active: state === 0x01,
+      startedAt: timestamp > 0 ? new Date(timestamp * 1000) : undefined,
+      initiatedBy: source === 0x01 ? 'remote' : 'local',
+    };
   }
 
   /**

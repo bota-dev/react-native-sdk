@@ -188,6 +188,7 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
         uploadUrl: uploadInfo.uploadUrl,
         uploadToken: uploadInfo.uploadToken,
         completeUrl: uploadInfo.completeUrl,
+        contentType: uploadInfo.contentType,
       });
 
       // Wait for upload to complete

@@ -61,6 +61,19 @@ react-native-sdk/
 - `dtok_` - Device token (written to device during provisioning)
 - `up_` - Upload token (single-use, for S3 uploads)
 
+### Audio Formats
+
+The SDK supports multiple audio codecs from devices:
+
+| Codec | BLE Value | MIME Type |
+|-------|-----------|-----------|
+| `opus_16k` | 0x02 | `audio/opus` |
+| `opus_8k` | 0x03 | `audio/opus` |
+| `pcm_16k` | 0x00 | `audio/wav` |
+| `pcm_8k` | 0x01 | `audio/wav` |
+
+When uploading, the `UploadInfo.contentType` should match the device's codec. The SDK passes this to S3 via the `Content-Type` header.
+
 ## Common Tasks
 
 ### Build

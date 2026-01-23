@@ -71,6 +71,7 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
     uploadUrl: string;
     uploadToken: string;
     completeUrl: string;
+    contentType?: string;
   }): Promise<UploadTask> {
     const task: UploadTask = {
       id: generateTaskId(),
@@ -80,6 +81,7 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
       uploadUrl: params.uploadUrl,
       uploadToken: params.uploadToken,
       completeUrl: params.completeUrl,
+      contentType: params.contentType,
       status: 'pending',
       retryCount: 0,
       createdAt: new Date(),
@@ -242,6 +244,7 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
 
       // Upload to S3
       await this.uploader.upload(audioData, task.uploadUrl, {
+        contentType: task.contentType,
         onProgress: (progress) => {
           this.emit('uploadProgress', task.id, progress);
         },

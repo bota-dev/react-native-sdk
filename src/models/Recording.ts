@@ -38,6 +38,8 @@ export interface UploadInfo {
   completeUrl: string;
   /** Expiration time of the upload URL */
   expiresAt: Date;
+  /** Content type for S3 upload (e.g., 'audio/opus', 'audio/wav') */
+  contentType?: string;
 }
 
 /**
@@ -94,6 +96,8 @@ export interface UploadTask {
   uploadToken: string;
   /** Complete URL to call after upload */
   completeUrl: string;
+  /** Content type for S3 upload (e.g., 'audio/opus', 'audio/wav') */
+  contentType?: string;
   /** Current status */
   status: UploadTaskStatus;
   /** Number of retry attempts */

@@ -171,17 +171,20 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
           return;
         }
 
+        // Prioritize localName (from current advertisement) over name (iOS cached)
+        const deviceName = device?.localName || device?.name;
+
         // Log all devices for debugging
-        if (device?.name) {
-          log.info('BLE device found', { name: device.name, id: device.id, rssi: device.rssi });
+        if (deviceName) {
+          log.info('BLE device found', { name: deviceName, localName: device?.localName, cachedName: device?.name, id: device?.id, rssi: device?.rssi });
         }
 
         // For now, show all devices with a name (comment out Bota filter for debugging)
-        if (!device || !device.name) {
+        if (!device || !deviceName) {
           return;
         }
         // TODO: Re-enable this filter after debugging
-        // if (!device.name.startsWith(DEVICE_NAME_PREFIX)) {
+        // if (!deviceName.startsWith(DEVICE_NAME_PREFIX)) {
         //   return;
         // }
 
@@ -248,7 +251,11 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
    * Parse a discovered device from BLE advertisement data
    */
   private parseDiscoveredDevice(device: Device): DiscoveredDevice | null {
-    if (!device.name) {
+    // Prioritize localName (from current advertisement) over name (iOS cached)
+    // iOS caches device names, so localName is more accurate for renamed devices
+    const deviceName = device.localName || device.name;
+
+    if (!deviceName) {
       return null;
     }
 
@@ -274,18 +281,18 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
       }
     } else {
       // Infer device type from name
-      if (device.name.includes('Pin4G')) {
+      if (deviceName.includes('Pin4G')) {
         deviceType = 'bota_pin_4g';
-      } else if (device.name.includes('Note')) {
+      } else if (deviceName.includes('Note')) {
         deviceType = 'bota_note';
-      } else if (device.name.includes('Pin')) {
+      } else if (deviceName.includes('Pin')) {
         deviceType = 'bota_pin';
       }
     }
 
     return {
       id: device.id,
-      name: device.name,
+      name: deviceName,
       deviceType,
       firmwareVersion,
       pairingState,

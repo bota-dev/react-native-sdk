@@ -69,8 +69,8 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
     deviceId: string;
     localPath: string;
     uploadUrl: string;
-    uploadToken: string;
-    completeUrl: string;
+    uploadToken?: string;
+    completeUrl?: string;
     contentType?: string;
   }): Promise<UploadTask> {
     const task: UploadTask = {
@@ -251,12 +251,19 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
         abortSignal: abortController.signal,
       });
 
-      // Notify completion
-      await this.uploader.notifyCompletion(
-        task.completeUrl,
-        task.recordingId,
-        task.uploadToken
-      );
+      // Notify completion (only if completeUrl and uploadToken are provided)
+      if (task.completeUrl && task.uploadToken) {
+        await this.uploader.notifyCompletion(
+          task.completeUrl,
+          task.recordingId,
+          task.uploadToken
+        );
+      } else {
+        log.debug('Skipping completion notification (custom completion flow)', {
+          taskId: task.id,
+          recordingId: task.recordingId,
+        });
+      }
 
       // Mark as completed
       await this.storage.updateTaskStatus(task.id, 'completed');

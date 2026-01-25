@@ -30,14 +30,14 @@ export interface DeviceRecording {
 export interface UploadInfo {
   /** Pre-signed S3 URL for upload */
   uploadUrl: string;
-  /** Upload token (up_*) for verification */
-  uploadToken: string;
   /** Recording ID assigned by Bota API (rec_*) */
   recordingId: string;
-  /** URL to call when upload is complete */
-  completeUrl: string;
+  /** Upload token (up_*) for verification - optional if using custom completion flow */
+  uploadToken?: string;
+  /** URL to call when upload is complete - optional if using custom completion flow */
+  completeUrl?: string;
   /** Expiration time of the upload URL */
-  expiresAt: Date;
+  expiresAt?: Date;
   /** Content type for S3 upload (e.g., 'audio/opus', 'audio/wav') */
   contentType?: string;
 }
@@ -92,10 +92,10 @@ export interface UploadTask {
   localPath: string;
   /** Pre-signed S3 upload URL */
   uploadUrl: string;
-  /** Upload token */
-  uploadToken: string;
-  /** Complete URL to call after upload */
-  completeUrl: string;
+  /** Upload token - optional if using custom completion flow */
+  uploadToken?: string;
+  /** Complete URL to call after upload - optional if using custom completion flow */
+  completeUrl?: string;
   /** Content type for S3 upload (e.g., 'audio/opus', 'audio/wav') */
   contentType?: string;
   /** Current status */

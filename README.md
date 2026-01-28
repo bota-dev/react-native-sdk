@@ -68,10 +68,17 @@ const connectedDevice = await BotaClient.devices.connect(discoveredDevice);
 // Provision with token from your backend
 await BotaClient.devices.provision(connectedDevice, deviceToken, 'production');
 
-// List recordings
+// Check device capabilities
+const status = await BotaClient.devices.getStatus(connectedDevice);
+if (status.capabilities & CAP_WIFI_UPLOAD) {
+  // Device supports WiFi Upload - optionally configure WiFi
+  await BotaClient.devices.configureWiFi(connectedDevice, ssid, password, grant);
+}
+
+// List recordings (Bluetooth Sync)
 const recordings = await BotaClient.recordings.listRecordings(connectedDevice);
 
-// Sync a recording
+// Sync a recording via Bluetooth
 for await (const progress of BotaClient.recordings.syncRecording(
   connectedDevice,
   recording,
@@ -79,6 +86,8 @@ for await (const progress of BotaClient.recordings.syncRecording(
 )) {
   console.log(`${progress.stage}: ${progress.progress * 100}%`);
 }
+
+// Note: WiFi/Cellular devices can upload directly without app involvement
 ```
 
 ## API Reference
@@ -271,6 +280,21 @@ The SDK does not communicate directly with the Bota API. Your mobile app should:
 2. Call your backend to register devices and get device tokens
 3. Call your backend to create recordings and get upload URLs
 4. The SDK uploads directly to S3 using the pre-signed URLs
+
+### Upload Methods
+
+**Bluetooth Sync** (current implementation):
+
+- App transfers audio from device via BLE
+- App uploads to S3 using pre-signed URLs from your backend
+- App notifies backend when upload completes
+
+**WiFi Upload / Cellular Upload** (future):
+
+- Device uploads directly to Bota backend using device token (dtok_*)
+- No app involvement in audio transfer
+- App can optionally configure WiFi credentials for WiFi-capable devices
+- Backend sends webhooks to notify your app when processing completes
 
 See the [Bota API documentation](https://docs.bota.dev) for backend integration details.
 

@@ -92,7 +92,7 @@ export function encryptWiFiCredentials(
     authTagLength: 16,
   });
   // Use different AAD to prevent nonce reuse issues
-  passwordCipher.setAAD(Buffer.from('password'));
+  passwordCipher.setAAD(Buffer.from('password'), { plaintextLength: Buffer.byteLength(password, 'utf-8') });
   const passwordEncrypted = Buffer.concat([
     passwordCipher.update(password, 'utf-8'),
     passwordCipher.final(),
@@ -138,7 +138,7 @@ export function decryptWiFiCredential(
   decipher.setAuthTag(authTag);
 
   if (aad) {
-    decipher.setAAD(Buffer.from(aad));
+    decipher.setAAD(Buffer.from(aad), { plaintextLength: encrypted.length });
   }
 
   const decrypted = Buffer.concat([

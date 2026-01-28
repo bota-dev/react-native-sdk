@@ -877,7 +877,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
       return result;
     } catch (error) {
-      log.error('WiFi configuration error', error);
+      log.error('WiFi configuration error', error instanceof Error ? error : undefined);
       throw new DeviceError(
         `Failed to configure WiFi: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'WIFI_CONFIG_ERROR',
@@ -919,7 +919,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
       return status;
     } catch (error) {
-      log.error('Failed to read WiFi status', error);
+      log.error('Failed to read WiFi status', error instanceof Error ? error : undefined);
       throw new DeviceError(
         `Failed to read WiFi status: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'WIFI_STATUS_ERROR',
@@ -966,7 +966,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
           const status = parseWiFiStatusInfo(data);
           callback(status);
         } catch (error) {
-          log.error('Failed to parse WiFi status', error);
+          log.error('Failed to parse WiFi status', error instanceof Error ? error : undefined);
         }
       },
       (error) => {
@@ -1003,7 +1003,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
             resolve(result);
           } catch (error) {
             // Ignore parse errors, wait for valid result
-            log.debug('Ignoring invalid WiFi config result', error);
+            log.debug('Ignoring invalid WiFi config result', { error: error instanceof Error ? error.message : String(error) });
           }
         },
         (error) => {

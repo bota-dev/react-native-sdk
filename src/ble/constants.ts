@@ -13,6 +13,7 @@ export const SERVICE_BOTA_AUDIO = 'B07A0001-0000-1000-8000-00805F9B34FB';
 export const SERVICE_BOTA_CONTROL = 'B07A0002-0000-1000-8000-00805F9B34FB';
 export const SERVICE_BOTA_PROVISIONING = 'B07A0003-0000-1000-8000-00805F9B34FB';
 export const SERVICE_BOTA_STORAGE = 'B07A0004-0000-1000-8000-00805F9B34FB';
+export const SERVICE_BOTA_WIFI_CONFIG = 'B07A0006-0000-1000-8000-00805F9B34FB';
 
 // Device Information Service Characteristics (0x180A)
 export const CHAR_MANUFACTURER_NAME = '2A29';
@@ -50,6 +51,11 @@ export const CHAR_RECORDING_TRANSFER = 'B07A0004-0003-1000-8000-00805F9B34FB';
 export const CHAR_TRANSFER_CONTROL = 'B07A0004-0004-1000-8000-00805F9B34FB';
 export const CHAR_TRANSFER_STATUS = 'B07A0004-0005-1000-8000-00805F9B34FB';
 
+// Bota WiFi Config Service Characteristics (B07A0006)
+export const CHAR_WIFI_GRANT = 'B07A0006-0001-1000-8000-00805F9B34FB';
+export const CHAR_WIFI_CREDENTIAL = 'B07A0006-0002-1000-8000-00805F9B34FB';
+export const CHAR_WIFI_STATUS = 'B07A0006-0003-1000-8000-00805F9B34FB';
+
 // Device name prefixes for scanning
 export const DEVICE_NAME_PREFIX = 'Bota-';
 export const DEVICE_NAME_PREFIX_PIN = 'Bota-Pin-';
@@ -68,17 +74,37 @@ export const DEVICE_TYPE_PIN = 0x01;
 export const DEVICE_TYPE_PIN_4G = 0x02;
 export const DEVICE_TYPE_NOTE = 0x03;
 
+// Device capability flags (bitmask)
+export const CAP_BLE_SYNC = 0x01;
+export const CAP_WIFI_UPLOAD = 0x02;
+export const CAP_LTE_UPLOAD = 0x04;
+export const CAP_REMOTE_RECORD = 0x08;
+
 // Pairing state values
 export const PAIRING_STATE_UNPAIRED = 0x00;
 export const PAIRING_STATE_PAIRING = 0x01;
 export const PAIRING_STATE_PAIRED = 0x02;
 export const PAIRING_STATE_ERROR = 0x03;
 
+// WiFi status values
+export const WIFI_STATUS_IDLE = 0x00;
+export const WIFI_STATUS_CONNECTING = 0x01;
+export const WIFI_STATUS_CONNECTED = 0x02;
+export const WIFI_STATUS_FAILED = 0x03;
+export const WIFI_STATUS_DISCONNECTED = 0x04;
+
 // Provisioning result codes
 export const PROVISIONING_SUCCESS = 0x00;
 export const PROVISIONING_INVALID_TOKEN = 0x01;
 export const PROVISIONING_STORAGE_ERROR = 0x02;
 export const PROVISIONING_CHUNK_ERROR = 0x03;
+
+// WiFi configuration result codes
+export const WIFI_CONFIG_SUCCESS = 0x00;
+export const WIFI_CONFIG_INVALID_GRANT = 0x01;
+export const WIFI_CONFIG_GRANT_EXPIRED = 0x02;
+export const WIFI_CONFIG_DECRYPTION_ERROR = 0x03;
+export const WIFI_CONFIG_STORAGE_ERROR = 0x04;
 
 // API endpoint values
 export const API_ENDPOINT_PRODUCTION = 0x00;

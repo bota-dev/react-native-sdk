@@ -11,6 +11,10 @@ import type {
   DeviceStatus,
   DeviceFlags,
   StorageInfo,
+  DeviceCapabilities,
+  WiFiStatus,
+  WiFiStatusInfo,
+  WiFiConfigResult,
 } from '../models/Device';
 import type { DeviceRecording, AudioCodec, TransferPacket } from '../models/Recording';
 import {
@@ -48,6 +52,20 @@ import {
   PACKET_TYPE_DATA,
   PACKET_TYPE_EOF,
   PACKET_TYPE_ERROR,
+  CAP_BLE_SYNC,
+  CAP_WIFI_UPLOAD,
+  CAP_LTE_UPLOAD,
+  CAP_REMOTE_RECORD,
+  WIFI_STATUS_IDLE,
+  WIFI_STATUS_CONNECTING,
+  WIFI_STATUS_CONNECTED,
+  WIFI_STATUS_FAILED,
+  WIFI_STATUS_DISCONNECTED,
+  WIFI_CONFIG_SUCCESS,
+  WIFI_CONFIG_INVALID_GRANT,
+  WIFI_CONFIG_GRANT_EXPIRED,
+  WIFI_CONFIG_DECRYPTION_ERROR,
+  WIFI_CONFIG_STORAGE_ERROR,
 } from './constants';
 
 /**
@@ -392,4 +410,117 @@ export function createTransferCommand(
   }
 
   return Buffer.from([cmdByte]);
+}
+
+// ============================================================================
+// WiFi Upload Configuration Parsers
+// ============================================================================
+
+/**
+ * Parse device capabilities from byte value
+ */
+export function parseDeviceCapabilities(byte: number): DeviceCapabilities {
+  return {
+    bleSync: (byte & CAP_BLE_SYNC) !== 0,
+    wifiUpload: (byte & CAP_WIFI_UPLOAD) !== 0,
+    lteUpload: (byte & CAP_LTE_UPLOAD) !== 0,
+    remoteRecord: (byte & CAP_REMOTE_RECORD) !== 0,
+  };
+}
+
+/**
+ * Parse WiFi status from byte value
+ */
+export function parseWiFiStatus(byte: number): WiFiStatus {
+  switch (byte) {
+    case WIFI_STATUS_IDLE:
+      return 'idle';
+    case WIFI_STATUS_CONNECTING:
+      return 'connecting';
+    case WIFI_STATUS_CONNECTED:
+      return 'connected';
+    case WIFI_STATUS_FAILED:
+      return 'failed';
+    case WIFI_STATUS_DISCONNECTED:
+      return 'disconnected';
+    default:
+      return 'idle';
+  }
+}
+
+/**
+ * Parse WiFi status information from characteristic value
+ *
+ * Format:
+ * Byte 0:      Status (0x00=idle, 0x01=connecting, 0x02=connected, 0x03=failed, 0x04=disconnected)
+ * Byte 1:      Signal strength (0-100)
+ * Byte 2:      SSID length
+ * Bytes 3-34:  SSID (max 32 bytes)
+ * Bytes 35+:   Error message (if status=failed)
+ */
+export function parseWiFiStatusInfo(data: Buffer): WiFiStatusInfo {
+  if (data.length < 3) {
+    throw new Error(`Invalid WiFi status data length: ${data.length}`);
+  }
+
+  const status = parseWiFiStatus(data.readUInt8(0));
+  const signalStrength = data.readUInt8(1);
+  const ssidLength = data.readUInt8(2);
+
+  let ssid: string | undefined;
+  let lastError: string | undefined;
+
+  if (ssidLength > 0 && data.length >= 3 + ssidLength) {
+    ssid = data.slice(3, 3 + ssidLength).toString('utf-8');
+  }
+
+  if (status === 'failed' && data.length > 3 + ssidLength) {
+    lastError = data.slice(3 + ssidLength).toString('utf-8');
+  }
+
+  return {
+    status,
+    signalStrength: signalStrength > 0 ? signalStrength : undefined,
+    ssid,
+    lastError,
+  };
+}
+
+/**
+ * Parse WiFi configuration result from characteristic value
+ *
+ * Format:
+ * Byte 0: Result code (0x00=success, 0x01=invalid_grant, 0x02=grant_expired, 0x03=decryption_error, 0x04=storage_error)
+ */
+export function parseWiFiConfigResult(data: Buffer): WiFiConfigResult {
+  if (data.length < 1) {
+    throw new Error(`Invalid WiFi config result length: ${data.length}`);
+  }
+
+  const code = data.readUInt8(0);
+
+  switch (code) {
+    case WIFI_CONFIG_SUCCESS:
+      return { success: true };
+    case WIFI_CONFIG_INVALID_GRANT:
+      return { success: false, error: 'invalid_grant' };
+    case WIFI_CONFIG_GRANT_EXPIRED:
+      return { success: false, error: 'grant_expired' };
+    case WIFI_CONFIG_DECRYPTION_ERROR:
+      return { success: false, error: 'decryption_error' };
+    case WIFI_CONFIG_STORAGE_ERROR:
+      return { success: false, error: 'storage_error' };
+    default:
+      return { success: false, error: 'unknown' };
+  }
+}
+
+/**
+ * Create WiFi grant submission packet
+ *
+ * Format:
+ * Bytes 0-N: Grant blob (JWT token as UTF-8 string)
+ */
+export function createWiFiGrantPacket(grantBlob: string): Buffer {
+  return Buffer.from(grantBlob, 'utf-8');
 }

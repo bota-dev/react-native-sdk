@@ -77,6 +77,20 @@ export interface DiscoveredDevice {
 }
 
 /**
+ * Device capabilities (bitmask)
+ */
+export interface DeviceCapabilities {
+  /** Supports Bluetooth Sync (BLE transfer) */
+  bleSync: boolean;
+  /** Supports WiFi Upload */
+  wifiUpload: boolean;
+  /** Supports Cellular Upload (4G/LTE) */
+  lteUpload: boolean;
+  /** Supports Remote Recording Control */
+  remoteRecord: boolean;
+}
+
+/**
  * Device after successful BLE connection
  */
 export interface ConnectedDevice {
@@ -96,6 +110,8 @@ export interface ConnectedDevice {
   connectionState: ConnectionState;
   /** Negotiated MTU size */
   mtu: number;
+  /** Device capabilities */
+  capabilities?: DeviceCapabilities;
 }
 
 /**
@@ -254,4 +270,64 @@ export interface RecordingState {
   durationSeconds?: number;
   /** Who initiated the recording */
   initiatedBy?: 'local' | 'remote';
+}
+
+// ============================================================================
+// WiFi Upload Configuration Types
+// ============================================================================
+
+/**
+ * WiFi security type
+ */
+export type WiFiSecurityType = 'WPA2' | 'WPA3' | 'WEP' | 'OPEN';
+
+/**
+ * WiFi connection status
+ */
+export type WiFiStatus = 'idle' | 'connecting' | 'connected' | 'failed' | 'disconnected';
+
+/**
+ * WiFi configuration grant from backend
+ */
+export interface WiFiConfigGrant {
+  /** Grant blob (JWT token) */
+  grantBlob: string;
+  /** Expiration timestamp */
+  expiresAt: Date;
+}
+
+/**
+ * WiFi credentials to configure
+ */
+export interface WiFiCredentials {
+  /** WiFi network SSID */
+  ssid: string;
+  /** WiFi password */
+  password: string;
+  /** Security type (default: WPA2) */
+  securityType?: WiFiSecurityType;
+}
+
+/**
+ * WiFi configuration result from device
+ */
+export interface WiFiConfigResult {
+  /** Whether configuration was successful */
+  success: boolean;
+  /** Error code if failed */
+  error?: 'invalid_grant' | 'grant_expired' | 'decryption_error' | 'storage_error' | 'unknown';
+}
+
+/**
+ * WiFi status information from device
+ */
+export interface WiFiStatusInfo {
+  /** Current WiFi connection status */
+  status: WiFiStatus;
+  /** Connected SSID (if connected) */
+  ssid?: string;
+  /** Signal strength (0-100) */
+  signalStrength?: number;
+  /** Last connection error (if failed) */
+  lastError?: string;
 }

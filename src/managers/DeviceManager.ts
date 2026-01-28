@@ -11,6 +11,7 @@ import {
   SERVICE_DEVICE_INFO,
   SERVICE_BOTA_PROVISIONING,
   SERVICE_BOTA_CONTROL,
+  SERVICE_BOTA_WIFI_CONFIG,
   CHAR_SERIAL_NUMBER,
   CHAR_FIRMWARE_REVISION,
   CHAR_HARDWARE_REVISION,
@@ -22,6 +23,9 @@ import {
   CHAR_RECORDING_CONTROL,
   CHAR_RECORDING_STATUS,
   CHAR_TIME_SYNC,
+  CHAR_WIFI_GRANT,
+  CHAR_WIFI_CREDENTIAL,
+  CHAR_WIFI_STATUS,
   API_ENDPOINT_PRODUCTION,
   API_ENDPOINT_SANDBOX,
   PROVISIONING_SUCCESS,
@@ -41,6 +45,9 @@ import {
   parsePairingState,
   parseDeviceStatus,
   createTimeSyncData,
+  parseWiFiStatusInfo,
+  parseWiFiConfigResult,
+  createWiFiGrantPacket,
 } from '../ble/parsers';
 import type {
   DiscoveredDevice,
@@ -53,6 +60,10 @@ import type {
   // RecordingCommand, // TODO: Re-enable when used
   StartRecordingOptions,
   StopRecordingOptions,
+  WiFiConfigGrant,
+  WiFiCredentials,
+  WiFiConfigResult,
+  WiFiStatusInfo,
 } from '../models/Device';
 import type { DeviceManagerEvents } from '../models/Status';
 import {
@@ -60,6 +71,11 @@ import {
   ProvisioningError,
 } from '../utils/errors';
 import { logger } from '../utils/logger';
+import {
+  deriveSessionKey,
+  encryptWiFiCredentials,
+  formatWiFiCredentialPacket,
+} from '../utils/crypto';
 
 const log = logger.tag('DeviceManager');
 
@@ -774,6 +790,234 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       startedAt: timestamp > 0 ? new Date(timestamp * 1000) : undefined,
       initiatedBy: source === 0x01 ? 'remote' : 'local',
     };
+  }
+
+  // ============================================================================
+  // WiFi Upload Configuration
+  // ============================================================================
+
+  /**
+   * Configure WiFi credentials on device via BLE.
+   * Requires a WiFi configuration grant from backend.
+   *
+   * @param deviceId - Connected device ID
+   * @param credentials - WiFi network credentials
+   * @param grant - WiFi config grant from backend
+   * @returns Configuration result
+   *
+   * @example
+   * ```typescript
+   * // 1. Get grant from backend
+   * const grant = await api.createWiFiConfigGrant(deviceId);
+   *
+   * // 2. Configure device via BLE
+   * const result = await deviceManager.configureWiFi(
+   *   deviceId,
+   *   { ssid: 'MyNetwork', password: 'password123', securityType: 'WPA2' },
+   *   grant
+   * );
+   *
+   * if (result.success) {
+   *   console.log('WiFi configured successfully');
+   * }
+   * ```
+   */
+  async configureWiFi(
+    deviceId: string,
+    credentials: WiFiCredentials,
+    grant: WiFiConfigGrant
+  ): Promise<WiFiConfigResult> {
+    log.info('Configuring WiFi on device', { deviceId, ssid: credentials.ssid });
+
+    try {
+      // Step 1: Submit WiFi config grant to device
+      const grantPacket = createWiFiGrantPacket(grant.grantBlob);
+      await this.bleManager.writeCharacteristic(
+        deviceId,
+        SERVICE_BOTA_WIFI_CONFIG,
+        CHAR_WIFI_GRANT,
+        grantPacket
+      );
+
+      log.debug('WiFi grant submitted');
+
+      // Step 2: Derive K_session from grant
+      const sessionKey = deriveSessionKey(grant.grantBlob);
+
+      // Step 3: Encrypt WiFi credentials with K_session
+      const encrypted = encryptWiFiCredentials(
+        credentials.ssid,
+        credentials.password,
+        sessionKey
+      );
+
+      // Step 4: Format credential packet for BLE transmission
+      const credentialPacket = formatWiFiCredentialPacket(encrypted);
+
+      log.debug('Sending encrypted WiFi credentials', {
+        packetSize: credentialPacket.length,
+      });
+
+      // Step 5: Write encrypted credentials to device
+      await this.bleManager.writeCharacteristic(
+        deviceId,
+        SERVICE_BOTA_WIFI_CONFIG,
+        CHAR_WIFI_CREDENTIAL,
+        credentialPacket
+      );
+
+      // Step 6: Wait for configuration result
+      const result = await this.waitForWiFiConfigResult(deviceId);
+
+      if (result.success) {
+        log.info('WiFi configuration successful', { deviceId });
+      } else {
+        log.warn('WiFi configuration failed', { deviceId, error: result.error });
+      }
+
+      return result;
+    } catch (error) {
+      log.error('WiFi configuration error', error);
+      throw new DeviceError(
+        `Failed to configure WiFi: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'WIFI_CONFIG_ERROR',
+        deviceId,
+        error instanceof Error ? error : undefined
+      );
+    }
+  }
+
+  /**
+   * Get WiFi connection status from device.
+   *
+   * @param deviceId - Connected device ID
+   * @returns WiFi status information
+   *
+   * @example
+   * ```typescript
+   * const status = await deviceManager.getWiFiStatus(deviceId);
+   * console.log('WiFi status:', status.status);
+   * if (status.status === 'connected') {
+   *   console.log('Connected to:', status.ssid);
+   *   console.log('Signal strength:', status.signalStrength);
+   * }
+   * ```
+   */
+  async getWiFiStatus(deviceId: string): Promise<WiFiStatusInfo> {
+    log.debug('Reading WiFi status', { deviceId });
+
+    try {
+      const data = await this.bleManager.readCharacteristic(
+        deviceId,
+        SERVICE_BOTA_WIFI_CONFIG,
+        CHAR_WIFI_STATUS
+      );
+
+      const status = parseWiFiStatusInfo(data);
+
+      log.debug('WiFi status', { deviceId, status: status.status, ssid: status.ssid });
+
+      return status;
+    } catch (error) {
+      log.error('Failed to read WiFi status', error);
+      throw new DeviceError(
+        `Failed to read WiFi status: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'WIFI_STATUS_ERROR',
+        deviceId,
+        error instanceof Error ? error : undefined
+      );
+    }
+  }
+
+  /**
+   * Subscribe to WiFi status updates from device.
+   *
+   * @param deviceId - Connected device ID
+   * @param callback - Callback function for status updates
+   * @returns Subscription object (call .remove() to unsubscribe)
+   *
+   * @example
+   * ```typescript
+   * const subscription = deviceManager.subscribeToWiFiStatus(deviceId, (status) => {
+   *   console.log('WiFi status update:', status.status);
+   *   if (status.status === 'connected') {
+   *     console.log('Connected to:', status.ssid);
+   *   } else if (status.status === 'failed') {
+   *     console.error('Connection failed:', status.lastError);
+   *   }
+   * });
+   *
+   * // Later: unsubscribe
+   * subscription.remove();
+   * ```
+   */
+  subscribeToWiFiStatus(
+    deviceId: string,
+    callback: (status: WiFiStatusInfo) => void
+  ): Subscription {
+    log.debug('Subscribing to WiFi status', { deviceId });
+
+    return this.bleManager.subscribeToCharacteristic(
+      deviceId,
+      SERVICE_BOTA_WIFI_CONFIG,
+      CHAR_WIFI_STATUS,
+      (data) => {
+        try {
+          const status = parseWiFiStatusInfo(data);
+          callback(status);
+        } catch (error) {
+          log.error('Failed to parse WiFi status', error);
+        }
+      },
+      (error) => {
+        log.error('WiFi status subscription error', error);
+      }
+    );
+  }
+
+  /**
+   * Wait for WiFi configuration result from device.
+   */
+  private waitForWiFiConfigResult(deviceId: string): Promise<WiFiConfigResult> {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        subscription.remove();
+        reject(new DeviceError(
+          'WiFi configuration timeout',
+          'WIFI_CONFIG_TIMEOUT',
+          deviceId
+        ));
+      }, OPERATION_TIMEOUT);
+
+      const subscription = this.bleManager.subscribeToCharacteristic(
+        deviceId,
+        SERVICE_BOTA_WIFI_CONFIG,
+        CHAR_WIFI_STATUS,
+        (data) => {
+          try {
+            // Configuration result comes via status updates
+            const result = parseWiFiConfigResult(data);
+
+            clearTimeout(timeout);
+            subscription.remove();
+            resolve(result);
+          } catch (error) {
+            // Ignore parse errors, wait for valid result
+            log.debug('Ignoring invalid WiFi config result', error);
+          }
+        },
+        (error) => {
+          clearTimeout(timeout);
+          subscription.remove();
+          reject(new DeviceError(
+            `WiFi config result error: ${error.message}`,
+            'WIFI_CONFIG_RESULT_ERROR',
+            deviceId,
+            error
+          ));
+        }
+      );
+    });
   }
 
   /**

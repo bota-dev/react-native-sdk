@@ -5,3 +5,4 @@
 export * from './errors';
 export { logger } from './logger';
 export * from './retry';
+export * from './crypto';

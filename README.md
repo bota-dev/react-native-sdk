@@ -72,6 +72,7 @@ await BotaClient.devices.provision(connectedDevice, deviceToken, 'production');
 const status = await BotaClient.devices.getStatus(connectedDevice);
 if (status.capabilities & CAP_WIFI_UPLOAD) {
   // Device supports WiFi Upload - optionally configure WiFi
+  // grant is a stateless JWT from your backend (POST /devices/{id}/wifi-config/grant)
   await BotaClient.devices.configureWiFi(connectedDevice, ssid, password, grant);
 }
 
@@ -289,11 +290,14 @@ The SDK does not communicate directly with the Bota API. Your mobile app should:
 - App uploads to S3 using pre-signed URLs from your backend
 - App notifies backend when upload completes
 
-**WiFi Upload / Cellular Upload** (future):
+**WiFi Upload / Cellular Upload** (available now):
 
 - Device uploads directly to Bota backend using device token (dtok_*)
 - No app involvement in audio transfer
-- App can optionally configure WiFi credentials for WiFi-capable devices
+- App can optionally configure WiFi credentials for WiFi-capable devices:
+  - Request a stateless WiFi config grant from your backend (POST /devices/{id}/wifi-config/grant)
+  - SDK encrypts credentials with grant session key and transmits via BLE
+  - Device stores credentials encrypted in Flash (backend never stores WiFi passwords)
 - Backend sends webhooks to notify your app when processing completes
 
 See the [Bota API documentation](https://docs.bota.dev) for backend integration details.

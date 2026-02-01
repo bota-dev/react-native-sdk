@@ -208,6 +208,12 @@ export class ProtocolHandler {
           try {
             resetTimeout();
 
+            // Skip ACK echo-back packets (App→Device only, may be echoed by BLE stack)
+            const firstByte = data.readUInt8(0);
+            if (firstByte >= 0x10 && firstByte <= 0x12) {
+              return;
+            }
+
             const packet = parseTransferPacket(data);
             await this.handleTransferPacket(
               deviceId,

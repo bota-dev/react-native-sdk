@@ -8,6 +8,7 @@
     }
   },
   "enabledPlugins": {
-    "bota-skills@bota-plugins": true
+    "bota-skills@bota-plugins": true,
+    "claude-mem@thedotmack": true
   }
 }

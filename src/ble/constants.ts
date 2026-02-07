@@ -126,6 +126,7 @@ export const ACK_TYPE_NACK = 0x11;
 export const ACK_TYPE_ABORT = 0x12;
 
 // Device command values
+export const DEVICE_CMD_FACTORY_RESET = 0x01;
 export const DEVICE_CMD_ENTER_DFU = 0x03;
 
 // Recording control opcodes (for remote start/stop)

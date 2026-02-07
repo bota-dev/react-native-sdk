@@ -40,6 +40,8 @@ import {
   RECORDING_RESULT_NOT_RECORDING,
   RECORDING_RESULT_INVALID_GRANT,
   RECORDING_RESULT_GRANT_EXPIRED,
+  CHAR_DEVICE_COMMAND,
+  DEVICE_CMD_FACTORY_RESET,
 } from '../ble/constants';
 import {
   parsePairingState,
@@ -245,6 +247,37 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     this.connectedDevices.delete(device.id);
 
     this.emit('connectionStateChanged', device.id, 'disconnected');
+  }
+
+  /**
+   * Send factory reset command to a device.
+   * Clears stored token and recordings on the device.
+   * Device returns to unpaired state after this.
+   */
+  async factoryReset(device: ConnectedDevice): Promise<void> {
+    log.info('Sending factory reset to device', { deviceId: device.id });
+
+    if (!this.isConnected(device.id)) {
+      throw DeviceError.notConnected(device.id);
+    }
+
+    const resultPromise = this.waitForProvisioningResult(device.id);
+
+    await this.bleManager.writeCharacteristic(
+      device.id,
+      SERVICE_BOTA_CONTROL,
+      CHAR_DEVICE_COMMAND,
+      Buffer.from([DEVICE_CMD_FACTORY_RESET])
+    );
+
+    try {
+      await resultPromise;
+    } catch {
+      // Timeout is acceptable — device may disconnect before responding
+      log.warn('Factory reset result not received (device may have disconnected)');
+    }
+
+    log.info('Factory reset sent', { deviceId: device.id });
   }
 
   /**

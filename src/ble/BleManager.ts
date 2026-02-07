@@ -341,7 +341,7 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
         this.emit(
           'deviceDisconnected',
           disconnectedDevice.id,
-          error ? new Error(error.message) : undefined
+          error ? new Error(error.message || 'Device disconnected') : undefined
         );
       });
       this.disconnectSubscriptions.set(deviceId, disconnectSub);
@@ -350,8 +350,9 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
       return device;
     } catch (error) {
       const bleError = error as BleError;
-      log.error('Connection failed', new Error(bleError.message), { deviceId });
-      throw DeviceError.connectionFailed(deviceId, new Error(bleError.message));
+      const msg = bleError.message || 'Connection failed';
+      log.error('Connection failed', new Error(msg), { deviceId });
+      throw DeviceError.connectionFailed(deviceId, new Error(msg));
     }
   }
 
@@ -436,16 +437,17 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
       return Buffer.from(characteristic.value, 'base64');
     } catch (error) {
       const bleError = error as BleError;
-      log.error('Read characteristic failed', new Error(bleError.message), {
+      const msg = bleError.message || 'Unknown BLE error';
+      log.error('Read characteristic failed', new Error(msg), {
         deviceId,
         serviceUuid,
         characteristicUuid,
       });
       throw new DeviceError(
-        `Failed to read characteristic: ${bleError.message}`,
+        `Failed to read characteristic: ${msg}`,
         'READ_FAILED',
         deviceId,
-        new Error(bleError.message)
+        new Error(msg)
       );
     }
   }
@@ -483,16 +485,17 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
       }
     } catch (error) {
       const bleError = error as BleError;
-      log.error('Write characteristic failed', new Error(bleError.message), {
+      const msg = bleError.message || 'Unknown BLE error';
+      log.error('Write characteristic failed', new Error(msg), {
         deviceId,
         serviceUuid,
         characteristicUuid,
       });
       throw new DeviceError(
-        `Failed to write characteristic: ${bleError.message}`,
+        `Failed to write characteristic: ${msg}`,
         'WRITE_FAILED',
         deviceId,
-        new Error(bleError.message)
+        new Error(msg)
       );
     }
   }
@@ -521,7 +524,9 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
           const errorMessage = error.message || 'Unknown BLE error';
           const isCancelled = errorMessage.includes('cancelled') ||
                               errorMessage.includes('disconnected') ||
-                              error.errorCode === 2; // BleErrorCode.OperationCancelled
+                              error.errorCode === 2 || // BleErrorCode.OperationCancelled
+                              error.errorCode === 201 || // BleErrorCode.DeviceDisconnected
+                              !this.connectedDevices.has(deviceId); // Device already removed
 
           if (!isCancelled) {
             log.error('Notification error', new Error(errorMessage), {

@@ -154,7 +154,8 @@ export function parseDeviceFlags(value: number): DeviceFlags {
  * Byte 3:      Pending recordings count
  * Bytes 4-7:   Last sync timestamp (Unix seconds)
  * Byte 8:      Flags (1-byte bitmask)
- * Bytes 9-11:  Reserved
+ * Bytes 9-10:  Storage total MB (uint16LE)
+ * Byte 11:     Reserved
  */
 export function parseDeviceStatus(data: Buffer): DeviceStatus {
   if (data.length < 12) {
@@ -168,10 +169,12 @@ export function parseDeviceStatus(data: Buffer): DeviceStatus {
   const lastSyncTimestamp = data.readUInt32LE(4);
   const flagsValue = data.readUInt8(8);
   const flags = parseDeviceFlags(flagsValue);
+  const storageTotalMb = data.readUInt16LE(9);
 
   return {
     batteryLevel,
     storageUsedPercent,
+    storageTotalMb,
     state,
     pendingRecordings,
     lastSyncAt: lastSyncTimestamp > 0 ? new Date(lastSyncTimestamp * 1000) : null,

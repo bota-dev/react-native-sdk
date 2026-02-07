@@ -215,10 +215,22 @@ interface ConnectedDevice {
 interface DeviceStatus {
   batteryLevel: number;
   storageUsedPercent: number;
+  storageTotalMb: number;
   state: DeviceState;
   pendingRecordings: number;
   lastSyncAt: Date | null;
   flags: DeviceFlags;
+}
+
+// DeviceState: 'idle' | 'recording' | 'syncing' | 'uploading' | 'charging' | 'lowBattery' | 'storageFull' | 'error'
+
+interface DeviceFlags {
+  charging: boolean;
+  lowBattery: boolean;
+  storageFull: boolean;
+  wifiConnected: boolean;
+  lteConnected: boolean;
+  syncActive: boolean;
 }
 
 interface DeviceRecording {

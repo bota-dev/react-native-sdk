@@ -117,6 +117,8 @@ export interface DeviceStatus {
   batteryLevel: number;
   /** Storage used percentage (0-100) */
   storageUsedPercent: number;
+  /** Total storage capacity in MB (from firmware, uint16LE, max 65535) */
+  storageTotalMb: number;
   /** Current operational state */
   state: DeviceState;
   /** Number of pending recordings to sync */

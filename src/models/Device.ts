@@ -37,21 +37,16 @@ export type DeviceState =
   | 'error';
 
 /**
- * Device status flags
+ * Device status flags (1-byte bitmask)
+ * See: FIRMWARE_INTEGRATION_GUIDE_ZH.md section 3.1 — DeviceFlags enum
  */
 export interface DeviceFlags {
   charging: boolean;
-  usbConnected: boolean;
   lowBattery: boolean;
-  criticalBattery: boolean;
-  storageWarning: boolean;
   storageFull: boolean;
-  cellularAvailable: boolean;
-  cellularRoaming: boolean;
   wifiConnected: boolean;
-  recordingActive: boolean;
-  syncRequired: boolean;
-  updateAvailable: boolean;
+  lteConnected: boolean;
+  syncActive: boolean;
 }
 
 /**

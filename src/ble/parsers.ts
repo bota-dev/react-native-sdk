@@ -34,17 +34,11 @@ import {
   DEVICE_STATE_STORAGE_FULL,
   DEVICE_STATE_ERROR,
   FLAG_CHARGING,
-  FLAG_USB_CONNECTED,
   FLAG_LOW_BATTERY,
-  FLAG_CRITICAL_BATTERY,
-  FLAG_STORAGE_WARNING,
   FLAG_STORAGE_FULL,
-  FLAG_CELLULAR_AVAILABLE,
-  FLAG_CELLULAR_ROAMING,
   FLAG_WIFI_CONNECTED,
-  FLAG_RECORDING_ACTIVE,
-  FLAG_SYNC_REQUIRED,
-  FLAG_UPDATE_AVAILABLE,
+  FLAG_LTE_CONNECTED,
+  FLAG_SYNC_ACTIVE,
   CODEC_PCM_16K,
   CODEC_PCM_8K,
   CODEC_OPUS_16K,
@@ -136,51 +130,43 @@ export function parseDeviceState(byte: number): DeviceState {
 }
 
 /**
- * Parse device flags from 16-bit value
+ * Parse device flags from 1-byte bitmask
+ * See: FIRMWARE_INTEGRATION_GUIDE_ZH.md section 3.1 — DeviceFlags enum
  */
 export function parseDeviceFlags(value: number): DeviceFlags {
   return {
     charging: (value & FLAG_CHARGING) !== 0,
-    usbConnected: (value & FLAG_USB_CONNECTED) !== 0,
     lowBattery: (value & FLAG_LOW_BATTERY) !== 0,
-    criticalBattery: (value & FLAG_CRITICAL_BATTERY) !== 0,
-    storageWarning: (value & FLAG_STORAGE_WARNING) !== 0,
     storageFull: (value & FLAG_STORAGE_FULL) !== 0,
-    cellularAvailable: (value & FLAG_CELLULAR_AVAILABLE) !== 0,
-    cellularRoaming: (value & FLAG_CELLULAR_ROAMING) !== 0,
     wifiConnected: (value & FLAG_WIFI_CONNECTED) !== 0,
-    recordingActive: (value & FLAG_RECORDING_ACTIVE) !== 0,
-    syncRequired: (value & FLAG_SYNC_REQUIRED) !== 0,
-    updateAvailable: (value & FLAG_UPDATE_AVAILABLE) !== 0,
+    lteConnected: (value & FLAG_LTE_CONNECTED) !== 0,
+    syncActive: (value & FLAG_SYNC_ACTIVE) !== 0,
   };
 }
 
 /**
- * Parse device status from 16-byte characteristic value
+ * Parse device status from characteristic value
  *
- * Format:
- * Bytes 0-3:   Timestamp (Unix seconds)
- * Byte 4:     Battery % (0-100)
- * Byte 5:     State
- * Byte 6:     Storage % (0-100)
- * Byte 7:     Signal (0-5)
- * Bytes 8-9:  Pending recordings count
- * Bytes 10-13: Last sync time (Unix seconds)
- * Bytes 14-15: Flags
+ * Firmware format (12 bytes):
+ * Byte 0:      Battery % (0-100)
+ * Byte 1:      Storage used % (0-100)
+ * Byte 2:      Device state
+ * Byte 3:      Pending recordings count
+ * Bytes 4-7:   Last sync timestamp (Unix seconds)
+ * Byte 8:      Flags (1-byte bitmask)
+ * Bytes 9-11:  Reserved
  */
 export function parseDeviceStatus(data: Buffer): DeviceStatus {
-  if (data.length < 16) {
+  if (data.length < 12) {
     throw new Error(`Invalid status data length: ${data.length}`);
   }
 
-  const timestamp = data.readUInt32LE(0);
-  const batteryLevel = data.readUInt8(4);
-  const state = parseDeviceState(data.readUInt8(5));
-  const storageUsedPercent = data.readUInt8(6);
-  const signalStrength = data.readUInt8(7);
-  const pendingRecordings = data.readUInt16LE(8);
-  const lastSyncTimestamp = data.readUInt32LE(10);
-  const flagsValue = data.readUInt16LE(14);
+  const batteryLevel = data.readUInt8(0);
+  const storageUsedPercent = data.readUInt8(1);
+  const state = parseDeviceState(data.readUInt8(2));
+  const pendingRecordings = data.readUInt8(3);
+  const lastSyncTimestamp = data.readUInt32LE(4);
+  const flagsValue = data.readUInt8(8);
   const flags = parseDeviceFlags(flagsValue);
 
   return {
@@ -189,9 +175,9 @@ export function parseDeviceStatus(data: Buffer): DeviceStatus {
     state,
     pendingRecordings,
     lastSyncAt: lastSyncTimestamp > 0 ? new Date(lastSyncTimestamp * 1000) : null,
-    signalStrength,
+    signalStrength: 0,
     flags,
-    timestamp,
+    timestamp: lastSyncTimestamp,
   };
 }
 

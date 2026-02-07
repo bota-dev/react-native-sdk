@@ -142,7 +142,8 @@ export const RECORDING_RESULT_NOT_RECORDING = 0x03;
 export const RECORDING_RESULT_INVALID_GRANT = 0x04;
 export const RECORDING_RESULT_GRANT_EXPIRED = 0x05;
 
-// Device state values (from status)
+// Device state values (DEVICE_STATUS byte 2)
+// See: FIRMWARE_INTEGRATION_GUIDE_ZH.md section 3.1 — DeviceState enum
 export const DEVICE_STATE_IDLE = 0x00;
 export const DEVICE_STATE_RECORDING = 0x01;
 export const DEVICE_STATE_SYNCING = 0x02;
@@ -150,21 +151,16 @@ export const DEVICE_STATE_UPLOADING = 0x03;
 export const DEVICE_STATE_CHARGING = 0x04;
 export const DEVICE_STATE_LOW_BATTERY = 0x05;
 export const DEVICE_STATE_STORAGE_FULL = 0x06;
-export const DEVICE_STATE_ERROR = 0xff;
+export const DEVICE_STATE_ERROR = 0x07;
 
-// Device status flags (bitmask)
-export const FLAG_CHARGING = 1 << 0;
-export const FLAG_USB_CONNECTED = 1 << 1;
-export const FLAG_LOW_BATTERY = 1 << 2;
-export const FLAG_CRITICAL_BATTERY = 1 << 3;
-export const FLAG_STORAGE_WARNING = 1 << 4;
-export const FLAG_STORAGE_FULL = 1 << 5;
-export const FLAG_CELLULAR_AVAILABLE = 1 << 6;
-export const FLAG_CELLULAR_ROAMING = 1 << 7;
-export const FLAG_WIFI_CONNECTED = 1 << 8;
-export const FLAG_RECORDING_ACTIVE = 1 << 9;
-export const FLAG_SYNC_REQUIRED = 1 << 10;
-export const FLAG_UPDATE_AVAILABLE = 1 << 11;
+// Device status flags (1-byte bitmask, DEVICE_STATUS byte 8)
+// See: FIRMWARE_INTEGRATION_GUIDE_ZH.md section 3.1 — DeviceFlags enum
+export const FLAG_CHARGING = 0x01;
+export const FLAG_LOW_BATTERY = 0x02;
+export const FLAG_STORAGE_FULL = 0x04;
+export const FLAG_WIFI_CONNECTED = 0x08;
+export const FLAG_LTE_CONNECTED = 0x10;
+export const FLAG_SYNC_ACTIVE = 0x20;
 
 // Audio codec values
 export const CODEC_PCM_16K = 0x00;

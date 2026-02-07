@@ -35,6 +35,19 @@ import {
 
 const log = logger.tag('BleManager');
 
+/** Extract a human-readable message from a BleError (message is often null) */
+function describeBleError(err: BleError | Error | null | undefined): string {
+  if (!err) return 'Unknown error';
+  const ble = err as BleError;
+  if (ble.message) return ble.message;
+  if (ble.reason) return ble.reason;
+  const parts: string[] = [];
+  if (ble.errorCode !== undefined) parts.push(`errorCode=${ble.errorCode}`);
+  if ((ble as any).iosErrorCode != null) parts.push(`ios=${(ble as any).iosErrorCode}`);
+  if ((ble as any).androidErrorCode != null) parts.push(`android=${(ble as any).androidErrorCode}`);
+  return parts.length > 0 ? parts.join(', ') : 'Unknown BLE error';
+}
+
 /**
  * Events emitted by BleManager
  */
@@ -54,6 +67,7 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
   private disconnectSubscriptions: Map<string, Subscription> = new Map();
   private connectedDevices: Map<string, Device> = new Map();
   private discoveredDevices: Map<string, DiscoveredDevice> = new Map();
+  private pendingConnects: Map<string, Promise<Device>> = new Map();
   private isScanning = false;
   private cachedState: State = State.Unknown;
 
@@ -303,16 +317,36 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
   }
 
   /**
-   * Connect to a device
+   * Connect to a device.
+   * Deduplicates concurrent calls — if a connect is already in progress
+   * for this device, callers share the same promise.
    */
   async connect(deviceId: string): Promise<Device> {
-    log.info('Connecting to device', { deviceId });
-
     // Check if already connected
     if (this.connectedDevices.has(deviceId)) {
       log.debug('Device already connected', { deviceId });
       return this.connectedDevices.get(deviceId)!;
     }
+
+    // Deduplicate: if a connect is already in progress, return the same promise
+    const pending = this.pendingConnects.get(deviceId);
+    if (pending) {
+      log.debug('Connection already in progress, sharing promise', { deviceId });
+      return pending;
+    }
+
+    const connectPromise = this.doConnect(deviceId);
+    this.pendingConnects.set(deviceId, connectPromise);
+
+    try {
+      return await connectPromise;
+    } finally {
+      this.pendingConnects.delete(deviceId);
+    }
+  }
+
+  private async doConnect(deviceId: string): Promise<Device> {
+    log.info('Connecting to device', { deviceId });
 
     try {
       // Connect with timeout
@@ -331,9 +365,10 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
 
       // Set up disconnect listener
       const disconnectSub = device.onDisconnected((error, disconnectedDevice) => {
+        const errorMsg = error ? describeBleError(error) : undefined;
         log.info('Device disconnected', {
           deviceId: disconnectedDevice.id,
-          error: error?.message,
+          error: errorMsg,
         });
         this.connectedDevices.delete(disconnectedDevice.id);
         this.disconnectSubscriptions.get(disconnectedDevice.id)?.remove();
@@ -341,7 +376,7 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
         this.emit(
           'deviceDisconnected',
           disconnectedDevice.id,
-          error ? new Error(error.message || 'Device disconnected') : undefined
+          error ? new Error(errorMsg || 'Device disconnected') : undefined
         );
       });
       this.disconnectSubscriptions.set(deviceId, disconnectSub);
@@ -349,8 +384,7 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
       this.emit('deviceConnected', deviceId);
       return device;
     } catch (error) {
-      const bleError = error as BleError;
-      const msg = bleError.message || 'Connection failed';
+      const msg = describeBleError(error as BleError);
       log.error('Connection failed', new Error(msg), { deviceId });
       throw DeviceError.connectionFailed(deviceId, new Error(msg));
     }
@@ -371,8 +405,7 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
     try {
       await device.cancelConnection();
     } catch (error) {
-      const bleError = error as BleError;
-      log.warn('Disconnect error (may be expected)', { error: bleError.message });
+      log.warn('Disconnect error (may be expected)', { error: describeBleError(error as BleError) });
     }
 
     this.connectedDevices.delete(deviceId);
@@ -436,8 +469,7 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
 
       return Buffer.from(characteristic.value, 'base64');
     } catch (error) {
-      const bleError = error as BleError;
-      const msg = bleError.message || 'Unknown BLE error';
+      const msg = describeBleError(error as BleError);
       log.error('Read characteristic failed', new Error(msg), {
         deviceId,
         serviceUuid,
@@ -484,8 +516,7 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
         );
       }
     } catch (error) {
-      const bleError = error as BleError;
-      const msg = bleError.message || 'Unknown BLE error';
+      const msg = describeBleError(error as BleError);
       log.error('Write characteristic failed', new Error(msg), {
         deviceId,
         serviceUuid,

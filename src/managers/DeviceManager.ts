@@ -304,11 +304,12 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       throw DeviceError.notConnected(device.id);
     }
 
-    // Check current pairing state
+    // Check current pairing state — skip if already provisioned
     const pairingState = await this.readPairingState(device.id);
     if (pairingState === 'paired') {
-      log.warn('Device is already provisioned', { deviceId: device.id });
-      throw ProvisioningError.alreadyProvisioned(device.id);
+      log.info('Device is already provisioned, skipping', { deviceId: device.id });
+      device.isProvisioned = true;
+      return;
     }
 
     // Set up provisioning result listener

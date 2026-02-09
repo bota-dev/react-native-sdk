@@ -196,39 +196,27 @@ export class ProtocolHandler {
       const resetTimeout = () => {
         if (state.timeoutId) clearTimeout(state.timeoutId);
         state.timeoutId = setTimeout(() => {
-          log.debug('Transfer timeout', { recordingUuid, totalBytes: state.totalBytes });
           cleanup();
           reject(TransferError.timeout(recordingUuid));
         }, TRANSFER_PACKET_TIMEOUT);
       };
 
       // Subscribe to transfer data notifications
-      log.debug('Subscribing to RECORDING_TRANSFER');
       state.subscription = this.bleManager.subscribeToCharacteristic(
         deviceId,
         SERVICE_BOTA_STORAGE,
         CHAR_RECORDING_TRANSFER,
         async (data) => {
           try {
-            log.debug('Transfer notify', {
-              len: data.length,
-              first: data[0]?.toString(16),
-            });
             resetTimeout();
 
             // Skip ACK echo-back packets (App→Device only, may be echoed by BLE stack)
             const firstByte = data.readUInt8(0);
             if (firstByte >= 0x10 && firstByte <= 0x12) {
-              log.debug('Skipping ACK echo-back', { firstByte: firstByte.toString(16) });
               return;
             }
 
             const packet = parseTransferPacket(data);
-            log.debug('Parsed packet', {
-              type: packet.type,
-              seq: packet.sequenceNumber,
-              dataLen: packet.data?.length,
-            });
             await this.handleTransferPacket(
               deviceId,
               state,
@@ -259,20 +247,17 @@ export class ProtocolHandler {
               resolve(audioData);
             }
           } catch (error) {
-            log.error('Transfer notify error', error as Error);
             cleanup();
             reject(error);
           }
         },
         (error) => {
-          log.error('Transfer subscription error', error);
           cleanup();
           reject(TransferError.interrupted(recordingUuid, error));
         }
       );
 
       // Send start transfer command
-      log.debug('Sending START command', { recordingUuid });
       const command = createTransferCommand('start', recordingUuid);
       this.bleManager
         .writeCharacteristic(
@@ -282,11 +267,9 @@ export class ProtocolHandler {
           command
         )
         .then(() => {
-          log.debug('START command sent OK');
           resetTimeout();
         })
         .catch((error) => {
-          log.error('START command failed', error as Error);
           cleanup();
           reject(error);
         });

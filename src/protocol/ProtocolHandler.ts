@@ -357,9 +357,9 @@ export class ProtocolHandler {
     await this.bleManager.writeCharacteristic(
       deviceId,
       SERVICE_BOTA_STORAGE,
-      CHAR_RECORDING_TRANSFER,
+      CHAR_TRANSFER_CONTROL,
       ackPacket,
-      false // Write without response for speed
+      true // Write with response — JieLi stack requires ATT Write Request
     );
   }
 

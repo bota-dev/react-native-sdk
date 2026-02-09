@@ -546,6 +546,9 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
       throw DeviceError.notConnected(deviceId);
     }
 
+    const charShort = characteristicUuid.split('-')[1] || characteristicUuid;
+    log.debug('Subscribe start', { charShort });
+
     return device.monitorCharacteristicForService(
       serviceUuid,
       characteristicUuid,
@@ -566,13 +569,26 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
             });
             onError?.(new Error(errorMessage));
           } else {
-            log.debug('Subscription ended', { deviceId, characteristicUuid, reason: errorMessage });
+            log.debug('Subscription ended', { deviceId, charShort, reason: errorMessage });
           }
           return;
         }
 
+        // Debug: log every callback invocation
+        log.debug('Notify cb', {
+          charShort,
+          hasChar: !!characteristic,
+          hasValue: !!characteristic?.value,
+          valueLen: characteristic?.value?.length ?? 0,
+        });
+
         if (characteristic?.value) {
           const data = Buffer.from(characteristic.value, 'base64');
+          log.debug('Notify data', {
+            charShort,
+            len: data.length,
+            first: data.length > 0 ? data[0].toString(16) : '-',
+          });
           onData(data);
         }
       }

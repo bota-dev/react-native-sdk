@@ -217,16 +217,9 @@ export class ProtocolHandler {
             }
 
             const packet = parseTransferPacket(data);
-            await this.handleTransferPacket(
-              deviceId,
-              state,
-              packet,
-              onProgress
-            );
+            this.handleTransferPacket(state, packet, onProgress);
 
             if (state.isComplete) {
-              cleanup();
-
               // Assemble the audio data
               const audioData = this.assembleAudioData(state);
 
@@ -234,10 +227,17 @@ export class ProtocolHandler {
               if (state.checksum !== undefined) {
                 const calculatedChecksum = this.calculateCrc32(audioData);
                 if (calculatedChecksum !== state.checksum) {
+                  // CRC mismatch — send NACK and fail
+                  await this.sendAck(deviceId, 'nack', 0);
+                  cleanup();
                   reject(TransferError.checksumMismatch(recordingUuid));
                   return;
                 }
               }
+
+              // CRC OK — send final ACK to confirm transfer
+              await this.sendAck(deviceId, 'ack', 0);
+              cleanup();
 
               log.info('Transfer completed', {
                 recordingUuid,
@@ -279,44 +279,24 @@ export class ProtocolHandler {
   /**
    * Handle a transfer packet from device
    */
-  private async handleTransferPacket(
-    deviceId: string,
+  private handleTransferPacket(
     state: TransferState,
     packet: TransferPacket,
     onProgress?: TransferProgressCallback
-  ): Promise<void> {
+  ): void {
     switch (packet.type) {
       case 'data':
         if (packet.data) {
-          // Store packet data
+          // Store packet data (no ACK — streaming mode)
           state.receivedPackets.set(packet.sequenceNumber, Buffer.from(packet.data));
           state.totalBytes += packet.data.length;
-
-          // Send ACK
-          await this.sendAck(deviceId, 'ack', packet.sequenceNumber);
-
-          // Report progress
           onProgress?.(state.totalBytes);
-
-          log.debug('Received data packet', {
-            seq: packet.sequenceNumber,
-            size: packet.data.length,
-            total: state.totalBytes,
-          });
         }
         break;
 
       case 'eof':
         state.checksum = packet.checksum;
         state.isComplete = true;
-
-        // Send final ACK
-        await this.sendAck(deviceId, 'ack', packet.sequenceNumber);
-
-        log.debug('Received EOF packet', {
-          seq: packet.sequenceNumber,
-          checksum: packet.checksum,
-        });
         break;
 
       case 'error':

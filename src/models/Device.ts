@@ -115,10 +115,10 @@ export interface ConnectedDevice {
 export interface DeviceStatus {
   /** Battery level (0-100) */
   batteryLevel: number;
-  /** Storage used percentage (0-100) */
-  storageUsedPercent: number;
-  /** Total storage capacity in MB (from firmware, uint16LE, max 65535) */
+  /** Total storage capacity in MB (uint16LE, max 65535) */
   storageTotalMb: number;
+  /** Storage used in MB (uint16LE, max 65535) */
+  storageUsedMb: number;
   /** Current operational state */
   state: DeviceState;
   /** Number of pending recordings to sync */

@@ -5,6 +5,7 @@
 import { Buffer } from 'buffer';
 import { Subscription } from 'react-native-ble-plx';
 import EventEmitter from 'eventemitter3';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { getBleManager, BleManager } from '../ble/BleManager';
 import {
@@ -54,8 +55,10 @@ import {
 import type {
   DiscoveredDevice,
   ConnectedDevice,
+  DeviceType,
   DeviceStatus,
   ScanOptions,
+  ReconnectOptions,
   Environment,
   ProvisioningResult,
   RecordingState,
@@ -81,6 +84,16 @@ import {
 
 const log = logger.tag('DeviceManager');
 
+const RECONNECT_REGISTRY_KEY = '@bota_sdk:reconnect_registry';
+const DEFAULT_RECONNECT_SCAN_TIMEOUT = 10000; // 10 seconds
+
+/** Stored info for reconnecting to a previously paired device */
+interface ReconnectInfo {
+  bleId: string;
+  bleName: string;
+  deviceType: DeviceType;
+}
+
 /**
  * Device Manager class
  */
@@ -88,6 +101,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   private bleManager: BleManager;
   private connectedDevices: Map<string, ConnectedDevice> = new Map();
   private statusSubscriptions: Map<string, Subscription> = new Map();
+  private reconnectRegistry: Record<string, ReconnectInfo> = {};
   private isInitialized = false;
 
   constructor() {
@@ -99,10 +113,11 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   /**
    * Initialize the device manager
    */
-  initialize(): void {
+  async initialize(): Promise<void> {
     if (this.isInitialized) {
       return;
     }
+    await this.loadReconnectRegistry();
     this.isInitialized = true;
     log.info('DeviceManager initialized');
   }
@@ -216,6 +231,14 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
       this.connectedDevices.set(device.id, connectedDevice);
 
+      // Persist reconnect info for future reconnect() calls
+      this.reconnectRegistry[serialNumber] = {
+        bleId: device.id,
+        bleName: device.name,
+        deviceType: device.deviceType,
+      };
+      this.saveReconnectRegistry().catch(() => {});
+
       log.info('Device connected successfully', {
         deviceId: device.id,
         serialNumber,
@@ -247,6 +270,69 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     this.connectedDevices.delete(device.id);
 
     this.emit('connectionStateChanged', device.id, 'disconnected');
+  }
+
+  /**
+   * Reconnect to a previously paired device by serial number.
+   *
+   * The SDK stores the BLE name and peripheral ID from the initial pairing.
+   * This method scans for nearby devices, matches by stored BLE name,
+   * stored peripheral ID, or Bota-prefix fallback, then connects.
+   *
+   * @param serialNumber - Serial number of the device to reconnect to
+   * @param options - Optional reconnection options
+   * @returns The connected device
+   * @throws DeviceError.notFound if no matching device is found during scan
+   */
+  async reconnect(
+    serialNumber: string,
+    options?: ReconnectOptions
+  ): Promise<ConnectedDevice> {
+    const scanTimeout = options?.scanTimeout ?? DEFAULT_RECONNECT_SCAN_TIMEOUT;
+
+    log.info('Reconnecting to device', { serialNumber });
+
+    // Check if already connected by serial number
+    for (const device of this.connectedDevices.values()) {
+      if (device.serialNumber === serialNumber && device.connectionState === 'connected') {
+        log.debug('Device already connected', { serialNumber });
+        return device;
+      }
+    }
+
+    // Look up stored reconnect info
+    const info = this.reconnectRegistry[serialNumber];
+    const storedName = info?.bleName;
+    const storedId = info?.bleId;
+
+    log.debug('Reconnect info', { serialNumber, storedName: storedName ?? '(none)', storedId: storedId ?? '(none)' });
+
+    // Scan for devices
+    await this.startScan({ timeout: scanTimeout });
+    await new Promise((resolve) => setTimeout(resolve, scanTimeout));
+
+    const discovered = this.getDiscoveredDevices();
+    log.debug('Reconnect scan done', {
+      count: discovered.length,
+      devices: discovered.map((d) => `${d.name}(${d.id})`).join(', '),
+    });
+
+    // Match by: 1) stored BLE name, 2) stored peripheral ID, 3) any Bota-prefix device
+    const target =
+      discovered.find((d) => storedName && d.name === storedName) ||
+      discovered.find((d) => storedId && d.id === storedId) ||
+      discovered.find((d) => d.name?.startsWith('Bota'));
+
+    // Stop scan before connecting — on iOS a running scan can cancel the connection
+    try { this.stopScan(); } catch { /* ignore */ }
+
+    if (!target) {
+      log.warn('No matching device found for reconnection', { serialNumber });
+      throw DeviceError.notFound(serialNumber);
+    }
+
+    log.info('Matched device for reconnection', { serialNumber, name: target.name, id: target.id });
+    return this.connect(target);
   }
 
   /**
@@ -1052,6 +1138,27 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         }
       );
     });
+  }
+
+  // Reconnect Registry Persistence
+
+  private async loadReconnectRegistry(): Promise<void> {
+    try {
+      const data = await AsyncStorage.getItem(RECONNECT_REGISTRY_KEY);
+      if (data) {
+        this.reconnectRegistry = JSON.parse(data);
+      }
+    } catch (error) {
+      log.warn('Failed to load reconnect registry', { error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  private async saveReconnectRegistry(): Promise<void> {
+    try {
+      await AsyncStorage.setItem(RECONNECT_REGISTRY_KEY, JSON.stringify(this.reconnectRegistry));
+    } catch (error) {
+      log.warn('Failed to save reconnect registry', { error: error instanceof Error ? error.message : String(error) });
+    }
   }
 
   /**

@@ -163,7 +163,7 @@ class BotaClientImpl extends EventEmitter<BotaClientEvents> {
 
       // Initialize managers
       this._deviceManager = new DeviceManager();
-      this._deviceManager.initialize();
+      await this._deviceManager.initialize();
 
       this._recordingManager = new RecordingManager();
       await this._recordingManager.initialize();

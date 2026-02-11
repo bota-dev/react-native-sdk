@@ -148,6 +148,14 @@ export interface StorageInfo {
 }
 
 /**
+ * Options for reconnecting to a previously paired device by serial number
+ */
+export interface ReconnectOptions {
+  /** Scan timeout in milliseconds (default: 10000) */
+  scanTimeout?: number;
+}
+
+/**
  * Configuration for device scanning
  */
 export interface ScanOptions {

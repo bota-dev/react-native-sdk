@@ -26,6 +26,7 @@ export type {
   DeviceStatus,
   StorageInfo,
   ScanOptions,
+  ReconnectOptions,
   Environment,
   ProvisioningResult,
 } from './models/Device';

@@ -43,6 +43,7 @@ export type {
   TransferPacket,
   StreamingState,
   StreamingSyncProgress,
+  StreamingSyncOptions,
   StreamingSessionEvents,
 } from './models/Recording';
 

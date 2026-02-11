@@ -15,6 +15,7 @@ import type {
   UploadTask,
   StreamingState,
   StreamingSessionEvents,
+  StreamingSyncOptions,
 } from '../models/Recording';
 import type { RecordingManagerEvents } from '../models/Status';
 import { DeviceError } from '../utils/errors';
@@ -441,7 +442,8 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
   startStreamingSync(
     device: ConnectedDevice,
     recordingUuid: string,
-    uploadInfoProvider: UploadInfoProvider
+    uploadInfoProvider: UploadInfoProvider,
+    options?: StreamingSyncOptions
   ): StreamingSession {
     if (!getBleManager().isConnected(device.id)) {
       throw DeviceError.notConnected(device.id);
@@ -461,7 +463,8 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
       this.storage,
       device,
       recordingUuid,
-      uploadInfoProvider
+      uploadInfoProvider,
+      options?.chunkSizeKb
     );
 
     this.activeStreamingSession = session;
@@ -520,16 +523,20 @@ export class StreamingSession extends EventEmitter<StreamingSessionEvents> {
   private _isAborted = false;
   private chunkBuffer: Buffer[] = [];
   private chunkBytesBuffered = 0;
-  private readonly CHUNK_SIZE = 256 * 1024; // 256KB per S3 chunk
+  private readonly chunkSize: number;
 
   constructor(
     private protocolHandler: ProtocolHandler,
     private storageManager: StorageManager,
     private device: ConnectedDevice,
     private recordingUuid: string,
-    private uploadInfoProvider: UploadInfoProvider
+    private uploadInfoProvider: UploadInfoProvider,
+    chunkSizeKb?: number
   ) {
     super();
+    // Clamp to 64KB-1MB, default 256KB (matches backend setting range)
+    const kb = Math.max(64, Math.min(1024, chunkSizeKb ?? 256));
+    this.chunkSize = kb * 1024;
   }
 
   get state(): StreamingState { return this._state; }
@@ -567,7 +574,7 @@ export class StreamingSession extends EventEmitter<StreamingSessionEvents> {
             this.chunkBytesBuffered += data.length;
 
             // Upload a chunk when we've buffered enough
-            if (this.chunkBytesBuffered >= this.CHUNK_SIZE) {
+            if (this.chunkBytesBuffered >= this.chunkSize) {
               this.flushChunk();
             }
 

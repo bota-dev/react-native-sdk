@@ -129,6 +129,19 @@ export interface TransferPacket {
 }
 
 /**
+ * Options for startStreamingSync()
+ */
+export interface StreamingSyncOptions {
+  /**
+   * Size of each upload chunk in KB (64-1024).
+   * Smaller = more real-time (lower latency, higher HTTP overhead).
+   * Larger = less real-time (higher latency, lower overhead).
+   * Default: 256 (from device settings.upload.streaming_chunk_kb)
+   */
+  chunkSizeKb?: number;
+}
+
+/**
  * Streaming sync state
  */
 export type StreamingState =

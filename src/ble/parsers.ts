@@ -45,6 +45,7 @@ import {
   CODEC_OPUS_8K,
   PACKET_TYPE_DATA,
   PACKET_TYPE_EOF,
+  PACKET_TYPE_PAUSED,
   PACKET_TYPE_ERROR,
   CAP_BLE_SYNC,
   CAP_WIFI_UPLOAD,
@@ -303,6 +304,13 @@ export function parseTransferPacket(data: Buffer): TransferPacket {
         type: 'eof',
         sequenceNumber,
         checksum: data.readUInt32LE(3),
+      };
+
+    case PACKET_TYPE_PAUSED:
+      return {
+        type: 'paused',
+        sequenceNumber,
+        bytesSent: data.length >= 7 ? data.readUInt32LE(3) : undefined,
       };
 
     case PACKET_TYPE_ERROR:

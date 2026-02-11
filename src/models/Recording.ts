@@ -114,14 +114,64 @@ export interface UploadTask {
  * Transfer packet from device
  */
 export interface TransferPacket {
-  /** Packet type: data, eof, or error */
-  type: 'data' | 'eof' | 'error';
+  /** Packet type: data, eof, paused (streaming), or error */
+  type: 'data' | 'eof' | 'paused' | 'error';
   /** Sequence number */
   sequenceNumber: number;
   /** Audio data (for data packets) */
   data?: Uint8Array;
   /** CRC32 checksum (for EOF packets) */
   checksum?: number;
+  /** Bytes sent so far (for paused packets — streaming mode) */
+  bytesSent?: number;
   /** Error code (for error packets) */
   errorCode?: number;
+}
+
+/**
+ * Streaming sync state
+ */
+export type StreamingState =
+  | 'idle'
+  | 'streaming'    // Receiving live audio data from device
+  | 'paused'       // Device caught up to recording write position, waiting
+  | 'uploading'    // Uploading final chunks to S3
+  | 'completing'   // Finalizing upload
+  | 'completed'
+  | 'disconnected' // BLE dropped — falls back to batch sync later
+  | 'failed';
+
+/**
+ * Streaming sync progress event
+ */
+export interface StreamingSyncProgress {
+  /** Current streaming state */
+  state: StreamingState;
+  /** Bytes received from device so far */
+  bytesReceived: number;
+  /** Chunks uploaded to S3 so far */
+  chunksUploaded: number;
+  /** Recording ID from backend (set after first chunk upload) */
+  recordingId?: string;
+  /** Error message (if failed) */
+  error?: string;
+}
+
+/**
+ * Streaming session — represents an active streaming sync of the current recording.
+ * Event-based because it's long-lived (entire recording duration).
+ */
+export interface StreamingSessionEvents {
+  /** Emitted when a new chunk of audio data is received */
+  chunk: (progress: StreamingSyncProgress) => void;
+  /** Emitted when device has caught up to recording write position */
+  paused: () => void;
+  /** Emitted when device resumes sending data after pause */
+  resumed: () => void;
+  /** Emitted when recording stops and all data has been uploaded */
+  completed: (result: { recordingId: string; totalBytes: number }) => void;
+  /** Emitted when BLE disconnects — recording continues on device, batch sync later */
+  disconnected: () => void;
+  /** Emitted on error */
+  error: (err: Error) => void;
 }

@@ -13,6 +13,8 @@ import type {
   UploadInfo,
   SyncProgress,
   UploadTask,
+  StreamingState,
+  StreamingSessionEvents,
 } from '../models/Recording';
 import type { RecordingManagerEvents } from '../models/Status';
 import { DeviceError } from '../utils/errors';
@@ -422,14 +424,254 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
   }
 
   /**
+   * Start streaming sync for the current in-progress recording.
+   *
+   * This method is for live recordings only — it streams audio data from the
+   * device via BLE while the recording is still in progress, and uploads chunks
+   * to S3 as they arrive.
+   *
+   * If BLE disconnects, the session emits 'disconnected'. The recording
+   * continues on the device and can be batch-synced later via syncRecording().
+   *
+   * @param device - Connected device that is currently recording
+   * @param recordingUuid - UUID of the in-progress recording
+   * @param uploadInfoProvider - Callback to get upload info from customer backend
+   * @returns StreamingSession that emits progress events
+   */
+  startStreamingSync(
+    device: ConnectedDevice,
+    recordingUuid: string,
+    uploadInfoProvider: UploadInfoProvider
+  ): StreamingSession {
+    if (!getBleManager().isConnected(device.id)) {
+      throw DeviceError.notConnected(device.id);
+    }
+
+    if (this.activeStreamingSession) {
+      throw new Error('A streaming session is already active');
+    }
+
+    log.info('Starting streaming sync', {
+      deviceId: device.id,
+      recordingUuid,
+    });
+
+    const session = new StreamingSession(
+      this.protocolHandler,
+      this.storage,
+      device,
+      recordingUuid,
+      uploadInfoProvider
+    );
+
+    this.activeStreamingSession = session;
+
+    session.on('completed', () => {
+      this.activeStreamingSession = null;
+    });
+    session.on('disconnected', () => {
+      this.activeStreamingSession = null;
+    });
+    session.on('error', () => {
+      this.activeStreamingSession = null;
+    });
+
+    session.start();
+    return session;
+  }
+
+  private activeStreamingSession: StreamingSession | null = null;
+
+  /**
+   * Get the active streaming session, if any
+   */
+  getActiveStreamingSession(): StreamingSession | null {
+    return this.activeStreamingSession;
+  }
+
+  /**
    * Clean up resources
    */
   destroy(): void {
     log.info('Destroying RecordingManager');
+    if (this.activeStreamingSession) {
+      this.activeStreamingSession.abort();
+      this.activeStreamingSession = null;
+    }
     this.protocolHandler.destroy();
     this.uploadQueue.destroy();
     this.storage.destroy();
     this.removeAllListeners();
     this.isInitialized = false;
+  }
+}
+
+/**
+ * Streaming session — manages a live streaming sync of the current recording.
+ *
+ * Coordinates: BLE streaming transfer ↔ chunked S3 upload
+ * Independent from batch sync — they don't share locks or state.
+ */
+export class StreamingSession extends EventEmitter<StreamingSessionEvents> {
+  private _state: StreamingState = 'idle';
+  private _bytesReceived = 0;
+  private _chunksUploaded = 0;
+  private _recordingId?: string;
+  private _isAborted = false;
+  private chunkBuffer: Buffer[] = [];
+  private chunkBytesBuffered = 0;
+  private readonly CHUNK_SIZE = 256 * 1024; // 256KB per S3 chunk
+
+  constructor(
+    private protocolHandler: ProtocolHandler,
+    private storageManager: StorageManager,
+    private device: ConnectedDevice,
+    private recordingUuid: string,
+    private uploadInfoProvider: UploadInfoProvider
+  ) {
+    super();
+  }
+
+  get state(): StreamingState { return this._state; }
+  get bytesReceived(): number { return this._bytesReceived; }
+  get chunksUploaded(): number { return this._chunksUploaded; }
+  get recordingId(): string | undefined { return this._recordingId; }
+  get isActive(): boolean { return this._state === 'streaming' || this._state === 'paused'; }
+
+  /**
+   * Start the streaming session (called internally by RecordingManager)
+   */
+  async start(): Promise<void> {
+    this._state = 'streaming';
+
+    try {
+      // Get upload info for the streaming recording
+      const fakeRecording: DeviceRecording = {
+        uuid: this.recordingUuid,
+        startedAt: new Date(),
+        durationMs: 0, // Unknown — still recording
+        fileSizeBytes: 0,
+        codec: 'opus_16k',
+      };
+      const uploadInfo = await this.uploadInfoProvider(fakeRecording);
+      this._recordingId = uploadInfo.recordingId;
+
+      // Start BLE streaming transfer
+      const result = await this.protocolHandler.streamTransfer(
+        this.device.id,
+        this.recordingUuid,
+        {
+          onData: (_seq, data) => {
+            this._bytesReceived += data.length;
+            this.chunkBuffer.push(data);
+            this.chunkBytesBuffered += data.length;
+
+            // Upload a chunk when we've buffered enough
+            if (this.chunkBytesBuffered >= this.CHUNK_SIZE) {
+              this.flushChunk();
+            }
+
+            this.emitProgress();
+          },
+          onPaused: (_bytesSent) => {
+            this._state = 'paused';
+            this.emit('paused');
+            this.emitProgress();
+          },
+          onResumed: () => {
+            this._state = 'streaming';
+            this.emit('resumed');
+          },
+        }
+      );
+
+      // EOF received — recording stopped, flush remaining data
+      this._state = 'uploading';
+
+      // Flush any remaining buffered data as final chunk
+      if (this.chunkBytesBuffered > 0) {
+        await this.flushChunk();
+      }
+
+      // Finalize and confirm
+      this._state = 'completing';
+      await this.protocolHandler.confirmSync(this.device.id, this.recordingUuid);
+
+      this._state = 'completed';
+      this.emit('completed', {
+        recordingId: this._recordingId!,
+        totalBytes: result.totalBytes,
+      });
+    } catch (error) {
+      if (this._isAborted) {
+        return; // Don't emit error for intentional abort
+      }
+
+      const err = error as Error;
+      // Check if this is a BLE disconnection
+      if (err.message?.includes('disconnected') || err.message?.includes('interrupted')) {
+        this._state = 'disconnected';
+        this.emit('disconnected');
+        log.info('Streaming session disconnected — recording continues on device', {
+          recordingUuid: this.recordingUuid,
+          bytesReceived: this._bytesReceived,
+        });
+      } else {
+        this._state = 'failed';
+        this.emit('error', err);
+        log.error('Streaming session failed', err, {
+          recordingUuid: this.recordingUuid,
+        });
+      }
+    }
+  }
+
+  /**
+   * Abort the streaming session. Recording continues on device,
+   * can be batch-synced later.
+   */
+  abort(): void {
+    if (!this.isActive) return;
+
+    this._isAborted = true;
+    this.protocolHandler.cancelTransfer(this.device.id, this.recordingUuid);
+    this._state = 'disconnected';
+    this.emit('disconnected');
+  }
+
+  /**
+   * Flush buffered data as an S3 chunk upload
+   */
+  private async flushChunk(): Promise<void> {
+    if (this.chunkBuffer.length === 0) return;
+
+    const chunkData = Buffer.concat(this.chunkBuffer);
+    this.chunkBuffer = [];
+    this.chunkBytesBuffered = 0;
+    const chunkNumber = this._chunksUploaded + 1;
+
+    // Save chunk to local storage (for recovery if S3 upload fails)
+    await this.storageManager.saveRecordingData(
+      this.device.id,
+      `${this.recordingUuid}_chunk_${chunkNumber}`,
+      chunkData
+    );
+
+    this._chunksUploaded = chunkNumber;
+
+    log.debug('Flushed streaming chunk', {
+      chunkNumber,
+      size: chunkData.length,
+      totalReceived: this._bytesReceived,
+    });
+  }
+
+  private emitProgress(): void {
+    this.emit('chunk', {
+      state: this._state,
+      bytesReceived: this._bytesReceived,
+      chunksUploaded: this._chunksUploaded,
+      recordingId: this._recordingId,
+    });
   }
 }

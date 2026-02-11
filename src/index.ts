@@ -11,7 +11,7 @@ export { BotaClient } from './BotaClient';
 export type { BotaConfig, SdkState, BluetoothState } from './BotaClient';
 
 // Managers
-export { DeviceManager, RecordingManager, OTAManager } from './managers';
+export { DeviceManager, RecordingManager, StreamingSession, OTAManager } from './managers';
 export type { UploadInfoProvider, FirmwareInfo, OtaStage, OtaProgress } from './managers';
 
 // Models - Device
@@ -41,6 +41,9 @@ export type {
   UploadTaskStatus,
   UploadTask,
   TransferPacket,
+  StreamingState,
+  StreamingSyncProgress,
+  StreamingSessionEvents,
 } from './models/Recording';
 
 // Models - Status & Events

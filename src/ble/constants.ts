@@ -118,6 +118,7 @@ export const TRANSFER_CMD_CONFIRM_SYNC = 0x07;
 // Transfer packet types (Device → App)
 export const PACKET_TYPE_DATA = 0x01;
 export const PACKET_TYPE_EOF = 0x02;
+export const PACKET_TYPE_PAUSED = 0x03; // Streaming mode: caught up to recording write position
 export const PACKET_TYPE_ERROR = 0xff;
 
 // ACK types (App → Device)
@@ -188,6 +189,7 @@ export const SCAN_TIMEOUT = 30000;
 export const CONNECTION_TIMEOUT = 30000;
 export const OPERATION_TIMEOUT = 10000;
 export const TRANSFER_PACKET_TIMEOUT = 2000;
+export const STREAMING_PAUSED_TIMEOUT = 60000; // Timeout when device is paused (caught up, waiting for more audio)
 
 // Transfer settings
 export const TRANSFER_WINDOW_SIZE = 4;

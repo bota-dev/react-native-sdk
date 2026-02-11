@@ -3,7 +3,7 @@
  */
 
 export { DeviceManager } from './DeviceManager';
-export { RecordingManager, type UploadInfoProvider } from './RecordingManager';
+export { RecordingManager, StreamingSession, type UploadInfoProvider } from './RecordingManager';
 export {
   OTAManager,
   type FirmwareInfo,

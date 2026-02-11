@@ -13,6 +13,7 @@ import {
   CHAR_RECORDING_TRANSFER,
   CHAR_TRANSFER_CONTROL,
   TRANSFER_PACKET_TIMEOUT,
+  STREAMING_PAUSED_TIMEOUT,
 } from '../ble/constants';
 import {
   parseStorageInfo,
@@ -431,6 +432,164 @@ export class ProtocolHandler {
    */
   isTransferInProgress(recordingUuid: string): boolean {
     return this.activeTransfers.has(recordingUuid);
+  }
+
+  /**
+   * Stream a live recording transfer from device.
+   *
+   * Unlike transferRecording() which waits for EOF and returns a complete Buffer,
+   * this method calls back on every DATA packet and handles PAUSED packets
+   * (device caught up to recording write position, waiting for more audio).
+   *
+   * The transfer completes when an EOF packet is received (recording stopped
+   * and all data has been sent).
+   *
+   * @param onData  - called for each DATA packet with the audio chunk
+   * @param onPaused - called when device sends PAUSED (caught up, more data coming)
+   * @param onResumed - called when device resumes sending after PAUSED
+   * @returns Promise that resolves with { totalBytes, checksum } on EOF
+   */
+  async streamTransfer(
+    deviceId: string,
+    recordingUuid: string,
+    callbacks: {
+      onData: (sequenceNumber: number, data: Buffer) => void;
+      onPaused?: (bytesSent: number) => void;
+      onResumed?: () => void;
+    }
+  ): Promise<{ totalBytes: number; checksum: number }> {
+    if (!this.bleManager.isConnected(deviceId)) {
+      throw DeviceError.notConnected(deviceId);
+    }
+
+    if (this.activeTransfers.has(recordingUuid)) {
+      throw new TransferError(
+        'Transfer already in progress for this recording',
+        'TRANSFER_IN_PROGRESS',
+        recordingUuid
+      );
+    }
+
+    log.info('Starting streaming transfer', { deviceId, recordingUuid });
+
+    return new Promise((resolve, reject) => {
+      let totalBytes = 0;
+      let isPaused = false;
+
+      const state: TransferState = {
+        recordingUuid,
+        expectedSequence: 0,
+        receivedPackets: new Map(), // Not used for streaming — data is forwarded via callback
+        totalBytes: 0,
+        isComplete: false,
+      };
+
+      this.activeTransfers.set(recordingUuid, state);
+
+      const cleanup = () => {
+        if (state.timeoutId) clearTimeout(state.timeoutId);
+        state.subscription?.remove();
+        this.activeTransfers.delete(recordingUuid);
+      };
+
+      const resetTimeout = (ms: number) => {
+        if (state.timeoutId) clearTimeout(state.timeoutId);
+        state.timeoutId = setTimeout(() => {
+          cleanup();
+          reject(TransferError.timeout(recordingUuid));
+        }, ms);
+      };
+
+      // Subscribe to transfer data notifications
+      state.subscription = this.bleManager.subscribeToCharacteristic(
+        deviceId,
+        SERVICE_BOTA_STORAGE,
+        CHAR_RECORDING_TRANSFER,
+        async (data) => {
+          try {
+            // Skip ACK echo-back packets
+            const firstByte = data.readUInt8(0);
+            if (firstByte >= 0x10 && firstByte <= 0x12) {
+              return;
+            }
+
+            const packet = parseTransferPacket(data);
+
+            switch (packet.type) {
+              case 'data':
+                if (packet.data) {
+                  resetTimeout(TRANSFER_PACKET_TIMEOUT);
+                  if (isPaused) {
+                    isPaused = false;
+                    callbacks.onResumed?.();
+                  }
+                  totalBytes += packet.data.length;
+                  state.totalBytes = totalBytes;
+                  callbacks.onData(packet.sequenceNumber, Buffer.from(packet.data));
+                }
+                break;
+
+              case 'paused':
+                isPaused = true;
+                // Use longer timeout — recording may have long silence
+                resetTimeout(STREAMING_PAUSED_TIMEOUT);
+                callbacks.onPaused?.(packet.bytesSent ?? totalBytes);
+                break;
+
+              case 'eof':
+                cleanup();
+                log.info('Streaming transfer completed', {
+                  recordingUuid,
+                  totalBytes,
+                  checksum: packet.checksum,
+                });
+                // Send final ACK
+                await this.sendAck(deviceId, 'ack', 0);
+                resolve({
+                  totalBytes,
+                  checksum: packet.checksum ?? 0,
+                });
+                break;
+
+              case 'error':
+                cleanup();
+                reject(
+                  TransferError.deviceError(
+                    recordingUuid,
+                    packet.errorCode ?? 0xff
+                  )
+                );
+                break;
+            }
+          } catch (error) {
+            cleanup();
+            reject(error);
+          }
+        },
+        (error) => {
+          cleanup();
+          reject(TransferError.interrupted(recordingUuid, error));
+        }
+      );
+
+      // Send start transfer command (same command — firmware detects streaming mode
+      // based on whether the UUID matches the current recording)
+      const command = createTransferCommand('start', recordingUuid);
+      this.bleManager
+        .writeCharacteristic(
+          deviceId,
+          SERVICE_BOTA_STORAGE,
+          CHAR_TRANSFER_CONTROL,
+          command
+        )
+        .then(() => {
+          resetTimeout(TRANSFER_PACKET_TIMEOUT);
+        })
+        .catch((error) => {
+          cleanup();
+          reject(error);
+        });
+    });
   }
 
   /**

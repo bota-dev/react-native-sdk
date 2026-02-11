@@ -1,4 +1,15 @@
 {
+  "extraKnownMarketplaces": {
+    "bota-plugins": {
+      "source": {
+        "source": "directory",
+        "path": "../claude-code-plugins"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "bota-skills@bota-plugins": true
+  },
   "permissions": {
     "allow": [
       "Read",

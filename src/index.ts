@@ -29,6 +29,13 @@ export type {
   ReconnectOptions,
   Environment,
   ProvisioningResult,
+  DeviceCapabilities,
+  WiFiSecurityType,
+  WiFiStatus,
+  WiFiConfigGrant,
+  WiFiCredentials,
+  WiFiConfigResult,
+  WiFiStatusInfo,
 } from './models/Device';
 
 // Models - Recording

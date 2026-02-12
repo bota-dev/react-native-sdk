@@ -47,14 +47,14 @@ react-native-sdk/
 
 The SDK supports three upload methods based on device connectivity:
 
-- **Bluetooth Sync**: Device transfers audio to app via BLE, app uploads to backend (current implementation)
-- **WiFi Upload**: Device uploads directly to backend via WiFi (Bota Note - future)
+- **Bluetooth Sync**: Device transfers audio to app via BLE, app uploads to backend
+- **WiFi Upload**: Device uploads directly to backend via WiFi (Bota Note)
 - **Cellular Upload**: Device uploads directly to backend via cellular (Bota Pin 4G - future)
 
-For WiFi/Cellular devices, the SDK will support:
+For WiFi/Cellular devices, the SDK supports:
 
-- WiFi network configuration and provisioning
-- Grant-based credential encryption
+- WiFi network configuration and provisioning (`configureWiFi`, `getWiFiStatus`, `subscribeToWiFiStatus`)
+- Grant-based credential encryption (ChaCha20-Poly1305 via K_session)
 - Device capability detection (`CAP_WIFI_UPLOAD`, `CAP_LTE_UPLOAD`, `CAP_BLE_SYNC`)
 
 ### BLE Services (defined in `src/ble/constants.ts`)
@@ -63,7 +63,7 @@ For WiFi/Cellular devices, the SDK will support:
 - `SERVICE_BOTA_CONTROL` (B07A0002) - Device control, recording status
 - `SERVICE_BOTA_PROVISIONING` (B07A0003) - Device pairing/provisioning
 - `SERVICE_BOTA_STORAGE` (B07A0004) - Recording list and transfer
-- `SERVICE_BOTA_WIFI_CONFIG` (B07A0006) - WiFi configuration (future, for WiFi Upload)
+- `SERVICE_BOTA_WIFI_CONFIG` (B07A0006) - WiFi configuration (WiFi Upload)
 
 ### Device Types
 

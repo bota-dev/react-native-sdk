@@ -55,6 +55,13 @@ export const CHAR_TRANSFER_STATUS = 'B07A0004-0005-1000-8000-00805F9B34FB';
 export const CHAR_WIFI_GRANT = 'B07A0006-0001-1000-8000-00805F9B34FB';
 export const CHAR_WIFI_CREDENTIAL = 'B07A0006-0002-1000-8000-00805F9B34FB';
 export const CHAR_WIFI_STATUS = 'B07A0006-0003-1000-8000-00805F9B34FB';
+export const CHAR_WIFI_SCAN = 'B07A0006-0004-1000-8000-00805F9B34FB';
+
+// WiFi scan command / status codes
+export const WIFI_SCAN_CMD_START = 0x01;
+export const WIFI_SCAN_STATUS_SCANNING = 0x01;
+export const WIFI_SCAN_STATUS_DONE = 0x02;
+export const WIFI_SCAN_STATUS_ERROR = 0x03;
 
 // Device name prefixes for scanning
 export const DEVICE_NAME_PREFIX = 'Bota-';
@@ -190,6 +197,7 @@ export const CONNECTION_TIMEOUT = 30000;
 export const OPERATION_TIMEOUT = 10000;
 export const TRANSFER_PACKET_TIMEOUT = 2000;
 export const STREAMING_PAUSED_TIMEOUT = 60000; // Timeout when device is paused (caught up, waiting for more audio)
+export const WIFI_SCAN_TIMEOUT = 15000;
 
 // Transfer settings
 export const TRANSFER_WINDOW_SIZE = 4;

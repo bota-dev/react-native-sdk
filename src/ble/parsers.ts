@@ -15,6 +15,8 @@ import type {
   WiFiStatus,
   WiFiStatusInfo,
   WiFiConfigResult,
+  WiFiScanNetwork,
+  DeviceWiFiScanResult,
 } from '../models/Device';
 import type { DeviceRecording, AudioCodec, TransferPacket } from '../models/Recording';
 import {
@@ -61,6 +63,9 @@ import {
   WIFI_CONFIG_GRANT_EXPIRED,
   WIFI_CONFIG_DECRYPTION_ERROR,
   WIFI_CONFIG_STORAGE_ERROR,
+  WIFI_SCAN_CMD_START,
+  WIFI_SCAN_STATUS_DONE,
+  WIFI_SCAN_STATUS_ERROR,
 } from './constants';
 
 /**
@@ -521,4 +526,73 @@ export function parseWiFiConfigResult(data: Buffer): WiFiConfigResult {
  */
 export function createWiFiGrantPacket(grantBlob: string): Buffer {
   return Buffer.from(grantBlob, 'utf-8');
+}
+
+// ============================================================================
+// Device-Side WiFi Scanning Parsers
+// ============================================================================
+
+/**
+ * Create WiFi scan start command
+ */
+export function createWiFiScanCommand(): Buffer {
+  return Buffer.from([WIFI_SCAN_CMD_START]);
+}
+
+/**
+ * Parse device-side WiFi scan result from characteristic notification.
+ *
+ * Format:
+ * Byte 0:      Status (0x01=scanning, 0x02=done, 0x03=error)
+ * Byte 1:      Network count (when status=done)
+ * For each network:
+ *   Byte 0:    SSID length
+ *   Bytes 1-N: SSID (UTF-8)
+ *   Byte N+1:  Signal quality (0-100)
+ *   Byte N+2:  Flags (bit 0 = isCurrent)
+ *
+ * Returns null if status is not 'done' (still scanning).
+ */
+export function parseWiFiScanResult(data: Buffer): DeviceWiFiScanResult | null {
+  if (data.length < 2) {
+    throw new Error(`Invalid WiFi scan result length: ${data.length}`);
+  }
+
+  const status = data.readUInt8(0);
+
+  if (status === WIFI_SCAN_STATUS_ERROR) {
+    throw new Error('Device WiFi scan failed');
+  }
+
+  if (status !== WIFI_SCAN_STATUS_DONE) {
+    return null; // Still scanning
+  }
+
+  const count = data.readUInt8(1);
+  const networks: WiFiScanNetwork[] = [];
+  let currentSsid: string | null = null;
+  let offset = 2;
+
+  for (let i = 0; i < count && offset < data.length; i++) {
+    const ssidLen = data.readUInt8(offset);
+    offset += 1;
+
+    if (offset + ssidLen + 2 > data.length) break;
+
+    const ssid = data.slice(offset, offset + ssidLen).toString('utf-8');
+    offset += ssidLen;
+
+    const quality = data.readUInt8(offset);
+    offset += 1;
+
+    const flags = data.readUInt8(offset);
+    offset += 1;
+
+    const isCurrent = (flags & 0x01) !== 0;
+    if (isCurrent) currentSsid = ssid;
+
+    networks.push({ ssid, quality, isCurrent });
+  }
+
+  return { networks, currentSsid };
 }

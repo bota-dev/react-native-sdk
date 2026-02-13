@@ -36,6 +36,8 @@ export type {
   WiFiCredentials,
   WiFiConfigResult,
   WiFiStatusInfo,
+  WiFiScanNetwork,
+  DeviceWiFiScanResult,
 } from './models/Device';
 
 // Models - Recording
@@ -62,16 +64,6 @@ export type {
   RecordingManagerEvents,
   BotaClientEvents,
 } from './models/Status';
-
-// WiFi scanning
-export {
-  scan as scanWiFiNetworks,
-  scanNetworks,
-  getCurrentSSID,
-  requestWiFiPermission,
-  signalToQuality,
-} from './wifi';
-export type { WiFiNetwork, WiFiScanResult } from './wifi';
 
 // Errors
 export {

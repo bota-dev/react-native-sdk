@@ -43,6 +43,8 @@ import {
   RECORDING_RESULT_GRANT_EXPIRED,
   CHAR_DEVICE_COMMAND,
   DEVICE_CMD_FACTORY_RESET,
+  CHAR_WIFI_SCAN,
+  WIFI_SCAN_TIMEOUT,
 } from '../ble/constants';
 import {
   parsePairingState,
@@ -51,6 +53,8 @@ import {
   parseWiFiStatusInfo,
   parseWiFiConfigResult,
   createWiFiGrantPacket,
+  createWiFiScanCommand,
+  parseWiFiScanResult,
 } from '../ble/parsers';
 import type {
   DiscoveredDevice,
@@ -69,6 +73,7 @@ import type {
   WiFiCredentials,
   WiFiConfigResult,
   WiFiStatusInfo,
+  DeviceWiFiScanResult,
 } from '../models/Device';
 import type { DeviceManagerEvents } from '../models/Status';
 import {
@@ -1102,6 +1107,79 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         log.error('WiFi status subscription error', error);
       }
     );
+  }
+
+  /**
+   * Scan for WiFi networks using the device's WiFi radio.
+   * Sends a scan command via BLE and waits for the device to report results.
+   *
+   * @param device - Connected device with WiFi capability
+   * @returns Scan result with networks sorted by signal quality
+   */
+  async scanWiFiNetworks(device: ConnectedDevice): Promise<DeviceWiFiScanResult> {
+    log.info('Starting device-side WiFi scan', { deviceId: device.id });
+
+    if (!this.isConnected(device.id)) {
+      throw DeviceError.notConnected(device.id);
+    }
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        subscription.remove();
+        reject(new DeviceError(
+          'WiFi scan timeout',
+          'WIFI_SCAN_TIMEOUT',
+          device.id
+        ));
+      }, WIFI_SCAN_TIMEOUT);
+
+      const subscription = this.bleManager.subscribeToCharacteristic(
+        device.id,
+        SERVICE_BOTA_WIFI_CONFIG,
+        CHAR_WIFI_SCAN,
+        (data) => {
+          try {
+            const result = parseWiFiScanResult(data);
+            if (result) {
+              clearTimeout(timeout);
+              subscription.remove();
+              log.info('WiFi scan complete', {
+                deviceId: device.id,
+                networkCount: result.networks.length,
+              });
+              resolve(result);
+            }
+            // null = still scanning, keep waiting
+          } catch (error) {
+            clearTimeout(timeout);
+            subscription.remove();
+            reject(error);
+          }
+        },
+        (error) => {
+          clearTimeout(timeout);
+          subscription.remove();
+          reject(new DeviceError(
+            `WiFi scan error: ${error.message}`,
+            'WIFI_SCAN_ERROR',
+            device.id,
+            error
+          ));
+        }
+      );
+
+      // Send scan command after subscribing
+      this.bleManager.writeCharacteristic(
+        device.id,
+        SERVICE_BOTA_WIFI_CONFIG,
+        CHAR_WIFI_SCAN,
+        createWiFiScanCommand()
+      ).catch((error) => {
+        clearTimeout(timeout);
+        subscription.remove();
+        reject(error);
+      });
+    });
   }
 
   /**

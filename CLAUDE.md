@@ -53,7 +53,7 @@ The SDK supports three upload methods based on device connectivity:
 
 For WiFi/Cellular devices, the SDK supports:
 
-- WiFi network scanning (`scanNetworks`, `getCurrentSSID`, `requestWiFiPermission`) — requires optional `react-native-wifi-reborn` peer dep
+- Device-side WiFi network scanning via BLE (`DeviceManager.scanWiFiNetworks`) — no platform dependencies, works on iOS and Android
 - WiFi network configuration and provisioning (`configureWiFi`, `getWiFiStatus`, `subscribeToWiFiStatus`)
 - Grant-based credential encryption (ChaCha20-Poly1305 via K_session)
 - Device capability detection (`CAP_WIFI_UPLOAD`, `CAP_LTE_UPLOAD`, `CAP_BLE_SYNC`)

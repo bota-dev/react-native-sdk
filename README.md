@@ -10,14 +10,6 @@ npm install @bota-dev/react-native-sdk react-native-ble-plx
 yarn add @bota-dev/react-native-sdk react-native-ble-plx
 ```
 
-### Optional: WiFi Scanning
-
-For WiFi network scanning (required for WiFi-capable devices like Bota Note):
-
-```bash
-npm install react-native-wifi-reborn
-```
-
 ### iOS Setup
 
 1. Add Bluetooth permissions to `ios/YourApp/Info.plist`:
@@ -47,9 +39,7 @@ cd ios && pod install
 <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
 <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-<!-- Required for WiFi scanning (optional) -->
-<uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-<uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+
 ```
 
 ## Quick Start
@@ -81,11 +71,8 @@ await BotaClient.devices.provision(connectedDevice, deviceToken, 'production');
 
 // Check device capabilities
 if (connectedDevice.capabilities?.wifiUpload) {
-  // Scan for nearby WiFi networks (requires react-native-wifi-reborn)
-  import { requestWiFiPermission, scanNetworks, getCurrentSSID } from '@bota-dev/react-native-sdk';
-  await requestWiFiPermission();
-  const networks = await scanNetworks();      // Android: full scan, iOS: []
-  const currentSsid = await getCurrentSSID(); // Both platforms
+  // Scan for nearby WiFi networks via the device's radio (works on both iOS and Android)
+  const { networks, currentSsid } = await BotaClient.devices.scanWiFiNetworks(connectedDevice);
 
   // Configure WiFi on device
   // grant is a stateless JWT from your backend (POST /devices/{id}/wifi-config/grant)
@@ -208,29 +195,14 @@ BotaClient.recordings.on('uploadProgress', (taskId, progress) => {});
 
 ### WiFi Scanning
 
-Standalone utilities for scanning nearby WiFi networks. Requires optional `react-native-wifi-reborn` peer dependency.
+WiFi scanning is performed on the device itself via BLE — no platform-specific WiFi libraries needed. Works identically on iOS and Android.
 
 ```typescript
-import {
-  requestWiFiPermission,
-  scanNetworks,
-  getCurrentSSID,
-  signalToQuality,
-  type WiFiNetwork,
-} from '@bota-dev/react-native-sdk';
+// Scan for nearby WiFi networks via the device's radio
+const result = await BotaClient.devices.scanWiFiNetworks(connectedDevice);
 
-// Request location permission (required for WiFi scanning)
-const granted = await requestWiFiPermission();
-
-// Scan for networks (Android only — returns [] on iOS)
-const networks: WiFiNetwork[] = await scanNetworks();
-// Each network: { ssid, level (dBm), quality (0-100) }
-
-// Get currently connected SSID (both platforms)
-const ssid: string | null = await getCurrentSSID();
-
-// Convert dBm to quality percentage
-const quality = signalToQuality(-65); // => 50
+result.networks;    // WiFiScanNetwork[] — { ssid, quality (0-100), isCurrent }
+result.currentSsid; // string | null — currently connected SSID
 ```
 
 ### Types

@@ -336,3 +336,29 @@ export interface WiFiStatusInfo {
   /** Last connection error (if failed) */
   lastError?: string;
 }
+
+// ============================================================================
+// Device-Side WiFi Scanning Types
+// ============================================================================
+
+/**
+ * A WiFi network discovered by the device's WiFi radio
+ */
+export interface WiFiScanNetwork {
+  /** Network SSID */
+  ssid: string;
+  /** Signal quality 0-100 */
+  quality: number;
+  /** Whether this is the currently connected network */
+  isCurrent: boolean;
+}
+
+/**
+ * Result of a device-side WiFi scan
+ */
+export interface DeviceWiFiScanResult {
+  /** Discovered networks sorted by signal quality */
+  networks: WiFiScanNetwork[];
+  /** SSID of the currently connected network, if any */
+  currentSsid: string | null;
+}

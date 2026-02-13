@@ -421,6 +421,21 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
   }
 
   /**
+   * Check if a connected device has a specific BLE service
+   */
+  async hasService(deviceId: string, serviceUuid: string): Promise<boolean> {
+    const device = this.connectedDevices.get(deviceId);
+    if (!device) return false;
+
+    try {
+      const services = await device.services();
+      return services.some(s => s.uuid.toUpperCase() === serviceUuid.toUpperCase());
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Get a connected device
    */
   getConnectedDevice(deviceId: string): Device | undefined {

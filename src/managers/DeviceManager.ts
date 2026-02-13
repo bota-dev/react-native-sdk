@@ -218,6 +218,9 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       const pairingState = await this.readPairingState(device.id);
       const mtu = await this.bleManager.getMtu(device.id);
 
+      // Detect capabilities from discovered BLE services
+      const hasWifiService = await this.bleManager.hasService(device.id, SERVICE_BOTA_WIFI_CONFIG);
+
       const connectedDevice: ConnectedDevice = {
         id: device.id,
         serialNumber,
@@ -227,6 +230,12 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         isProvisioned: pairingState === 'paired',
         connectionState: 'connected',
         mtu,
+        capabilities: {
+          bleSync: true,
+          wifiUpload: hasWifiService,
+          lteUpload: device.deviceType === 'bota_pin_4g',
+          remoteRecord: true,
+        },
       };
 
       this.connectedDevices.set(device.id, connectedDevice);

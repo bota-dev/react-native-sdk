@@ -10,6 +10,14 @@ npm install @bota-dev/react-native-sdk react-native-ble-plx
 yarn add @bota-dev/react-native-sdk react-native-ble-plx
 ```
 
+### Optional: WiFi Scanning
+
+For WiFi network scanning (required for WiFi-capable devices like Bota Note):
+
+```bash
+npm install react-native-wifi-reborn
+```
+
 ### iOS Setup
 
 1. Add Bluetooth permissions to `ios/YourApp/Info.plist`:
@@ -69,9 +77,14 @@ const connectedDevice = await BotaClient.devices.connect(discoveredDevice);
 await BotaClient.devices.provision(connectedDevice, deviceToken, 'production');
 
 // Check device capabilities
-const status = await BotaClient.devices.getStatus(connectedDevice);
-if (status.capabilities & CAP_WIFI_UPLOAD) {
-  // Device supports WiFi Upload - optionally configure WiFi
+if (connectedDevice.capabilities?.wifiUpload) {
+  // Scan for nearby WiFi networks (requires react-native-wifi-reborn)
+  import { requestWiFiPermission, scanNetworks, getCurrentSSID } from '@bota-dev/react-native-sdk';
+  await requestWiFiPermission();
+  const networks = await scanNetworks();      // Android: full scan, iOS: []
+  const currentSsid = await getCurrentSSID(); // Both platforms
+
+  // Configure WiFi on device
   // grant is a stateless JWT from your backend (POST /devices/{id}/wifi-config/grant)
   await BotaClient.devices.configureWiFi(connectedDevice, ssid, password, grant);
 }
@@ -188,6 +201,33 @@ BotaClient.recordings.on('syncStarted', (uuid) => {});
 BotaClient.recordings.on('syncCompleted', (uuid, recordingId) => {});
 BotaClient.recordings.on('syncFailed', (uuid, error) => {});
 BotaClient.recordings.on('uploadProgress', (taskId, progress) => {});
+```
+
+### WiFi Scanning
+
+Standalone utilities for scanning nearby WiFi networks. Requires optional `react-native-wifi-reborn` peer dependency.
+
+```typescript
+import {
+  requestWiFiPermission,
+  scanNetworks,
+  getCurrentSSID,
+  signalToQuality,
+  type WiFiNetwork,
+} from '@bota-dev/react-native-sdk';
+
+// Request location permission (required for WiFi scanning)
+const granted = await requestWiFiPermission();
+
+// Scan for networks (Android only — returns [] on iOS)
+const networks: WiFiNetwork[] = await scanNetworks();
+// Each network: { ssid, level (dBm), quality (0-100) }
+
+// Get currently connected SSID (both platforms)
+const ssid: string | null = await getCurrentSSID();
+
+// Convert dBm to quality percentage
+const quality = signalToQuality(-65); // => 50
 ```
 
 ### Types

@@ -48,7 +48,8 @@
     "react-native": ">=0.72.0",
     "react-native-ble-plx": ">=3.0.0",
     "@react-native-async-storage/async-storage": ">=1.21.0",
-    "react-native-quick-crypto": ">=0.7.0"
+    "react-native-quick-crypto": ">=0.7.0",
+    "react-native-wifi-reborn": ">=4.0.0"
   },
   "peerDependenciesMeta": {
     "react-native-ble-plx": {
@@ -58,6 +59,9 @@
       "optional": false
     },
     "react-native-quick-crypto": {
+      "optional": true
+    },
+    "react-native-wifi-reborn": {
       "optional": true
     }
   },

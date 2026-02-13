@@ -63,6 +63,16 @@ export type {
   BotaClientEvents,
 } from './models/Status';
 
+// WiFi scanning
+export {
+  scan as scanWiFiNetworks,
+  scanNetworks,
+  getCurrentSSID,
+  requestWiFiPermission,
+  signalToQuality,
+} from './wifi';
+export type { WiFiNetwork, WiFiScanResult } from './wifi';
+
 // Errors
 export {
   BotaError,

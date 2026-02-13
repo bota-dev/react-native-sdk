@@ -53,6 +53,7 @@ The SDK supports three upload methods based on device connectivity:
 
 For WiFi/Cellular devices, the SDK supports:
 
+- WiFi network scanning (`scanNetworks`, `getCurrentSSID`, `requestWiFiPermission`) — requires optional `react-native-wifi-reborn` peer dep
 - WiFi network configuration and provisioning (`configureWiFi`, `getWiFiStatus`, `subscribeToWiFiStatus`)
 - Grant-based credential encryption (ChaCha20-Poly1305 via K_session)
 - Device capability detection (`CAP_WIFI_UPLOAD`, `CAP_LTE_UPLOAD`, `CAP_BLE_SYNC`)
@@ -160,6 +161,11 @@ await BotaClient.devices.provision(connected, deviceToken, 'production');
 const recordings = await BotaClient.recordings.listRecordings(connected);
 for await (const progress of BotaClient.recordings.syncRecording(...)) { ... }
 ```
+
+## Documentation Sync
+
+- When the SDK's public API changes (new exports, renamed methods, changed signatures), update the public documentation (`docs/` at repo root) correspondingly if needed.
+- This includes API reference pages, Quick Start guides, and any code examples that reference changed APIs.
 
 ## Related Repositories
 

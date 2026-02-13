@@ -47,6 +47,9 @@ cd ios && pod install
 <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
 <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+<!-- Required for WiFi scanning (optional) -->
+<uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+<uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
 ```
 
 ## Quick Start

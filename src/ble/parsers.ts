@@ -554,7 +554,7 @@ export function createWiFiScanCommand(): Buffer {
  * Returns null if status is not 'done' (still scanning).
  */
 export function parseWiFiScanResult(data: Buffer): DeviceWiFiScanResult | null {
-  if (data.length < 2) {
+  if (data.length < 1) {
     throw new Error(`Invalid WiFi scan result length: ${data.length}`);
   }
 
@@ -565,7 +565,11 @@ export function parseWiFiScanResult(data: Buffer): DeviceWiFiScanResult | null {
   }
 
   if (status !== WIFI_SCAN_STATUS_DONE) {
-    return null; // Still scanning
+    return null; // Still scanning (single-byte status is valid)
+  }
+
+  if (data.length < 2) {
+    throw new Error(`Invalid WiFi scan done result length: ${data.length}`);
   }
 
   const count = data.readUInt8(1);

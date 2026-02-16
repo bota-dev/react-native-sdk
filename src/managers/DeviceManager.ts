@@ -1105,7 +1105,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       },
       (error) => {
         // Characteristic may not exist on older firmware — log as debug, not error
-        log.debug('WiFi status subscription ended', error instanceof Error ? error : undefined);
+        log.debug('WiFi status subscription ended');
       }
     );
   }

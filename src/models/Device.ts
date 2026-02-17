@@ -174,7 +174,7 @@ export interface ScanOptions {
 /**
  * Environment for API endpoint configuration
  */
-export type Environment = 'production' | 'sandbox';
+export type Environment = 'development' | 'production';
 
 /**
  * Provisioning result

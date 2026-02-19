@@ -179,7 +179,9 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
       { allowDuplicates },
       (error, device) => {
         if (error) {
-          log.error('Scan error', error);
+          // Scan errors during reconnection are often transient - log as warning
+          const errorDesc = describeBleError(error);
+          log.warn(`Scan error: ${errorDesc}`, { error });
           this.stopScan();
           clearTimeout(scanTimeout);
           return;

@@ -4,6 +4,17 @@
 
 import type { LogLevel } from '../models/Status';
 
+export type SdkLogLevel = Exclude<LogLevel, 'none'>;
+
+export interface SdkLogEntry {
+  level: SdkLogLevel;
+  message: string;
+  context?: Record<string, unknown>;
+  timestamp: Date;
+}
+
+export type LogHandler = (entry: SdkLogEntry) => void;
+
 const LOG_LEVELS: Record<LogLevel, number> = {
   debug: 0,
   info: 1,
@@ -18,6 +29,7 @@ const LOG_LEVELS: Record<LogLevel, number> = {
 class Logger {
   private level: LogLevel = 'warn';
   private prefix = '[BotaSDK]';
+  private handler: LogHandler | null = null;
 
   /**
    * Set the log level
@@ -31,6 +43,13 @@ class Logger {
    */
   getLevel(): LogLevel {
     return this.level;
+  }
+
+  /**
+   * Set an external log handler that receives all log entries passing the level filter
+   */
+  setHandler(handler: LogHandler | null): void {
+    this.handler = handler;
   }
 
   /**
@@ -54,11 +73,19 @@ class Logger {
   }
 
   /**
+   * Emit a log entry to the external handler
+   */
+  private emit(level: SdkLogLevel, message: string, context?: Record<string, unknown>): void {
+    this.handler?.({ level, message, context, timestamp: new Date() });
+  }
+
+  /**
    * Log a debug message
    */
   debug(message: string, context?: Record<string, unknown>): void {
     if (this.shouldLog('debug')) {
       console.debug(this.format('debug', message, context));
+      this.emit('debug', message, context);
     }
   }
 
@@ -68,6 +95,7 @@ class Logger {
   info(message: string, context?: Record<string, unknown>): void {
     if (this.shouldLog('info')) {
       console.info(this.format('info', message, context));
+      this.emit('info', message, context);
     }
   }
 
@@ -77,6 +105,7 @@ class Logger {
   warn(message: string, context?: Record<string, unknown>): void {
     if (this.shouldLog('warn')) {
       console.warn(this.format('warn', message, context));
+      this.emit('warn', message, context);
     }
   }
 
@@ -89,6 +118,7 @@ class Logger {
         ? { ...context, error: error.message, stack: error.stack }
         : context;
       console.error(this.format('error', message, fullContext));
+      this.emit('error', message, fullContext);
     }
   }
 

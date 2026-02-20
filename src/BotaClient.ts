@@ -16,7 +16,8 @@ import type {
   BotaClientEvents,
 } from './models/Status';
 import { SdkError } from './utils/errors';
-import { logger } from './utils/logger';
+import { logger, type LogHandler } from './utils/logger';
+import type { LogLevel } from './models/Status';
 
 const log = logger.tag('BotaClient');
 
@@ -192,6 +193,23 @@ class BotaClientImpl extends EventEmitter<BotaClientEvents> {
     }
 
     await this._bleManager.waitForReady(timeoutMs);
+  }
+
+  /**
+   * Change the SDK log level at runtime without reinitializing
+   */
+  setLogLevel(level: LogLevel): void {
+    logger.setLevel(level);
+    if (this._config) {
+      this._config.logLevel = level;
+    }
+  }
+
+  /**
+   * Set an external log handler to receive SDK log entries
+   */
+  setLogHandler(handler: LogHandler | null): void {
+    logger.setHandler(handler);
   }
 
   /**

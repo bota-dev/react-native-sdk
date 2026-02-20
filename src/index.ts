@@ -65,6 +65,9 @@ export type {
   BotaClientEvents,
 } from './models/Status';
 
+// Logger types
+export type { LogHandler, SdkLogEntry, SdkLogLevel } from './utils/logger';
+
 // Errors
 export {
   BotaError,

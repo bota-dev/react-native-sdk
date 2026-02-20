@@ -190,12 +190,6 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
         // Prioritize localName (from current advertisement) over name (iOS cached)
         const deviceName = device?.localName || device?.name;
 
-        // Log all devices for debugging
-        if (deviceName) {
-          log.info('BLE device found', { name: deviceName, localName: device?.localName, cachedName: device?.name, id: device?.id, rssi: device?.rssi });
-        }
-
-        // For now, show all devices with a name (comment out Bota filter for debugging)
         if (!device || !deviceName) {
           return;
         }
@@ -233,11 +227,6 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
 
         // Store and emit
         this.discoveredDevices.set(device.id, discovered);
-        log.debug('Device discovered', {
-          id: discovered.id,
-          name: discovered.name,
-          type: discovered.deviceType,
-        });
         this.emit('deviceDiscovered', discovered);
       }
     );
@@ -436,7 +425,7 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
       const services = await device.services();
       const serviceUuids = services.map(s => s.uuid);
       const found = services.some(s => s.uuid.toUpperCase() === serviceUuid.toUpperCase());
-      log.debug('hasService check', {
+      log.info('hasService check', {
         deviceId,
         targetService: serviceUuid,
         discoveredServices: serviceUuids,
@@ -499,11 +488,7 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
       return Buffer.from(characteristic.value, 'base64');
     } catch (error) {
       const msg = describeBleError(error as BleError);
-      log.error('Read characteristic failed', new Error(msg), {
-        deviceId,
-        serviceUuid,
-        characteristicUuid,
-      });
+      log.debug('Read characteristic failed', { deviceId, characteristicUuid, reason: msg });
       throw new DeviceError(
         `Failed to read characteristic: ${msg}`,
         'READ_FAILED',
@@ -583,25 +568,8 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
       characteristicUuid,
       (error, characteristic) => {
         if (error) {
-          // Handle subscription cancellation gracefully - this is expected when we remove the subscription
           const errorMessage = error.message || 'Unknown BLE error';
-          const isExpected = !error.message || // null/empty message typically means device went away
-                              errorMessage.includes('cancelled') ||
-                              errorMessage.includes('disconnected') ||
-                              error.errorCode === 2 || // BleErrorCode.OperationCancelled
-                              error.errorCode === 201 || // BleErrorCode.DeviceDisconnected
-                              error.errorCode === 100 || // BleErrorCode.CharacteristicsNotFound
-                              error.errorCode === 101 || // BleErrorCode.ServicesNotFound
-                              !this.connectedDevices.has(deviceId); // Device already removed
-
-          if (!isExpected) {
-            log.error('Notification error', new Error(errorMessage), {
-              deviceId,
-              characteristicUuid,
-            });
-          } else {
-            log.debug('Subscription ended', { deviceId, charShort, reason: errorMessage });
-          }
+          log.debug('Subscription ended', { deviceId, charShort, reason: errorMessage });
           onError?.(new Error(errorMessage));
           return;
         }

@@ -508,7 +508,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         }
       },
       (error) => {
-        log.error('Status subscription error', error);
+        log.debug(`Status subscription ended: ${error?.message}`);
       }
     );
 
@@ -834,7 +834,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         }
       },
       (error) => {
-        log.error('Recording state subscription error', error);
+        log.debug(`Recording state subscription ended: ${error?.message}`);
       }
     );
 
@@ -1053,7 +1053,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
       return status;
     } catch (error) {
-      log.error('Failed to read WiFi status', error instanceof Error ? error : undefined);
+      log.debug('Failed to read WiFi status', { reason: error instanceof Error ? error.message : 'Unknown' });
       throw new DeviceError(
         `Failed to read WiFi status: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'WIFI_STATUS_ERROR',

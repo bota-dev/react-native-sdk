@@ -427,12 +427,24 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
    */
   async hasService(deviceId: string, serviceUuid: string): Promise<boolean> {
     const device = this.connectedDevices.get(deviceId);
-    if (!device) return false;
+    if (!device) {
+      log.warn('hasService: device not in connectedDevices', { deviceId });
+      return false;
+    }
 
     try {
       const services = await device.services();
-      return services.some(s => s.uuid.toUpperCase() === serviceUuid.toUpperCase());
-    } catch {
+      const serviceUuids = services.map(s => s.uuid);
+      const found = services.some(s => s.uuid.toUpperCase() === serviceUuid.toUpperCase());
+      log.debug('hasService check', {
+        deviceId,
+        targetService: serviceUuid,
+        discoveredServices: serviceUuids,
+        found,
+      });
+      return found;
+    } catch (error) {
+      log.error('hasService failed', error as Error, { deviceId, serviceUuid });
       return false;
     }
   }

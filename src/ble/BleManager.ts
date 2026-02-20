@@ -573,22 +573,24 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
         if (error) {
           // Handle subscription cancellation gracefully - this is expected when we remove the subscription
           const errorMessage = error.message || 'Unknown BLE error';
-          const isCancelled = !error.message || // null/empty message typically means device went away
+          const isExpected = !error.message || // null/empty message typically means device went away
                               errorMessage.includes('cancelled') ||
                               errorMessage.includes('disconnected') ||
                               error.errorCode === 2 || // BleErrorCode.OperationCancelled
                               error.errorCode === 201 || // BleErrorCode.DeviceDisconnected
+                              error.errorCode === 100 || // BleErrorCode.CharacteristicsNotFound
+                              error.errorCode === 101 || // BleErrorCode.ServicesNotFound
                               !this.connectedDevices.has(deviceId); // Device already removed
 
-          if (!isCancelled) {
+          if (!isExpected) {
             log.error('Notification error', new Error(errorMessage), {
               deviceId,
               characteristicUuid,
             });
-            onError?.(new Error(errorMessage));
           } else {
             log.debug('Subscription ended', { deviceId, charShort, reason: errorMessage });
           }
+          onError?.(new Error(errorMessage));
           return;
         }
 

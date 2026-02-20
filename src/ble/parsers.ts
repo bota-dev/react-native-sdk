@@ -462,11 +462,17 @@ export function parseWiFiStatus(byte: number): WiFiStatus {
  * Bytes 35+:   Error message (if status=failed)
  */
 export function parseWiFiStatusInfo(data: Buffer): WiFiStatusInfo {
-  if (data.length < 3) {
+  if (data.length < 1) {
     throw new Error(`Invalid WiFi status data length: ${data.length}`);
   }
 
   const status = parseWiFiStatus(data.readUInt8(0));
+
+  // Short notifications (1-2 bytes) come from config result codes — return status only
+  if (data.length < 3) {
+    return { status };
+  }
+
   const signalStrength = data.readUInt8(1);
   const ssidLength = data.readUInt8(2);
 

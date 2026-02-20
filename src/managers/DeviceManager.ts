@@ -81,11 +81,8 @@ import {
   ProvisioningError,
 } from '../utils/errors';
 import { logger } from '../utils/logger';
-import {
-  deriveSessionKey,
-  encryptWiFiCredentials,
-  formatWiFiCredentialPacket,
-} from '../utils/crypto';
+// TODO: Re-enable crypto imports once firmware mbedtls boot crash is resolved
+// import { deriveSessionKey, encryptWiFiCredentials, formatWiFiCredentialPacket } from '../utils/crypto';
 
 const log = logger.tag('DeviceManager');
 
@@ -975,24 +972,26 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
       log.debug('WiFi grant submitted');
 
-      // Step 2: Derive K_session from grant
-      const sessionKey = deriveSessionKey(grant.grantBlob);
+      // Step 2: Subscribe to result BEFORE writing credentials (avoid race)
+      const resultPromise = this.waitForWiFiConfigResult(deviceId);
 
-      // Step 3: Encrypt WiFi credentials with K_session
-      const encrypted = encryptWiFiCredentials(
-        credentials.ssid,
-        credentials.password,
-        sessionKey
-      );
+      // Step 3: Build plaintext credential packet
+      // TODO: Re-enable encryption once firmware mbedtls boot crash is resolved
+      // Format: [ssid_len (1)][ssid][pwd_len (1)][password]
+      const ssidBuf = Buffer.from(credentials.ssid, 'utf-8');
+      const pwdBuf = Buffer.from(credentials.password, 'utf-8');
+      const credentialPacket = Buffer.alloc(1 + ssidBuf.length + 1 + pwdBuf.length);
+      credentialPacket.writeUInt8(ssidBuf.length, 0);
+      ssidBuf.copy(credentialPacket, 1);
+      credentialPacket.writeUInt8(pwdBuf.length, 1 + ssidBuf.length);
+      pwdBuf.copy(credentialPacket, 1 + ssidBuf.length + 1);
 
-      // Step 4: Format credential packet for BLE transmission
-      const credentialPacket = formatWiFiCredentialPacket(encrypted);
-
-      log.debug('Sending encrypted WiFi credentials', {
+      log.debug('Sending WiFi credentials (plaintext mode)', {
         packetSize: credentialPacket.length,
+        ssidLen: ssidBuf.length,
       });
 
-      // Step 5: Write encrypted credentials to device
+      // Step 4: Write credentials to device
       await this.bleManager.writeCharacteristic(
         deviceId,
         SERVICE_BOTA_WIFI_CONFIG,
@@ -1000,8 +999,8 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         credentialPacket
       );
 
-      // Step 6: Wait for configuration result
-      const result = await this.waitForWiFiConfigResult(deviceId);
+      // Step 5: Wait for configuration result (subscription set up before write)
+      const result = await resultPromise;
 
       if (result.success) {
         log.info('WiFi configuration successful', { deviceId });

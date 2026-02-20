@@ -1021,6 +1021,41 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   }
 
   /**
+   * Disconnect WiFi on device and forget stored credentials.
+   *
+   * @param deviceId - Connected device ID
+   * @returns Configuration result
+   */
+  async disconnectWiFi(deviceId: string): Promise<WiFiConfigResult> {
+    log.info('Disconnecting WiFi on device', { deviceId });
+
+    try {
+      // Subscribe to result before writing
+      const resultPromise = this.waitForWiFiConfigResult(deviceId);
+
+      // Send disconnect command: ssid_len=0
+      await this.bleManager.writeCharacteristic(
+        deviceId,
+        SERVICE_BOTA_WIFI_CONFIG,
+        CHAR_WIFI_CREDENTIAL,
+        Buffer.from([0x00])
+      );
+
+      const result = await resultPromise;
+      log.info('WiFi disconnect result', { deviceId, success: result.success });
+      return result;
+    } catch (error) {
+      log.error('WiFi disconnect error', error instanceof Error ? error : undefined);
+      throw new DeviceError(
+        `Failed to disconnect WiFi: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'WIFI_DISCONNECT_ERROR',
+        deviceId,
+        error instanceof Error ? error : undefined
+      );
+    }
+  }
+
+  /**
    * Get WiFi connection status from device.
    *
    * @param deviceId - Connected device ID

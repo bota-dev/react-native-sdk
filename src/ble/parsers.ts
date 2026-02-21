@@ -640,9 +640,9 @@ function idToConnectionType(id: number): ConnectionType | null {
  * Layout:
  * Byte 0: version (0x01)
  * Byte 1: enabled_mask — bit 0: WiFi, bit 1: 4G (BLE always on)
- * Byte 2: upload_priority[0] — 1=WiFi, 2=BLE, 3=4G, 0=end
- * Byte 3: upload_priority[1]
- * Byte 4: upload_priority[2]
+ * Byte 2: upload_network_preference[0] — 1=WiFi, 2=BLE, 3=4G, 0=end
+ * Byte 3: upload_network_preference[1]
+ * Byte 4: upload_network_preference[2]
  * Bytes 5-7: reserved (0x00)
  */
 export function serializeConnectionSettings(settings: DeviceConnectionSettings): Buffer {
@@ -655,8 +655,8 @@ export function serializeConnectionSettings(settings: DeviceConnectionSettings):
   buf.writeUInt8(mask, 1);
 
   for (let i = 0; i < 3; i++) {
-    if (i < settings.upload_priority.length) {
-      buf.writeUInt8(connectionTypeToId(settings.upload_priority[i]), 2 + i);
+    if (i < settings.upload_network_preference.length) {
+      buf.writeUInt8(connectionTypeToId(settings.upload_network_preference[i]), 2 + i);
     } else {
       buf.writeUInt8(0, 2 + i); // end marker
     }
@@ -674,7 +674,7 @@ export function parseConnectionSettings(data: Buffer): DeviceConnectionSettings 
     // Unknown version or empty — return defaults
     return {
       enabled_connections: { wifi: true, cellular: true },
-      upload_priority: ['wifi', 'ble', 'cellular'],
+      upload_network_preference: ['wifi', 'ble', 'cellular'],
     };
   }
 
@@ -684,13 +684,13 @@ export function parseConnectionSettings(data: Buffer): DeviceConnectionSettings 
     cellular: (mask & 0x02) !== 0,
   };
 
-  const upload_priority: ConnectionType[] = [];
+  const upload_network_preference: ConnectionType[] = [];
   for (let i = 0; i < 3; i++) {
     const id = data.readUInt8(2 + i);
     if (id === 0) break;
     const type = idToConnectionType(id);
-    if (type) upload_priority.push(type);
+    if (type) upload_network_preference.push(type);
   }
 
-  return { enabled_connections, upload_priority };
+  return { enabled_connections, upload_network_preference };
 }

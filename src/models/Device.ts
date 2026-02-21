@@ -282,7 +282,7 @@ export interface RecordingState {
 // ============================================================================
 
 /**
- * Connection type for upload priority ordering
+ * Connection type for network preference ordering
  */
 export type ConnectionType = 'wifi' | 'ble' | 'cellular';
 
@@ -294,7 +294,7 @@ export interface DeviceConnectionSettings {
     wifi: boolean;
     cellular: boolean;
   };
-  upload_priority: ConnectionType[];
+  upload_network_preference: ConnectionType[];
 }
 
 // ============================================================================

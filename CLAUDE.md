@@ -171,9 +171,9 @@ The SDK provides methods to read/write per-device connection settings via BLE:
 
 **Types:**
 - `ConnectionType = 'wifi' | 'ble' | 'cellular'`
-- `DeviceConnectionSettings` — `{ enabled_connections: { wifi: boolean, cellular: boolean }, upload_priority: ConnectionType[] }`
+- `DeviceConnectionSettings` — `{ enabled_connections: { wifi: boolean, cellular: boolean }, upload_network_preference: ConnectionType[] }`
 
-**BLE binary layout (8 bytes):** version(0x01), enabled_mask(bit 0: WiFi, bit 1: 4G), upload_pri[3] (1=WiFi, 2=BLE, 3=4G, 0=end), reserved[3].
+**BLE binary layout (8 bytes):** version(0x01), enabled_mask(bit 0: WiFi, bit 1: 4G), upload_net_pref[3] (1=WiFi, 2=BLE, 3=4G, 0=end), reserved[3].
 
 Serialization helpers live in `src/ble/parsers.ts`: `serializeConnectionSettings()` and `parseConnectionSettings()`.
 

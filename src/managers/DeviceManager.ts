@@ -539,7 +539,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
   /**
    * Read connection settings from device via BLE DEVICE_SETTINGS characteristic.
-   * Returns parsed settings (enabled connections + upload priority).
+   * Returns parsed settings (enabled connections + network preference).
    */
   async readConnectionSettings(device: ConnectedDevice): Promise<DeviceConnectionSettings> {
     log.debug('Reading connection settings', { deviceId: device.id });

@@ -162,6 +162,21 @@ const recordings = await BotaClient.recordings.listRecordings(connected);
 for await (const progress of BotaClient.recordings.syncRecording(...)) { ... }
 ```
 
+## Connection Settings
+
+The SDK provides methods to read/write per-device connection settings via BLE:
+
+- `DeviceManager.readConnectionSettings(device)` — reads 8-byte binary from `DEVICE_SETTINGS` characteristic, returns `DeviceConnectionSettings`
+- `DeviceManager.writeConnectionSettings(device, settings)` — serializes `DeviceConnectionSettings` to 8 bytes and writes to device
+
+**Types:**
+- `ConnectionType = 'wifi' | 'ble' | 'cellular'`
+- `DeviceConnectionSettings` — `{ enabled_connections: { wifi: boolean, cellular: boolean }, upload_priority: ConnectionType[] }`
+
+**BLE binary layout (8 bytes):** version(0x01), enabled_mask(bit 0: WiFi, bit 1: 4G), upload_pri[3] (1=WiFi, 2=BLE, 3=4G, 0=end), reserved[3].
+
+Serialization helpers live in `src/ble/parsers.ts`: `serializeConnectionSettings()` and `parseConnectionSettings()`.
+
 ## Documentation Sync
 
 - When the SDK's public API changes (new exports, renamed methods, changed signatures), update the public documentation (`docs/` at repo root) correspondingly if needed.

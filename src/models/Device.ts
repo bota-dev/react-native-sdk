@@ -278,6 +278,26 @@ export interface RecordingState {
 }
 
 // ============================================================================
+// Connection Settings Types
+// ============================================================================
+
+/**
+ * Connection type for upload priority ordering
+ */
+export type ConnectionType = 'wifi' | 'ble' | 'cellular';
+
+/**
+ * Per-device connection settings read/written via BLE DEVICE_SETTINGS characteristic
+ */
+export interface DeviceConnectionSettings {
+  enabled_connections: {
+    wifi: boolean;
+    cellular: boolean;
+  };
+  upload_priority: ConnectionType[];
+}
+
+// ============================================================================
 // WiFi Upload Configuration Types
 // ============================================================================
 

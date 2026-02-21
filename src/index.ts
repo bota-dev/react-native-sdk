@@ -38,6 +38,8 @@ export type {
   WiFiStatusInfo,
   WiFiScanNetwork,
   DeviceWiFiScanResult,
+  ConnectionType,
+  DeviceConnectionSettings,
 } from './models/Device';
 
 // Models - Recording

@@ -17,6 +17,8 @@ import type {
   WiFiConfigResult,
   WiFiScanNetwork,
   DeviceWiFiScanResult,
+  ConnectionType,
+  DeviceConnectionSettings,
 } from '../models/Device';
 import type { DeviceRecording, AudioCodec, TransferPacket } from '../models/Recording';
 import {
@@ -605,4 +607,90 @@ export function parseWiFiScanResult(data: Buffer): DeviceWiFiScanResult | null {
   }
 
   return { networks, currentSsid };
+}
+
+// ============================================================================
+// Connection Settings Serialization
+// ============================================================================
+
+const CONN_ID_WIFI = 1;
+const CONN_ID_BLE = 2;
+const CONN_ID_4G = 3;
+
+function connectionTypeToId(type: ConnectionType): number {
+  switch (type) {
+    case 'wifi': return CONN_ID_WIFI;
+    case 'ble': return CONN_ID_BLE;
+    case 'cellular': return CONN_ID_4G;
+  }
+}
+
+function idToConnectionType(id: number): ConnectionType | null {
+  switch (id) {
+    case CONN_ID_WIFI: return 'wifi';
+    case CONN_ID_BLE: return 'ble';
+    case CONN_ID_4G: return 'cellular';
+    default: return null;
+  }
+}
+
+/**
+ * Serialize connection settings to 8-byte buffer for BLE DEVICE_SETTINGS characteristic.
+ *
+ * Layout:
+ * Byte 0: version (0x01)
+ * Byte 1: enabled_mask — bit 0: WiFi, bit 1: 4G (BLE always on)
+ * Byte 2: upload_priority[0] — 1=WiFi, 2=BLE, 3=4G, 0=end
+ * Byte 3: upload_priority[1]
+ * Byte 4: upload_priority[2]
+ * Bytes 5-7: reserved (0x00)
+ */
+export function serializeConnectionSettings(settings: DeviceConnectionSettings): Buffer {
+  const buf = Buffer.alloc(8);
+  buf.writeUInt8(0x01, 0); // version
+
+  let mask = 0;
+  if (settings.enabled_connections.wifi) mask |= 0x01;
+  if (settings.enabled_connections.cellular) mask |= 0x02;
+  buf.writeUInt8(mask, 1);
+
+  for (let i = 0; i < 3; i++) {
+    if (i < settings.upload_priority.length) {
+      buf.writeUInt8(connectionTypeToId(settings.upload_priority[i]), 2 + i);
+    } else {
+      buf.writeUInt8(0, 2 + i); // end marker
+    }
+  }
+
+  return buf;
+}
+
+/**
+ * Parse 8-byte buffer from BLE DEVICE_SETTINGS characteristic into connection settings.
+ * Returns default settings if version byte is not 0x01.
+ */
+export function parseConnectionSettings(data: Buffer): DeviceConnectionSettings {
+  if (data.length < 8 || data.readUInt8(0) !== 0x01) {
+    // Unknown version or empty — return defaults
+    return {
+      enabled_connections: { wifi: true, cellular: true },
+      upload_priority: ['wifi', 'ble', 'cellular'],
+    };
+  }
+
+  const mask = data.readUInt8(1);
+  const enabled_connections = {
+    wifi: (mask & 0x01) !== 0,
+    cellular: (mask & 0x02) !== 0,
+  };
+
+  const upload_priority: ConnectionType[] = [];
+  for (let i = 0; i < 3; i++) {
+    const id = data.readUInt8(2 + i);
+    if (id === 0) break;
+    const type = idToConnectionType(id);
+    if (type) upload_priority.push(type);
+  }
+
+  return { enabled_connections, upload_priority };
 }

@@ -44,6 +44,7 @@ import {
   CHAR_DEVICE_COMMAND,
   DEVICE_CMD_FACTORY_RESET,
   CHAR_WIFI_SCAN,
+  CHAR_DEVICE_SETTINGS,
   WIFI_SCAN_TIMEOUT,
 } from '../ble/constants';
 import {
@@ -55,6 +56,8 @@ import {
   createWiFiGrantPacket,
   createWiFiScanCommand,
   parseWiFiScanResult,
+  serializeConnectionSettings,
+  parseConnectionSettings,
 } from '../ble/parsers';
 import type {
   DiscoveredDevice,
@@ -74,6 +77,7 @@ import type {
   WiFiConfigResult,
   WiFiStatusInfo,
   DeviceWiFiScanResult,
+  DeviceConnectionSettings,
 } from '../models/Device';
 import type { DeviceManagerEvents } from '../models/Status';
 import {
@@ -530,6 +534,39 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       SERVICE_BOTA_CONTROL,
       CHAR_TIME_SYNC,
       timeSyncData
+    );
+  }
+
+  /**
+   * Read connection settings from device via BLE DEVICE_SETTINGS characteristic.
+   * Returns parsed settings (enabled connections + upload priority).
+   */
+  async readConnectionSettings(device: ConnectedDevice): Promise<DeviceConnectionSettings> {
+    log.debug('Reading connection settings', { deviceId: device.id });
+
+    const data = await this.bleManager.readCharacteristic(
+      device.id,
+      SERVICE_BOTA_PROVISIONING,
+      CHAR_DEVICE_SETTINGS
+    );
+
+    return parseConnectionSettings(data);
+  }
+
+  /**
+   * Write connection settings to device via BLE DEVICE_SETTINGS characteristic.
+   * Serializes settings to 8-byte binary format.
+   */
+  async writeConnectionSettings(device: ConnectedDevice, settings: DeviceConnectionSettings): Promise<void> {
+    log.debug('Writing connection settings', { deviceId: device.id, settings });
+
+    const data = serializeConnectionSettings(settings);
+
+    await this.bleManager.writeCharacteristic(
+      device.id,
+      SERVICE_BOTA_PROVISIONING,
+      CHAR_DEVICE_SETTINGS,
+      data
     );
   }
 

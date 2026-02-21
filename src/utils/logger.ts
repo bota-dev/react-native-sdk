@@ -28,7 +28,7 @@ const LOG_LEVELS: Record<LogLevel, number> = {
  */
 class Logger {
   private level: LogLevel = 'warn';
-  private prefix = '[BotaSDK]';
+  private prefix = '[Bota SDK]';
   private handler: LogHandler | null = null;
 
   /**

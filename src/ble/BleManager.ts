@@ -340,6 +340,10 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
     log.info('Connecting to device', { deviceId });
 
     try {
+      // Cancel any stale connection first (iOS may cache disconnected state
+      // after supervision timeout, preventing a fresh connect)
+      try { await this.manager.cancelDeviceConnection(deviceId); } catch { /* ignore */ }
+
       // Connect with timeout
       const device = await this.manager.connectToDevice(deviceId, {
         timeout: CONNECTION_TIMEOUT,

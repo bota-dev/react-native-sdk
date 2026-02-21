@@ -84,8 +84,11 @@ class Logger {
    */
   debug(message: string, context?: Record<string, unknown>): void {
     if (this.shouldLog('debug')) {
-      console.debug(this.format('debug', message, context));
-      this.emit('debug', message, context);
+      if (this.handler) {
+        this.emit('debug', message, context);
+      } else {
+        console.debug(this.format('debug', message, context));
+      }
     }
   }
 
@@ -94,8 +97,11 @@ class Logger {
    */
   info(message: string, context?: Record<string, unknown>): void {
     if (this.shouldLog('info')) {
-      console.info(this.format('info', message, context));
-      this.emit('info', message, context);
+      if (this.handler) {
+        this.emit('info', message, context);
+      } else {
+        console.info(this.format('info', message, context));
+      }
     }
   }
 
@@ -104,8 +110,11 @@ class Logger {
    */
   warn(message: string, context?: Record<string, unknown>): void {
     if (this.shouldLog('warn')) {
-      console.warn(this.format('warn', message, context));
-      this.emit('warn', message, context);
+      if (this.handler) {
+        this.emit('warn', message, context);
+      } else {
+        console.warn(this.format('warn', message, context));
+      }
     }
   }
 
@@ -117,8 +126,11 @@ class Logger {
       const fullContext = error
         ? { ...context, error: error.message, stack: error.stack }
         : context;
-      console.error(this.format('error', message, fullContext));
-      this.emit('error', message, fullContext);
+      if (this.handler) {
+        this.emit('error', message, fullContext);
+      } else {
+        console.error(this.format('error', message, fullContext));
+      }
     }
   }
 

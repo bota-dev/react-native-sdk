@@ -643,7 +643,9 @@ function idToConnectionType(id: number): ConnectionType | null {
  * Byte 2: upload_network_preference[0] — 1=WiFi, 2=BLE, 3=4G, 0=end
  * Byte 3: upload_network_preference[1]
  * Byte 4: upload_network_preference[2]
- * Bytes 5-7: reserved (0x00)
+ * Byte 5: power_cfg_4g — 0=default(180s), 1-254=value×10s, 255=always-on
+ * Byte 6: power_cfg_wifi — 0=default(180s), 1-254=value×10s, 255=always-on
+ * Byte 7: reserved (0x00)
  */
 export function serializeConnectionSettings(settings: DeviceConnectionSettings): Buffer {
   const buf = Buffer.alloc(8);
@@ -661,6 +663,15 @@ export function serializeConnectionSettings(settings: DeviceConnectionSettings):
       buf.writeUInt8(0, 2 + i); // end marker
     }
   }
+
+  const pm = settings.power_management;
+  if (pm) {
+    buf.writeUInt8(pm.cellular_idle_timeout_seconds === 0 ? 0xFF :
+      Math.round(pm.cellular_idle_timeout_seconds / 10), 5);
+    buf.writeUInt8(pm.wifi_idle_timeout_seconds === 0 ? 0xFF :
+      Math.round(pm.wifi_idle_timeout_seconds / 10), 6);
+  }
+  // else bytes 5-6 stay 0x00 (firmware default 180s)
 
   return buf;
 }
@@ -692,5 +703,12 @@ export function parseConnectionSettings(data: Buffer): DeviceConnectionSettings 
     if (type) upload_network_preference.push(type);
   }
 
-  return { enabled_connections, upload_network_preference };
+  const raw4g = data.readUInt8(5);
+  const rawWifi = data.readUInt8(6);
+  const power_management = {
+    cellular_idle_timeout_seconds: raw4g === 0xFF ? 0 : (raw4g === 0 ? 180 : raw4g * 10),
+    wifi_idle_timeout_seconds: rawWifi === 0xFF ? 0 : (rawWifi === 0 ? 180 : rawWifi * 10),
+  };
+
+  return { enabled_connections, upload_network_preference, power_management };
 }

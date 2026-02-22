@@ -295,6 +295,10 @@ export interface DeviceConnectionSettings {
     cellular: boolean;
   };
   upload_network_preference: ConnectionType[];
+  power_management?: {
+    wifi_idle_timeout_seconds: number;      // 0=always-on, 10-2540=custom, default 180
+    cellular_idle_timeout_seconds: number;  // 0=always-on, 10-2540=custom, default 180
+  };
 }
 
 // ============================================================================

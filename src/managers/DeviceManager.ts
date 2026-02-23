@@ -558,6 +558,11 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
    * Serializes settings to 8-byte binary format.
    */
   async writeConnectionSettings(device: ConnectedDevice, settings: DeviceConnectionSettings): Promise<void> {
+    if (!this.isConnected(device.id)) {
+      log.debug('Skipping writeConnectionSettings — device not connected', { deviceId: device.id });
+      return;
+    }
+
     log.debug('Writing connection settings', { deviceId: device.id, settings });
 
     const data = serializeConnectionSettings(settings);

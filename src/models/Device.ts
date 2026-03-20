@@ -299,6 +299,7 @@ export interface DeviceConnectionSettings {
     wifi_idle_timeout_seconds: number;      // 0=always-on, 10-2540=custom, default 180
     cellular_idle_timeout_seconds: number;  // 0=always-on, 10-2540=custom, default 180
   };
+  streaming_enabled?: boolean;  // Upload-while-recording (default: true)
 }
 
 // ============================================================================

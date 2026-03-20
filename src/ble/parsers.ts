@@ -645,7 +645,7 @@ function idToConnectionType(id: number): ConnectionType | null {
  * Byte 4: upload_network_preference[2]
  * Byte 5: power_cfg_4g — 0=default(180s), 1-254=value×10s, 255=always-on
  * Byte 6: power_cfg_wifi — 0=default(180s), 1-254=value×10s, 255=always-on
- * Byte 7: reserved (0x00)
+ * Byte 7: streaming_enabled (0x00=off, 0x01=on)
  */
 export function serializeConnectionSettings(settings: DeviceConnectionSettings): Buffer {
   const buf = Buffer.alloc(8);
@@ -672,6 +672,8 @@ export function serializeConnectionSettings(settings: DeviceConnectionSettings):
       Math.round(pm.wifi_idle_timeout_seconds / 10), 6);
   }
   // else bytes 5-6 stay 0x00 (firmware default 180s)
+
+  buf.writeUInt8(settings.streaming_enabled === false ? 0x00 : 0x01, 7);
 
   return buf;
 }
@@ -710,5 +712,7 @@ export function parseConnectionSettings(data: Buffer): DeviceConnectionSettings 
     wifi_idle_timeout_seconds: rawWifi === 0xFF ? 0 : (rawWifi === 0 ? 180 : rawWifi * 10),
   };
 
-  return { enabled_connections, upload_network_preference, power_management };
+  const streaming_enabled = data.readUInt8(7) !== 0x00;
+
+  return { enabled_connections, upload_network_preference, power_management, streaming_enabled };
 }

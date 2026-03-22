@@ -45,7 +45,7 @@ interface TransferState {
   isComplete: boolean;
   checksum?: number;
   subscription?: Subscription;
-  timeoutId?: NodeJS.Timeout;
+  timeoutId?: number;
 }
 
 /**
@@ -97,7 +97,7 @@ export class ProtocolHandler {
     return new Promise((resolve, reject) => {
       let recordings: DeviceRecording[] = [];
       let subscription: Subscription | undefined;
-      let timeoutId: NodeJS.Timeout | undefined;
+      let timeoutId: number | undefined;
 
       const cleanup = () => {
         if (timeoutId) clearTimeout(timeoutId);
@@ -680,7 +680,7 @@ export class ProtocolHandler {
 
       const ready = await readyPromise;
       if (!ready) {
-        throw new TransferError('Device rejected firmware upload');
+        throw new TransferError('Device rejected firmware upload', 'FW_UPLOAD_REJECTED');
       }
 
       log.info('Device ready for firmware upload');
@@ -755,7 +755,7 @@ export class ProtocolHandler {
 
       const verified = await verifyPromise;
       if (!verified) {
-        throw new TransferError('Firmware CRC32 verification failed');
+        throw new TransferError('Firmware CRC32 verification failed', 'FW_CRC_MISMATCH');
       }
 
       log.info('Firmware verified, device will reboot to apply update');

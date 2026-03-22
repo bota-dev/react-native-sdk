@@ -58,6 +58,15 @@ For WiFi/Cellular devices, the SDK supports:
 - Grant-based credential encryption (ChaCha20-Poly1305 via K_session)
 - Device capability detection (`CAP_WIFI_UPLOAD`, `CAP_LTE_UPLOAD`, `CAP_BLE_SYNC`)
 
+### Firmware Updates (OTA)
+
+The SDK supports app-driven firmware updates via BLE:
+
+- `OTAManager.performUpdate(device, firmware)` — orchestrates the full flow: download `.ufw` from URL → transfer to device via BLE → device writes to SD card → device reboots
+- `ProtocolHandler.uploadFirmware(deviceId, firmwareData, onProgress)` — low-level BLE transfer: sends start command (0x08), data chunks (0x20) with flow control, verify command (0x09) with CRC32
+- Uses a persistent BLE subscription to TRANSFER_STATUS for the entire upload to avoid missed notifications
+- Progress events via `OtaStage`: `downloading` → `preparing` → `updating` → `verifying` → `completed`
+
 ### BLE Services (defined in `src/ble/constants.ts`)
 
 - `SERVICE_BOTA_AUDIO` (B07A0001) - Audio streaming

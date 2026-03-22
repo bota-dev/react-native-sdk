@@ -1,22 +1,17 @@
 /**
- * OTA Manager - Handles firmware over-the-air updates
+ * OTA Manager - Handles firmware over-the-air updates via BLE
  *
- * Note: Full Nordic DFU implementation requires native modules.
- * This is a placeholder that handles version checking and update preparation.
- * Actual DFU transfer would need react-native-nordic-dfu or similar.
+ * Downloads firmware from backend, transfers to device via BLE,
+ * device writes to SD card as update.ufw and reboots to apply.
  */
 
 import EventEmitter from 'eventemitter3';
 
 import { getBleManager } from '../ble/BleManager';
-import {
-  SERVICE_BOTA_CONTROL,
-  CHAR_DEVICE_COMMAND,
-  DEVICE_CMD_ENTER_DFU,
-} from '../ble/constants';
 import type { ConnectedDevice } from '../models/Device';
 import { DeviceError } from '../utils/errors';
 import { logger } from '../utils/logger';
+import { ProtocolHandler } from '../protocol/ProtocolHandler';
 import { Buffer } from 'buffer';
 
 const log = logger.tag('OTAManager');
@@ -153,34 +148,10 @@ export class OTAManager extends EventEmitter<OTAManagerEvents> {
   }
 
   /**
-   * Prepare device for DFU mode
-   */
-  async enterDfuMode(device: ConnectedDevice): Promise<void> {
-    if (!getBleManager().isConnected(device.id)) {
-      throw DeviceError.notConnected(device.id);
-    }
-
-    log.info('Entering DFU mode', { deviceId: device.id });
-
-    // Send DFU command to device
-    await getBleManager().writeCharacteristic(
-      device.id,
-      SERVICE_BOTA_CONTROL,
-      CHAR_DEVICE_COMMAND,
-      Buffer.from([DEVICE_CMD_ENTER_DFU])
-    );
-
-    // Device will disconnect and reboot into DFU mode
-    log.info('DFU command sent, device will reboot', { deviceId: device.id });
-  }
-
-  /**
-   * Perform firmware update
+   * Perform firmware update via BLE transfer to SD card.
    *
-   * Note: This is a placeholder. Full implementation requires:
-   * 1. react-native-nordic-dfu for actual DFU transfer
-   * 2. Native module integration
-   * 3. DFU package preparation
+   * Downloads firmware from URL, transfers to device via BLE,
+   * device writes to SD card as update.ufw and reboots to apply.
    */
   async performUpdate(
     device: ConnectedDevice,
@@ -191,32 +162,46 @@ export class OTAManager extends EventEmitter<OTAManagerEvents> {
       version: firmware.version,
     });
 
-    this.emit('progress', device.id, { stage: 'downloading', progress: 0 });
-
     try {
-      // Download firmware
-      await this.downloadFirmware(firmware);
-
+      // 1. Download firmware
+      this.emit('progress', device.id, { stage: 'downloading', progress: 0 });
+      const arrayBuffer = await this.downloadFirmware(firmware);
+      const firmwareBuffer = Buffer.from(arrayBuffer);
       this.emit('progress', device.id, { stage: 'downloading', progress: 1 });
+
+      // 2. Prepare for BLE transfer
       this.emit('progress', device.id, { stage: 'preparing', progress: 0 });
 
-      // Enter DFU mode
-      await this.enterDfuMode(device);
+      if (!getBleManager().isConnected(device.id)) {
+        throw DeviceError.notConnected(device.id);
+      }
 
+      const protocolHandler = new ProtocolHandler();
       this.emit('progress', device.id, { stage: 'preparing', progress: 1 });
 
-      // Note: At this point, we would use react-native-nordic-dfu
-      // to perform the actual firmware transfer.
-      // For now, we throw an error indicating this needs native implementation.
+      // 3. Transfer via BLE
+      this.emit('progress', device.id, { stage: 'updating', progress: 0 });
 
-      throw new Error(
-        'Full DFU implementation requires react-native-nordic-dfu native module. ' +
-        'Device has entered DFU mode and is advertising as "BotaDFU-xxx".'
+      await protocolHandler.uploadFirmware(
+        device.id,
+        firmwareBuffer,
+        (bytesSent: number, totalBytes: number) => {
+          this.emit('progress', device.id, {
+            stage: 'updating',
+            progress: bytesSent / totalBytes,
+          });
+        }
       );
 
-      // After DFU completes:
-      // this.emit('progress', device.id, { stage: 'completed', progress: 1 });
-      // this.emit('completed', device.id, firmware.version);
+      // 4. Device will verify CRC and reboot
+      this.emit('progress', device.id, { stage: 'verifying', progress: 1 });
+      this.emit('progress', device.id, { stage: 'completed', progress: 1 });
+      this.emit('completed', device.id, firmware.version);
+
+      log.info('Firmware update complete, device will reboot', {
+        deviceId: device.id,
+        version: firmware.version,
+      });
     } catch (error) {
       const err = error as Error;
       log.error('Firmware update failed', err, { deviceId: device.id });

@@ -2,6 +2,10 @@
  * Protocol Handler - Implements Device-App Protocol for recording transfer
  */
 
+// React Native provides these globals but they're not in "lib": ["ES2020"]
+declare function setTimeout(callback: () => void, ms: number): number;
+declare function clearTimeout(id: number | undefined): void;
+
 import { Buffer } from 'buffer';
 import { Subscription } from 'react-native-ble-plx';
 
@@ -12,6 +16,7 @@ import {
   CHAR_RECORDING_LIST,
   CHAR_RECORDING_TRANSFER,
   CHAR_TRANSFER_CONTROL,
+  CHAR_TRANSFER_STATUS,
   TRANSFER_PACKET_TIMEOUT,
   STREAMING_PAUSED_TIMEOUT,
 } from '../ble/constants';
@@ -590,6 +595,174 @@ export class ProtocolHandler {
           reject(error);
         });
     });
+  }
+
+  // ---- Firmware Upload (app → device via BLE) ----
+
+  /**
+   * Upload firmware binary to device via BLE.
+   * Device writes the file to SD card as update.ufw, verifies CRC32,
+   * then reboots to apply the update.
+   *
+   * Protocol:
+   * 1. Send UPLOAD_START (0x08) with file size → wait for ready notification
+   * 2. Send firmware data in chunks via RECORDING_TRANSFER (0x20 + seq + data)
+   * 3. Send UPLOAD_VERIFY (0x09) with CRC32 → wait for verify notification
+   * 4. Device reboots automatically on success
+   */
+  async uploadFirmware(
+    deviceId: string,
+    firmwareData: Buffer,
+    onProgress?: (bytesSent: number, totalBytes: number) => void
+  ): Promise<void> {
+    if (!this.bleManager.isConnected(deviceId)) {
+      throw DeviceError.notConnected(deviceId);
+    }
+
+    const totalSize = firmwareData.length;
+    log.info('Starting firmware upload', { deviceId, size: totalSize });
+
+    // 1. Keep a single persistent subscription for the entire upload
+    let statusHandler: ((data: Buffer) => void) | null = null;
+    const subscription = this.bleManager.subscribeToCharacteristic(
+      deviceId,
+      SERVICE_BOTA_STORAGE,
+      CHAR_TRANSFER_STATUS,
+      (data: Buffer) => {
+        statusHandler?.(data);
+      },
+      (error: Error) => {
+        log.error('Status subscription error', error);
+      }
+    );
+
+    const waitForStatus = <T>(
+      filter: (data: Buffer) => T | null,
+      timeoutMs: number = 10000
+    ): Promise<T> => {
+      return new Promise<T>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          statusHandler = null;
+          reject(new TransferError('Firmware upload status timeout', 'FW_UPLOAD_TIMEOUT'));
+        }, timeoutMs);
+
+        statusHandler = (data: Buffer) => {
+          const result = filter(data);
+          if (result !== null) {
+            clearTimeout(timer);
+            statusHandler = null;
+            resolve(result);
+          }
+        };
+      });
+    };
+
+    try {
+      // 2. Send UPLOAD_START command
+      const startCmd = Buffer.alloc(5);
+      startCmd[0] = 0x08; // FIRMWARE_UPLOAD_START
+      startCmd.writeUInt32LE(totalSize, 1);
+
+      const readyPromise = waitForStatus<boolean>((data) => {
+        if (data.length >= 2 && data[0] === 0x08) {
+          return data[1] === 0x00; // true = ready, false = error
+        }
+        return null;
+      });
+
+      await this.bleManager.writeCharacteristic(
+        deviceId,
+        SERVICE_BOTA_STORAGE,
+        CHAR_TRANSFER_CONTROL,
+        startCmd,
+        true
+      );
+
+      const ready = await readyPromise;
+      if (!ready) {
+        throw new TransferError('Device rejected firmware upload');
+      }
+
+      log.info('Device ready for firmware upload');
+
+      // 3. Send firmware data in chunks
+      const CHUNK_SIZE = 500;
+      let bytesSent = 0;
+      let seq = 0;
+
+      while (bytesSent < totalSize) {
+        const chunkEnd = Math.min(bytesSent + CHUNK_SIZE, totalSize);
+        const chunk = firmwareData.subarray(bytesSent, chunkEnd);
+
+        // Build packet: [0x20, seq(u16LE), data...]
+        const header = Buffer.alloc(3);
+        header[0] = 0x20; // FIRMWARE_DATA
+        header.writeUInt16LE(seq, 1);
+        const packet = Buffer.concat([header, Buffer.from(chunk)]);
+
+        // Write without response for speed
+        await this.bleManager.writeCharacteristic(
+          deviceId,
+          SERVICE_BOTA_STORAGE,
+          CHAR_RECORDING_TRANSFER,
+          packet,
+          false // writeWithoutResponse
+        );
+
+        bytesSent = chunkEnd;
+        seq++;
+
+        onProgress?.(bytesSent, totalSize);
+
+        // Wait for ACK every 8 packets for flow control
+        if (seq % 8 === 0) {
+          try {
+            await waitForStatus<boolean>((data) => {
+              if (data.length >= 3 && data[0] === 0x10) {
+                return true;
+              }
+              return null;
+            }, 5000);
+          } catch {
+            // ACK timeout — device may still be processing, continue
+            log.warn('ACK timeout at seq', { seq });
+          }
+        }
+      }
+
+      log.info('Firmware data sent, verifying CRC32');
+
+      // 4. Compute CRC32 and send verify command
+      const crc32 = this.calculateCrc32(firmwareData);
+      const verifyCmd = Buffer.alloc(5);
+      verifyCmd[0] = 0x09; // FIRMWARE_UPLOAD_VERIFY
+      verifyCmd.writeUInt32LE(crc32, 1);
+
+      const verifyPromise = waitForStatus<boolean>((data) => {
+        if (data.length >= 2 && data[0] === 0x09) {
+          return data[1] === 0x00; // true = match, false = mismatch
+        }
+        return null;
+      }, 15000);
+
+      await this.bleManager.writeCharacteristic(
+        deviceId,
+        SERVICE_BOTA_STORAGE,
+        CHAR_TRANSFER_CONTROL,
+        verifyCmd,
+        true
+      );
+
+      const verified = await verifyPromise;
+      if (!verified) {
+        throw new TransferError('Firmware CRC32 verification failed');
+      }
+
+      log.info('Firmware verified, device will reboot to apply update');
+    } finally {
+      // Always clean up the persistent subscription
+      subscription?.remove();
+    }
   }
 
   /**

@@ -50,6 +50,18 @@ export interface DeviceFlags {
 }
 
 /**
+ * LTE/4G modem status
+ */
+export type LteStatus =
+  | 'off'
+  | 'searching'
+  | 'registered'
+  | 'connected'
+  | 'denied'
+  | 'noSim'
+  | 'error';
+
+/**
  * Device discovered during BLE scan (not yet connected)
  */
 export interface DiscoveredDevice {
@@ -131,6 +143,10 @@ export interface DeviceStatus {
   flags: DeviceFlags;
   /** Raw timestamp from device */
   timestamp: number;
+  /** LTE/4G modem status (for 4G devices) */
+  lteStatus?: LteStatus;
+  /** LTE signal quality — raw CSQ value 0-31 (99 = unknown) */
+  lteSignalQuality?: number;
 }
 
 /**

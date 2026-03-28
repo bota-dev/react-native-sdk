@@ -172,6 +172,15 @@ export const FLAG_WIFI_CONNECTED = 0x08;
 export const FLAG_LTE_CONNECTED = 0x10;
 export const FLAG_SYNC_ACTIVE = 0x20;
 
+// LTE status values (DEVICE_STATUS byte 1)
+export const LTE_STATUS_OFF = 0x00;
+export const LTE_STATUS_SEARCHING = 0x01;
+export const LTE_STATUS_REGISTERED = 0x02;
+export const LTE_STATUS_CONNECTED = 0x03;
+export const LTE_STATUS_DENIED = 0x04;
+export const LTE_STATUS_NO_SIM = 0x05;
+export const LTE_STATUS_ERROR = 0x06;
+
 // Audio codec values
 export const CODEC_PCM_16K = 0x00;
 export const CODEC_PCM_8K = 0x01;

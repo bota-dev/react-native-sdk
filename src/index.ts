@@ -21,6 +21,7 @@ export type {
   ConnectionState,
   DeviceState,
   DeviceFlags,
+  LteStatus,
   DiscoveredDevice,
   ConnectedDevice,
   DeviceStatus,

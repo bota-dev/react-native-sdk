@@ -10,6 +10,7 @@ import type {
   DeviceState,
   DeviceStatus,
   DeviceFlags,
+  LteStatus,
   StorageInfo,
   DeviceCapabilities,
   WiFiStatus,
@@ -68,6 +69,13 @@ import {
   WIFI_SCAN_CMD_START,
   WIFI_SCAN_STATUS_DONE,
   WIFI_SCAN_STATUS_ERROR,
+  LTE_STATUS_OFF,
+  LTE_STATUS_SEARCHING,
+  LTE_STATUS_REGISTERED,
+  LTE_STATUS_CONNECTED,
+  LTE_STATUS_DENIED,
+  LTE_STATUS_NO_SIM,
+  LTE_STATUS_ERROR,
 } from './constants';
 
 /**
@@ -153,18 +161,42 @@ export function parseDeviceFlags(value: number): DeviceFlags {
 }
 
 /**
+ * Parse LTE/4G modem status from byte value
+ */
+export function parseLteStatus(byte: number): LteStatus {
+  switch (byte) {
+    case LTE_STATUS_OFF:
+      return 'off';
+    case LTE_STATUS_SEARCHING:
+      return 'searching';
+    case LTE_STATUS_REGISTERED:
+      return 'registered';
+    case LTE_STATUS_CONNECTED:
+      return 'connected';
+    case LTE_STATUS_DENIED:
+      return 'denied';
+    case LTE_STATUS_NO_SIM:
+      return 'noSim';
+    case LTE_STATUS_ERROR:
+      return 'error';
+    default:
+      return 'off';
+  }
+}
+
+/**
  * Parse device status from characteristic value
  *
  * Firmware format (14 bytes):
  * Byte 0:      Battery % (0-100)
- * Byte 1:      Reserved
+ * Byte 1:      LTE status (BOTA_LTE_* code)
  * Byte 2:      Device state
  * Byte 3:      Pending recordings count
  * Bytes 4-7:   Last sync timestamp (Unix seconds)
  * Byte 8:      Flags (1-byte bitmask)
  * Bytes 9-10:  Storage total MB (uint16LE)
  * Bytes 11-12: Storage used MB (uint16LE)
- * Byte 13:     Reserved
+ * Byte 13:     LTE signal quality (CSQ 0-31, 99=unknown)
  */
 export function parseDeviceStatus(data: Buffer): DeviceStatus {
   if (data.length < 14) {
@@ -172,6 +204,7 @@ export function parseDeviceStatus(data: Buffer): DeviceStatus {
   }
 
   const batteryLevel = data.readUInt8(0);
+  const lteStatusByte = data.readUInt8(1);
   const state = parseDeviceState(data.readUInt8(2));
   const pendingRecordings = data.readUInt8(3);
   const lastSyncTimestamp = data.readUInt32LE(4);
@@ -179,6 +212,11 @@ export function parseDeviceStatus(data: Buffer): DeviceStatus {
   const flags = parseDeviceFlags(flagsValue);
   const storageTotalMb = data.readUInt16LE(9);
   const storageUsedMb = data.readUInt16LE(11);
+  const lteSignalByte = data.readUInt8(13);
+
+  const lteStatus = parseLteStatus(lteStatusByte);
+  const lteSignalQuality = lteSignalByte !== 99 && lteSignalByte !== 0xFF
+    ? lteSignalByte : undefined;
 
   return {
     batteryLevel,
@@ -190,6 +228,8 @@ export function parseDeviceStatus(data: Buffer): DeviceStatus {
     signalStrength: 0,
     flags,
     timestamp: lastSyncTimestamp,
+    lteStatus: lteStatusByte !== 0x00 ? lteStatus : undefined,
+    lteSignalQuality,
   };
 }
 

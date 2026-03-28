@@ -261,7 +261,7 @@ export function parseRecordingList(data: Buffer): DeviceRecording[] {
 
     recordings.push({
       uuid,
-      startedAt: new Date(timestamp * 1000),
+      startedAt: timestamp > 0 ? new Date(timestamp * 1000) : new Date(),
       durationMs: durationSeconds * 1000,
       fileSizeBytes: sizeKb * 1024,
       codec: 'opus_16k', // Default, actual codec read separately

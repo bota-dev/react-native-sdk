@@ -316,6 +316,7 @@ export interface DeviceConnectionSettings {
     cellular_idle_timeout_seconds: number;  // 0=always-on, 10-2540=custom, default 180
   };
   streaming_enabled?: boolean;  // Upload-while-recording (default: true)
+  streaming_flush_interval_seconds?: number;  // 0=disabled, 1-128=seconds (default: 60)
 }
 
 // ============================================================================

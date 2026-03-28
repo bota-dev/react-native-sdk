@@ -675,10 +675,10 @@ function idToConnectionType(id: number): ConnectionType | null {
 }
 
 /**
- * Serialize connection settings to 8-byte buffer for BLE DEVICE_SETTINGS characteristic.
+ * Serialize connection settings to 12-byte buffer for BLE DEVICE_SETTINGS characteristic.
  *
- * Layout:
- * Byte 0: version (0x01)
+ * Layout (v0x02):
+ * Byte 0: version (0x02)
  * Byte 1: enabled_mask — bit 0: WiFi, bit 1: 4G (BLE always on)
  * Byte 2: upload_network_preference[0] — 1=WiFi, 2=BLE, 3=4G, 0=end
  * Byte 3: upload_network_preference[1]
@@ -686,10 +686,12 @@ function idToConnectionType(id: number): ConnectionType | null {
  * Byte 5: power_cfg_4g — 0=default(180s), 1-254=value×10s, 255=always-on
  * Byte 6: power_cfg_wifi — 0=default(180s), 1-254=value×10s, 255=always-on
  * Byte 7: streaming_enabled (0x00=off, 0x01=on)
+ * Byte 8: chunk_flush_interval_s (0=disabled, 1-128=seconds, default 60)
+ * Bytes 9-11: reserved (0x00)
  */
 export function serializeConnectionSettings(settings: DeviceConnectionSettings): Buffer {
-  const buf = Buffer.alloc(8);
-  buf.writeUInt8(0x01, 0); // version
+  const buf = Buffer.alloc(12);
+  buf.writeUInt8(0x02, 0); // version
 
   let mask = 0;
   if (settings.enabled_connections.wifi) mask |= 0x01;
@@ -715,15 +717,19 @@ export function serializeConnectionSettings(settings: DeviceConnectionSettings):
 
   buf.writeUInt8(settings.streaming_enabled === false ? 0x00 : 0x01, 7);
 
+  const flush = settings.streaming_flush_interval_seconds ?? 60;
+  buf.writeUInt8(Math.max(0, Math.min(128, flush)), 8);
+
   return buf;
 }
 
 /**
- * Parse 8-byte buffer from BLE DEVICE_SETTINGS characteristic into connection settings.
- * Returns default settings if version byte is not 0x01.
+ * Parse buffer from BLE DEVICE_SETTINGS characteristic into connection settings.
+ * Accepts v0x01 (8 bytes) and v0x02 (12 bytes). Returns defaults for unknown versions.
  */
 export function parseConnectionSettings(data: Buffer): DeviceConnectionSettings {
-  if (data.length < 8 || data.readUInt8(0) !== 0x01) {
+  const version = data.length >= 1 ? data.readUInt8(0) : 0;
+  if (data.length < 8 || (version !== 0x01 && version !== 0x02)) {
     // Unknown version or empty — return defaults
     return {
       enabled_connections: { wifi: true, cellular: true },
@@ -754,5 +760,8 @@ export function parseConnectionSettings(data: Buffer): DeviceConnectionSettings 
 
   const streaming_enabled = data.readUInt8(7) !== 0x00;
 
-  return { enabled_connections, upload_network_preference, power_management, streaming_enabled };
+  const streaming_flush_interval_seconds =
+    version === 0x02 && data.length >= 9 ? data.readUInt8(8) : 60;
+
+  return { enabled_connections, upload_network_preference, power_management, streaming_enabled, streaming_flush_interval_seconds };
 }

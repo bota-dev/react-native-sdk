@@ -122,6 +122,19 @@ export interface ConnectedDevice {
 }
 
 /**
+ * 4G modem debug information (parsed from extended device status)
+ */
+export interface ModemInfo {
+  imei?: string;
+  iccid?: string;
+  operator?: string;
+  rat?: string;
+  apn?: string;
+  simStatus?: string;
+  csq?: number;
+}
+
+/**
  * Device status information
  */
 export interface DeviceStatus {
@@ -147,6 +160,8 @@ export interface DeviceStatus {
   lteStatus?: LteStatus;
   /** LTE signal quality — raw CSQ value 0-31 (99 = unknown) */
   lteSignalQuality?: number;
+  /** 4G modem debug info (from extended device status read) */
+  modemInfo?: ModemInfo;
 }
 
 /**

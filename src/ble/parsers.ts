@@ -218,6 +218,11 @@ export function parseDeviceStatus(data: Buffer): DeviceStatus {
   const lteSignalQuality = lteSignalByte !== 99 && lteSignalByte !== 0xFF
     ? lteSignalByte : undefined;
 
+  let modemInfo: import('../models/Device').ModemInfo | undefined;
+  if (data.length > 14) {
+    modemInfo = parseModemInfoString(data.subarray(14).toString('utf8'));
+  }
+
   return {
     batteryLevel,
     storageTotalMb,
@@ -230,7 +235,31 @@ export function parseDeviceStatus(data: Buffer): DeviceStatus {
     timestamp: lastSyncTimestamp,
     lteStatus: lteStatusByte !== 0x00 ? lteStatus : undefined,
     lteSignalQuality,
+    modemInfo,
   };
+}
+
+function parseModemInfoString(raw: string): import('../models/Device').ModemInfo | undefined {
+  const info: import('../models/Device').ModemInfo = {};
+  let hasAny = false;
+  for (const line of raw.split('\n')) {
+    const eq = line.indexOf('=');
+    if (eq < 0) continue;
+    const key = line.substring(0, eq);
+    const val = line.substring(eq + 1).replace(/\0/g, '');
+    if (!val) continue;
+    hasAny = true;
+    switch (key) {
+      case 'IMEI': info.imei = val; break;
+      case 'ICCID': info.iccid = val; break;
+      case 'OP': info.operator = val; break;
+      case 'RAT': info.rat = val; break;
+      case 'APN': info.apn = val; break;
+      case 'SIM': info.simStatus = val; break;
+      case 'CSQ': { const n = parseInt(val, 10); if (!isNaN(n)) info.csq = n; break; }
+    }
+  }
+  return hasAny ? info : undefined;
 }
 
 /**

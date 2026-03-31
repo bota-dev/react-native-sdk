@@ -180,6 +180,18 @@ export const LTE_STATUS_CONNECTED = 0x03;
 export const LTE_STATUS_DENIED = 0x04;
 export const LTE_STATUS_NO_SIM = 0x05;
 export const LTE_STATUS_ERROR = 0x06;
+export const LTE_STATUS_LOW_VOLTAGE = 0x07;
+export const LTE_STATUS_DISABLED = 0x08;
+
+// WiFi status values (DEVICE_STATUS byte 14)
+export const WIFI_STATUS_OFF = 0x00;
+export const WIFI_STATUS_SCANNING = 0x01;
+export const WIFI_STATUS_CONNECTING = 0x02;
+export const WIFI_STATUS_CONNECTED = 0x03;
+export const WIFI_STATUS_CONNECT_FAILED = 0x04;
+export const WIFI_STATUS_NO_CREDENTIALS = 0x05;
+export const WIFI_STATUS_DISABLED = 0x06;
+export const WIFI_STATUS_ERROR = 0x07;
 
 // Audio codec values
 export const CODEC_PCM_16K = 0x00;

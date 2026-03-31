@@ -59,6 +59,21 @@ export type LteStatus =
   | 'connected'
   | 'denied'
   | 'noSim'
+  | 'error'
+  | 'lowVoltage'
+  | 'disabled';
+
+/**
+ * WiFi radio status
+ */
+export type WifiStatus =
+  | 'off'
+  | 'scanning'
+  | 'connecting'
+  | 'connected'
+  | 'connectFailed'
+  | 'noCredentials'
+  | 'disabled'
   | 'error';
 
 /**
@@ -160,6 +175,8 @@ export interface DeviceStatus {
   lteStatus?: LteStatus;
   /** LTE signal quality — raw CSQ value 0-31 (99 = unknown) */
   lteSignalQuality?: number;
+  /** WiFi radio status (for WiFi devices) */
+  wifiStatus?: WifiStatus;
   /** 4G modem debug info (from extended device status read) */
   modemInfo?: ModemInfo;
 }

@@ -11,6 +11,7 @@ import type {
   DeviceStatus,
   DeviceFlags,
   LteStatus,
+  WifiStatus,
   StorageInfo,
   DeviceCapabilities,
   WiFiStatus,
@@ -76,6 +77,16 @@ import {
   LTE_STATUS_DENIED,
   LTE_STATUS_NO_SIM,
   LTE_STATUS_ERROR,
+  LTE_STATUS_LOW_VOLTAGE,
+  LTE_STATUS_DISABLED,
+  WIFI_STATUS_OFF,
+  WIFI_STATUS_SCANNING,
+  WIFI_STATUS_CONNECTING as WIFI_RADIO_CONNECTING,
+  WIFI_STATUS_CONNECTED as WIFI_RADIO_CONNECTED,
+  WIFI_STATUS_CONNECT_FAILED,
+  WIFI_STATUS_NO_CREDENTIALS,
+  WIFI_STATUS_DISABLED,
+  WIFI_STATUS_ERROR as WIFI_RADIO_ERROR,
 } from './constants';
 
 /**
@@ -179,6 +190,36 @@ export function parseLteStatus(byte: number): LteStatus {
       return 'noSim';
     case LTE_STATUS_ERROR:
       return 'error';
+    case LTE_STATUS_LOW_VOLTAGE:
+      return 'lowVoltage';
+    case LTE_STATUS_DISABLED:
+      return 'disabled';
+    default:
+      return 'off';
+  }
+}
+
+/**
+ * Parse WiFi radio status from byte value
+ */
+export function parseWifiStatus(byte: number): WifiStatus {
+  switch (byte) {
+    case WIFI_STATUS_OFF:
+      return 'off';
+    case WIFI_STATUS_SCANNING:
+      return 'scanning';
+    case WIFI_RADIO_CONNECTING:
+      return 'connecting';
+    case WIFI_RADIO_CONNECTED:
+      return 'connected';
+    case WIFI_STATUS_CONNECT_FAILED:
+      return 'connectFailed';
+    case WIFI_STATUS_NO_CREDENTIALS:
+      return 'noCredentials';
+    case WIFI_STATUS_DISABLED:
+      return 'disabled';
+    case WIFI_RADIO_ERROR:
+      return 'error';
     default:
       return 'off';
   }
@@ -187,7 +228,7 @@ export function parseLteStatus(byte: number): LteStatus {
 /**
  * Parse device status from characteristic value
  *
- * Firmware format (14 bytes):
+ * Firmware format (15 bytes, backwards-compatible with 14):
  * Byte 0:      Battery % (0-100)
  * Byte 1:      LTE status (BOTA_LTE_* code)
  * Byte 2:      Device state
@@ -197,6 +238,7 @@ export function parseLteStatus(byte: number): LteStatus {
  * Bytes 9-10:  Storage total MB (uint16LE)
  * Bytes 11-12: Storage used MB (uint16LE)
  * Byte 13:     LTE signal quality (CSQ 0-31, 99=unknown)
+ * Byte 14:     WiFi status (BOTA_WIFI_* code) — optional, firmware >= 1.1
  */
 export function parseDeviceStatus(data: Buffer): DeviceStatus {
   if (data.length < 14) {
@@ -218,9 +260,14 @@ export function parseDeviceStatus(data: Buffer): DeviceStatus {
   const lteSignalQuality = lteSignalByte !== 99 && lteSignalByte !== 0xFF
     ? lteSignalByte : undefined;
 
+  // Byte 14: WiFi radio status (added in firmware 1.1, backwards-compatible)
+  const wifiStatusByte = data.length >= 15 ? data.readUInt8(14) : undefined;
+  const wifiStatus = wifiStatusByte !== undefined ? parseWifiStatus(wifiStatusByte) : undefined;
+
+  // Modem info string starts at byte 15 (was byte 14 in older firmware)
   let modemInfo: import('../models/Device').ModemInfo | undefined;
-  if (data.length > 14) {
-    modemInfo = parseModemInfoString(data.subarray(14).toString('utf8'));
+  if (data.length > 15) {
+    modemInfo = parseModemInfoString(data.subarray(15).toString('utf8'));
   }
 
   return {
@@ -235,6 +282,7 @@ export function parseDeviceStatus(data: Buffer): DeviceStatus {
     timestamp: lastSyncTimestamp,
     lteStatus: lteStatusByte !== 0x00 ? lteStatus : undefined,
     lteSignalQuality,
+    wifiStatus,
     modemInfo,
   };
 }

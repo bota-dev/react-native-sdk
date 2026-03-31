@@ -22,6 +22,7 @@ export type {
   DeviceState,
   DeviceFlags,
   LteStatus,
+  WifiStatus,
   ModemInfo,
   DiscoveredDevice,
   ConnectedDevice,

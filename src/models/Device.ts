@@ -155,6 +155,8 @@ export interface ModemInfo {
 export interface DeviceStatus {
   /** Battery level (0-100) */
   batteryLevel: number;
+  /** Battery voltage in millivolts (e.g., 3700 = 3.7V) */
+  batteryMv?: number;
   /** Total storage capacity in MB (uint16LE, max 65535) */
   storageTotalMb: number;
   /** Storage used in MB (uint16LE, max 65535) */

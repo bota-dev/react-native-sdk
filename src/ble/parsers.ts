@@ -264,14 +264,18 @@ export function parseDeviceStatus(data: Buffer): DeviceStatus {
   const wifiStatusByte = data.length >= 15 ? data.readUInt8(14) : undefined;
   const wifiStatus = wifiStatusByte !== undefined ? parseWifiStatus(wifiStatusByte) : undefined;
 
-  // Modem info string starts at byte 15 (was byte 14 in older firmware)
+  // Bytes 15-16: Battery voltage in millivolts (uint16LE)
+  const batteryMv = data.length >= 17 ? data.readUInt16LE(15) : undefined;
+
+  // Modem info string starts at byte 17 (was byte 14 in older firmware)
   let modemInfo: import('../models/Device').ModemInfo | undefined;
-  if (data.length > 15) {
-    modemInfo = parseModemInfoString(data.subarray(15).toString('utf8'));
+  if (data.length > 17) {
+    modemInfo = parseModemInfoString(data.subarray(17).toString('utf8'));
   }
 
   return {
     batteryLevel,
+    batteryMv: batteryMv && batteryMv > 0 ? batteryMv : undefined,
     storageTotalMb,
     storageUsedMb,
     state,

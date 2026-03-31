@@ -310,6 +310,10 @@ function parseModemInfoString(raw: string): import('../models/Device').ModemInfo
       case 'APN': info.apn = val; break;
       case 'SIM': info.simStatus = val; break;
       case 'CSQ': { const n = parseInt(val, 10); if (!isNaN(n)) info.csq = n; break; }
+      case 'IP': info.ipAddress = val; break;
+      case 'MV': { const n = parseInt(val, 10); if (!isNaN(n) && n > 0) info.modemVoltage = n; break; }
+      case 'FW': info.modemFirmware = val; break;
+      case 'ROAM': info.roaming = val === '1'; break;
     }
   }
   return hasAny ? info : undefined;

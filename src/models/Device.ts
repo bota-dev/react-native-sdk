@@ -148,6 +148,10 @@ export interface ModemInfo {
   apn?: string;
   simStatus?: string;
   csq?: number;
+  ipAddress?: string;
+  modemVoltage?: number;
+  modemFirmware?: string;
+  roaming?: boolean;
 }
 
 /**

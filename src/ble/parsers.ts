@@ -79,14 +79,14 @@ import {
   LTE_STATUS_ERROR,
   LTE_STATUS_LOW_VOLTAGE,
   LTE_STATUS_DISABLED,
-  WIFI_STATUS_OFF,
-  WIFI_STATUS_SCANNING,
-  WIFI_STATUS_CONNECTING as WIFI_RADIO_CONNECTING,
-  WIFI_STATUS_CONNECTED as WIFI_RADIO_CONNECTED,
-  WIFI_STATUS_CONNECT_FAILED,
-  WIFI_STATUS_NO_CREDENTIALS,
-  WIFI_STATUS_DISABLED,
-  WIFI_STATUS_ERROR as WIFI_RADIO_ERROR,
+  WIFI_RADIO_OFF,
+  WIFI_RADIO_SCANNING,
+  WIFI_RADIO_CONNECTING,
+  WIFI_RADIO_CONNECTED,
+  WIFI_RADIO_CONNECT_FAILED,
+  WIFI_RADIO_NO_CREDENTIALS,
+  WIFI_RADIO_DISABLED,
+  WIFI_RADIO_ERROR,
 } from './constants';
 
 /**
@@ -204,19 +204,19 @@ export function parseLteStatus(byte: number): LteStatus {
  */
 export function parseWifiStatus(byte: number): WifiStatus {
   switch (byte) {
-    case WIFI_STATUS_OFF:
+    case WIFI_RADIO_OFF:
       return 'off';
-    case WIFI_STATUS_SCANNING:
+    case WIFI_RADIO_SCANNING:
       return 'scanning';
     case WIFI_RADIO_CONNECTING:
       return 'connecting';
     case WIFI_RADIO_CONNECTED:
       return 'connected';
-    case WIFI_STATUS_CONNECT_FAILED:
+    case WIFI_RADIO_CONNECT_FAILED:
       return 'connectFailed';
-    case WIFI_STATUS_NO_CREDENTIALS:
+    case WIFI_RADIO_NO_CREDENTIALS:
       return 'noCredentials';
-    case WIFI_STATUS_DISABLED:
+    case WIFI_RADIO_DISABLED:
       return 'disabled';
     case WIFI_RADIO_ERROR:
       return 'error';

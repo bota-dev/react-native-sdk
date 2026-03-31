@@ -144,6 +144,7 @@ export interface ModemInfo {
   iccid?: string;
   operator?: string;
   rat?: string;
+  band?: string;
   apn?: string;
   simStatus?: string;
   csq?: number;

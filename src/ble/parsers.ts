@@ -306,6 +306,7 @@ function parseModemInfoString(raw: string): import('../models/Device').ModemInfo
       case 'ICCID': info.iccid = val; break;
       case 'OP': info.operator = val; break;
       case 'RAT': info.rat = val; break;
+      case 'BAND': info.band = val; break;
       case 'APN': info.apn = val; break;
       case 'SIM': info.simStatus = val; break;
       case 'CSQ': { const n = parseInt(val, 10); if (!isNaN(n)) info.csq = n; break; }

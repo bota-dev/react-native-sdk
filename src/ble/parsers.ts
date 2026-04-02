@@ -269,8 +269,11 @@ export function parseDeviceStatus(data: Buffer): DeviceStatus {
 
   // Modem info string starts at byte 17 (was byte 14 in older firmware)
   let modemInfo: import('../models/Device').ModemInfo | undefined;
+  console.log(`[parseDeviceStatus] data.length=${data.length}, has modem=${data.length > 17}`);
   if (data.length > 17) {
-    modemInfo = parseModemInfoString(data.subarray(17).toString('utf8'));
+    const raw = data.subarray(17).toString('utf8');
+    console.log(`[parseDeviceStatus] modem raw: ${raw.substring(0, 100)}`);
+    modemInfo = parseModemInfoString(raw);
   }
 
   return {

@@ -110,6 +110,13 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   private reconnectRegistry: Record<string, ReconnectInfo> = {};
   private isInitialized = false;
 
+  // Auto-reconnect state
+  private autoReconnectEnabled = false;
+  private autoReconnectSerial: string | null = null;
+  private autoReconnectTimer: ReturnType<typeof setInterval> | null = null;
+  private autoReconnectAttempting = false;
+  private userDisconnected = false;
+
   constructor() {
     super();
     this.bleManager = getBleManager();
@@ -156,6 +163,11 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       this.statusSubscriptions.delete(deviceId);
 
       this.emit('deviceDisconnected', deviceId, error);
+
+      // Start auto-reconnect if enabled and not user-initiated
+      if (this.autoReconnectEnabled && !this.userDisconnected) {
+        this.startAutoReconnectLoop();
+      }
     });
 
     // Auto-reconnect when Bluetooth powers back on
@@ -164,6 +176,10 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       if (state === State.PoweredOn && prevState !== State.PoweredOn) {
         log.info('Bluetooth powered on — emitting bluetoothReady');
         this.emit('bluetoothReady');
+        // Trigger auto-reconnect
+        if (this.autoReconnectEnabled && this.autoReconnectSerial && !this.userDisconnected) {
+          this.startAutoReconnectLoop();
+        }
       }
       prevState = state;
     });
@@ -280,10 +296,13 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   }
 
   /**
-   * Disconnect from a device
+   * Disconnect from a device (user-initiated)
    */
   async disconnect(device: ConnectedDevice): Promise<void> {
     log.info('Disconnecting from device', { deviceId: device.id });
+
+    this.userDisconnected = true;
+    this.stopAutoReconnectLoop();
 
     this.emit('connectionStateChanged', device.id, 'disconnecting');
 
@@ -295,6 +314,90 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     this.connectedDevices.delete(device.id);
 
     this.emit('connectionStateChanged', device.id, 'disconnected');
+  }
+
+  // ============================================================================
+  // Auto-Reconnect
+  // ============================================================================
+
+  /**
+   * Enable auto-reconnect for a device by serial number.
+   * When enabled, the SDK will automatically attempt to reconnect when:
+   * - The device disconnects unexpectedly (out of range, power loss)
+   * - Bluetooth is toggled off and back on
+   *
+   * Auto-reconnect is paused when disconnect() is called (user-initiated).
+   * Call enableAutoReconnect() again or reconnect() to resume.
+   */
+  enableAutoReconnect(serialNumber: string): void {
+    this.autoReconnectSerial = serialNumber;
+    this.autoReconnectEnabled = true;
+    this.userDisconnected = false;
+    log.info('Auto-reconnect enabled', { serialNumber });
+  }
+
+  /**
+   * Disable auto-reconnect
+   */
+  disableAutoReconnect(): void {
+    this.autoReconnectEnabled = false;
+    this.autoReconnectSerial = null;
+    this.userDisconnected = false;
+    this.stopAutoReconnectLoop();
+    log.info('Auto-reconnect disabled');
+  }
+
+  private startAutoReconnectLoop(): void {
+    if (this.autoReconnectTimer || !this.autoReconnectSerial) return;
+
+    log.info('Starting auto-reconnect loop', { serialNumber: this.autoReconnectSerial });
+    this.emit('bluetoothReady'); // Signal apps that reconnection is starting
+
+    const attempt = async () => {
+      if (!this.autoReconnectEnabled || !this.autoReconnectSerial || this.userDisconnected) {
+        this.stopAutoReconnectLoop();
+        return;
+      }
+
+      // Already connected?
+      for (const device of this.connectedDevices.values()) {
+        if (device.serialNumber === this.autoReconnectSerial && device.connectionState === 'connected') {
+          log.debug('Auto-reconnect: already connected');
+          this.stopAutoReconnectLoop();
+          return;
+        }
+      }
+
+      // Bluetooth available?
+      if (this.bleManager.getCachedState() !== State.PoweredOn) {
+        return; // Wait for next tick
+      }
+
+      if (this.autoReconnectAttempting) return;
+      this.autoReconnectAttempting = true;
+
+      try {
+        log.debug('Auto-reconnect: attempting', { serialNumber: this.autoReconnectSerial });
+        await this.reconnect(this.autoReconnectSerial, { scanTimeout: 5000 });
+        log.info('Auto-reconnect: success');
+        this.stopAutoReconnectLoop();
+      } catch {
+        log.debug('Auto-reconnect: failed, will retry');
+      } finally {
+        this.autoReconnectAttempting = false;
+      }
+    };
+
+    // Attempt immediately, then retry every 3 seconds
+    attempt();
+    this.autoReconnectTimer = setInterval(attempt, 3000);
+  }
+
+  private stopAutoReconnectLoop(): void {
+    if (this.autoReconnectTimer) {
+      clearInterval(this.autoReconnectTimer);
+      this.autoReconnectTimer = null;
+    }
   }
 
   /**

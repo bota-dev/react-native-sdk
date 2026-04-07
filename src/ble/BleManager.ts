@@ -220,8 +220,11 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
         // Check for duplicates
         const existingDevice = this.discoveredDevices.get(device.id);
         if (existingDevice && !allowDuplicates) {
-          // Update RSSI
+          // Update RSSI and merge fields that may arrive in separate packets
+          // (ADV_DATA has the name, SCAN_RSP has manufacturer data with MAC)
           existingDevice.rssi = discovered.rssi;
+          if (discovered.macAddress) existingDevice.macAddress = discovered.macAddress;
+          if (discovered.manufacturerData) existingDevice.manufacturerData = discovered.manufacturerData;
           return;
         }
 

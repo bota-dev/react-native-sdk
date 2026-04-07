@@ -87,6 +87,8 @@ export interface DeviceManagerEvents {
     deviceId: string,
     state: import('./Device').ConnectionState
   ) => void;
+  /** Emitted when Bluetooth powers back on (off → on transition) */
+  bluetoothReady: () => void;
 }
 
 /**

@@ -3,7 +3,7 @@
  */
 
 import { Buffer } from 'buffer';
-import { Subscription } from 'react-native-ble-plx';
+import { State, Subscription } from 'react-native-ble-plx';
 import EventEmitter from 'eventemitter3';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -156,6 +156,16 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       this.statusSubscriptions.delete(deviceId);
 
       this.emit('deviceDisconnected', deviceId, error);
+    });
+
+    // Auto-reconnect when Bluetooth powers back on
+    let prevState: State = State.Unknown;
+    this.bleManager.on('stateChange', (state) => {
+      if (state === State.PoweredOn && prevState !== State.PoweredOn) {
+        log.info('Bluetooth powered on — emitting bluetoothReady');
+        this.emit('bluetoothReady');
+      }
+      prevState = state;
     });
   }
 

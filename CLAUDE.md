@@ -136,7 +136,20 @@ npx expo start --clear
 
 After making further SDK changes, repeat steps 1-2 and reload the app. No native rebuild needed unless you changed native modules.
 
+**IMPORTANT:** You must delete the SDK's `node_modules` before testing locally. When the app symlinks to the SDK source, Metro follows the symlink and resolves dependencies from the SDK's `node_modules` instead of the app's. This causes native module errors (`TurboModuleRegistry`, `NativeModule: AsyncStorage is null`) because the SDK's copies aren't linked to native code.
+
+```bash
+# Delete SDK's node_modules (required for local testing)
+rm -rf react-native-sdk/node_modules
+
+# Re-install when you need to build the SDK again
+cd react-native-sdk && npm install && npm run build
+```
+
 **Troubleshooting:**
+- `TurboModuleRegistry.getEnforcing(...): 'PlatformConstants' could not be found` → SDK's `node_modules` still exists, delete it
+- `NativeModule: AsyncStorage is null` → same cause, delete SDK's `node_modules`
+- `Unable to resolve "eventemitter3"` → install SDK runtime deps in the app: `cd demo/app && npm install eventemitter3 buffer`
 - If types don't update, delete `node_modules/.cache` in the app
 - If the app still uses the old SDK, stop Metro, run `npm install ../../react-native-sdk` again, and restart with `--clear`
 

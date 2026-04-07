@@ -268,30 +268,41 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
     let deviceType: DeviceType = 'bota_pin';
     let firmwareVersion = '0.0.0';
     let pairingState: PairingState = 'unpaired';
+    let macAddress: string | null = null;
     let manufacturerData: Uint8Array | undefined;
 
     if (device.manufacturerData) {
       try {
         manufacturerData = Buffer.from(device.manufacturerData, 'base64');
-        if (manufacturerData.length >= 4) {
+
+        // Check for Bota manufacturer data format:
+        // [company_id_lo(0x7A), company_id_hi(0xB0), mac[0..5]]
+        if (manufacturerData.length >= 8 &&
+            manufacturerData[0] === 0x7A && manufacturerData[1] === 0xB0) {
+          // Parse MAC address (6 bytes after company ID)
+          const mac = manufacturerData.slice(2, 8);
+          macAddress = Array.from(mac)
+            .map((b) => b.toString(16).padStart(2, '0').toUpperCase())
+            .join(':');
+        }
+
+        // Legacy format (no company ID): [device_type, fw_major, fw_minor, pairing_state]
+        if (!macAddress && manufacturerData.length >= 4) {
           deviceType = parseDeviceType(manufacturerData[0]);
-          firmwareVersion = parseFirmwareVersion(
-            manufacturerData[1],
-            manufacturerData[2]
-          );
+          firmwareVersion = parseFirmwareVersion(manufacturerData[1], manufacturerData[2]);
           pairingState = parsePairingState(manufacturerData[3]);
         }
       } catch (e) {
         log.warn('Failed to parse manufacturer data', { deviceId: device.id });
       }
-    } else {
-      // Infer device type from name
+    }
+
+    // Infer device type from name if not parsed from manufacturer data
+    if (deviceType === 'bota_pin') {
       if (deviceName.includes('Pin4G')) {
         deviceType = 'bota_pin_4g';
-      } else if (deviceName.includes('Note')) {
+      } else if (deviceName.includes('Note') || deviceName.includes('note')) {
         deviceType = 'bota_note';
-      } else if (deviceName.includes('Pin')) {
-        deviceType = 'bota_pin';
       }
     }
 
@@ -300,6 +311,7 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
       name: deviceName,
       deviceType,
       firmwareVersion,
+      macAddress,
       pairingState,
       rssi: device.rssi ?? -100,
       manufacturerData,

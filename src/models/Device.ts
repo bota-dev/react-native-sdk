@@ -88,6 +88,8 @@ export interface DiscoveredDevice {
   deviceType: DeviceType;
   /** Firmware version from manufacturer data */
   firmwareVersion: string;
+  /** MAC address parsed from manufacturer data (null if firmware doesn't include it) */
+  macAddress: string | null;
   /** Pairing state from manufacturer data */
   pairingState: PairingState;
   /** Signal strength (RSSI) */

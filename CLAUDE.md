@@ -117,17 +117,28 @@ npm run test         # Jest (currently passes with no tests)
 3. Create a GitHub release with tag `vX.Y.Z`
 4. CI automatically publishes to npm
 
-### Local Development
+### Local Development with Demo App
 
-To test changes locally in an app:
+To test SDK changes locally against the demo app:
 
 ```bash
-# In SDK directory
+# 1. Build the SDK
+cd react-native-sdk
 npm run build
 
-# In app directory
-npm install ../path/to/react-native-sdk
+# 2. Install locally in the demo app
+cd ../demo/app
+npm install ../../react-native-sdk
+
+# 3. Clear cache and start
+npx expo start --clear
 ```
+
+After making further SDK changes, repeat steps 1-2 and reload the app. No native rebuild needed unless you changed native modules.
+
+**Troubleshooting:**
+- If types don't update, delete `node_modules/.cache` in the app
+- If the app still uses the old SDK, stop Metro, run `npm install ../../react-native-sdk` again, and restart with `--clear`
 
 ## Dependencies
 

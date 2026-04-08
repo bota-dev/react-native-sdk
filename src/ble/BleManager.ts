@@ -301,9 +301,12 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
     }
 
     // Infer device type from name if not parsed from manufacturer data
+    // Check Pin variants before Note — names like "Bota_notepin_xxx" contain both
     if (deviceType === 'bota_pin') {
-      if (deviceName.includes('Pin4G')) {
+      if (deviceName.includes('Pin4G') || deviceName.includes('pin4g') || deviceName.includes('pin_4g')) {
         deviceType = 'bota_pin_4g';
+      } else if (deviceName.includes('Pin') || deviceName.includes('pin')) {
+        deviceType = 'bota_pin';
       } else if (deviceName.includes('Note') || deviceName.includes('note')) {
         deviceType = 'bota_note';
       }

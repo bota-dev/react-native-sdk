@@ -152,14 +152,42 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
         totalBytes: recording.fileSizeBytes,
       };
 
-      // Stage: Transferring from device
-      const audioData = await this.protocolHandler.transferRecording(
-        device.id,
-        recording.uuid,
-        (_bytesReceived, _totalBytes) => {
-          // Progress callback - can be used for real-time progress updates
+      // Stage: Transferring from device (with retry on CRC mismatch)
+      const MAX_TRANSFER_RETRIES = 2;
+      let audioData: Buffer;
+      let lastTransferError: Error | null = null;
+      for (let attempt = 0; attempt <= MAX_TRANSFER_RETRIES; attempt++) {
+        try {
+          if (attempt > 0) {
+            log.warn(`Retrying BLE transfer (attempt ${attempt + 1}/${MAX_TRANSFER_RETRIES + 1})`, {
+              recordingUuid: recording.uuid,
+            });
+            // Brief delay before retry to let BLE stabilize
+            await new Promise(r => setTimeout(r, 1000));
+          }
+          audioData = await this.protocolHandler.transferRecording(
+            device.id,
+            recording.uuid,
+            (_bytesReceived, _totalBytes) => {
+              // Progress callback - can be used for real-time progress updates
+            }
+          );
+          lastTransferError = null;
+          break;
+        } catch (err) {
+          lastTransferError = err as Error;
+          const isChecksumError = (err as any)?.code === 'CHECKSUM_MISMATCH';
+          if (!isChecksumError || attempt >= MAX_TRANSFER_RETRIES) {
+            throw err;
+          }
+          log.warn(`BLE transfer CRC mismatch, will retry`, {
+            recordingUuid: recording.uuid,
+            attempt: attempt + 1,
+            error: (err as Error).message,
+          });
         }
-      );
+      }
+      if (lastTransferError) throw lastTransferError;
 
       yield {
         stage: 'transferring',

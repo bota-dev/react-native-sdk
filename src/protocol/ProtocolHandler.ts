@@ -19,16 +19,24 @@ import {
   CHAR_TRANSFER_STATUS,
   TRANSFER_PACKET_TIMEOUT,
   STREAMING_PAUSED_TIMEOUT,
+  DEFAULT_WINDOW_SIZE,
+  MAX_RETRANSMIT_ROUNDS,
+  MAX_MISSING_PER_WINDOW,
+  PACKET_TYPE_START_ACK,
 } from '../ble/constants';
 import {
   parseStorageInfo,
   parseRecordingList,
   parseTransferPacket,
+  parseStartAck,
   createAckPacket,
   createTransferCommand,
+  createTransferStartV2,
+  createWindowAck,
+  createRetransmitRequest,
 } from '../ble/parsers';
 import type { StorageInfo } from '../models/Device';
-import type { DeviceRecording, TransferPacket } from '../models/Recording';
+import type { DeviceRecording } from '../models/Recording';
 import { TransferError, DeviceError } from '../utils/errors';
 import { logger } from '../utils/logger';
 
@@ -46,6 +54,14 @@ interface TransferState {
   checksum?: number;
   subscription?: Subscription;
   timeoutId?: number;
+  // v2 windowed transfer fields
+  protocolVersion: 1 | 2;
+  negotiated: boolean; // true after START_ACK received (v2) or first DATA (v1)
+  windowSize: number;
+  totalPackets: number;
+  fileSize: number;
+  windowStartSeq: number;
+  retransmitRound: number;
 }
 
 /**
@@ -159,8 +175,8 @@ export class ProtocolHandler {
   }
 
   /**
-   * Transfer a recording from device
-   * Returns the audio data as a Buffer
+   * Transfer a recording from device.
+   * Negotiates v2 windowed protocol if device supports it, falls back to v1.
    */
   async transferRecording(
     deviceId: string,
@@ -171,7 +187,6 @@ export class ProtocolHandler {
       throw DeviceError.notConnected(deviceId);
     }
 
-    // Check if transfer already in progress
     if (this.activeTransfers.has(recordingUuid)) {
       throw new TransferError(
         'Transfer already in progress for this recording',
@@ -189,6 +204,13 @@ export class ProtocolHandler {
         receivedPackets: new Map(),
         totalBytes: 0,
         isComplete: false,
+        protocolVersion: 1,
+        negotiated: false,
+        windowSize: DEFAULT_WINDOW_SIZE,
+        totalPackets: 0,
+        fileSize: 0,
+        windowStartSeq: 0,
+        retransmitRound: 0,
       };
 
       this.activeTransfers.set(recordingUuid, state);
@@ -199,12 +221,126 @@ export class ProtocolHandler {
         this.activeTransfers.delete(recordingUuid);
       };
 
-      const resetTimeout = () => {
+      const resetTimeout = (ms?: number) => {
         if (state.timeoutId) clearTimeout(state.timeoutId);
         state.timeoutId = setTimeout(() => {
           cleanup();
           reject(TransferError.timeout(recordingUuid));
-        }, TRANSFER_PACKET_TIMEOUT);
+        }, ms ?? TRANSFER_PACKET_TIMEOUT);
+      };
+
+      /** Detect gaps in a sequence range [start..end] */
+      const findMissing = (start: number, end: number): number[] => {
+        const missing: number[] = [];
+        for (let s = start; s <= end; s++) {
+          if (!state.receivedPackets.has(s)) {
+            missing.push(s);
+          }
+        }
+        return missing;
+      };
+
+      /** Send WINDOW_ACK to device via TRANSFER_CONTROL */
+      const sendWindowAck = async (lastGoodSeq: number, missingSeqs: number[]) => {
+        const pkt = createWindowAck(lastGoodSeq, missingSeqs);
+        await this.bleManager.writeCharacteristic(
+          deviceId, SERVICE_BOTA_STORAGE, CHAR_TRANSFER_CONTROL, pkt, true
+        );
+      };
+
+      /** Send RETRANSMIT request to device */
+      const sendRetransmit = async (missingSeqs: number[]) => {
+        const pkt = createRetransmitRequest(missingSeqs);
+        await this.bleManager.writeCharacteristic(
+          deviceId, SERVICE_BOTA_STORAGE, CHAR_TRANSFER_CONTROL, pkt, true
+        );
+      };
+
+      /** Handle v2 WINDOW_END: check for gaps, send WINDOW_ACK */
+      const handleWindowEnd = async (windowIndex: number, lastSeq: number) => {
+        const missing = findMissing(state.windowStartSeq, lastSeq);
+
+        if (missing.length === 0) {
+          // All packets received — advance window
+          log.debug(`Window ${windowIndex} OK (seq ${state.windowStartSeq}-${lastSeq})`);
+          await sendWindowAck(lastSeq, []);
+          state.windowStartSeq = lastSeq + 1;
+          state.retransmitRound = 0;
+          resetTimeout(30000); // wait for next window
+        } else if (missing.length > MAX_MISSING_PER_WINDOW) {
+          // Too many gaps — connection is bad, abort
+          log.error(`Window ${windowIndex}: ${missing.length} missing (>${MAX_MISSING_PER_WINDOW}), aborting`);
+          await this.sendAck(deviceId, 'abort', 0);
+          cleanup();
+          reject(new TransferError(
+            `Too many missing packets in window ${windowIndex}`,
+            'TRANSFER_TOO_MANY_GAPS',
+            recordingUuid
+          ));
+        } else if (state.retransmitRound >= MAX_RETRANSMIT_ROUNDS) {
+          log.error(`Window ${windowIndex}: ${missing.length} still missing after ${MAX_RETRANSMIT_ROUNDS} retransmit rounds`);
+          await this.sendAck(deviceId, 'abort', 0);
+          cleanup();
+          reject(new TransferError(
+            `Retransmit limit exceeded for window ${windowIndex}`,
+            'TRANSFER_RETRANSMIT_LIMIT',
+            recordingUuid
+          ));
+        } else {
+          // Request retransmission
+          state.retransmitRound++;
+          log.debug(`Window ${windowIndex}: ${missing.length} missing, retransmit round ${state.retransmitRound}`);
+          await sendWindowAck(lastSeq, missing);
+          resetTimeout(30000);
+        }
+      };
+
+      /** Handle EOF: verify CRC, send ACK or RETRANSMIT */
+      const handleEof = async (finalSeq: number, checksum: number) => {
+        // Check for any remaining gaps across the entire transfer
+        const missing = findMissing(0, finalSeq);
+
+        if (missing.length > 0 && missing.length <= MAX_MISSING_PER_WINDOW) {
+          if (state.retransmitRound >= MAX_RETRANSMIT_ROUNDS) {
+            log.error(`EOF: ${missing.length} still missing after ${MAX_RETRANSMIT_ROUNDS} rounds`);
+            await this.sendAck(deviceId, 'nack', 0);
+            cleanup();
+            reject(TransferError.checksumMismatch(recordingUuid));
+            return;
+          }
+          state.retransmitRound++;
+          log.debug(`EOF: ${missing.length} missing, requesting retransmit round ${state.retransmitRound}`);
+          await sendRetransmit(missing);
+          state.isComplete = false; // wait for retransmitted packets + new EOF
+          resetTimeout(30000);
+          return;
+        }
+
+        if (missing.length > MAX_MISSING_PER_WINDOW) {
+          log.error(`EOF: ${missing.length} missing packets, too many to recover`);
+          await this.sendAck(deviceId, 'nack', 0);
+          cleanup();
+          reject(TransferError.checksumMismatch(recordingUuid));
+          return;
+        }
+
+        // All packets present — verify CRC
+        const audioData = this.assembleAudioData(state);
+        const calculatedChecksum = this.calculateCrc32(audioData);
+
+        if (calculatedChecksum !== checksum) {
+          log.error(`CRC mismatch: expected=${checksum.toString(16)} calculated=${calculatedChecksum.toString(16)} bytes=${audioData.length}`);
+          await this.sendAck(deviceId, 'nack', 0);
+          cleanup();
+          reject(TransferError.checksumMismatch(recordingUuid));
+          return;
+        }
+
+        // Success
+        await this.sendAck(deviceId, 'ack', 0);
+        cleanup();
+        log.info('Transfer completed', { recordingUuid, size: audioData.length, protocol: `v${state.protocolVersion}` });
+        resolve(audioData);
       };
 
       // Subscribe to transfer data notifications
@@ -214,26 +350,75 @@ export class ProtocolHandler {
         CHAR_RECORDING_TRANSFER,
         async (data) => {
           try {
-            resetTimeout();
+            resetTimeout(state.protocolVersion === 2 ? 30000 : TRANSFER_PACKET_TIMEOUT);
 
-            // Skip ACK echo-back packets (App→Device only, may be echoed by BLE stack)
             const firstByte = data.readUInt8(0);
-            if (firstByte >= 0x10 && firstByte <= 0x12) {
+
+            // Skip ACK echo-back packets
+            if (firstByte >= 0x10 && firstByte <= 0x14) {
               return;
             }
 
-            const packet = parseTransferPacket(data);
-            this.handleTransferPacket(state, packet, onProgress);
+            // v2 negotiation: first packet after START
+            if (!state.negotiated) {
+              if (firstByte === PACKET_TYPE_START_ACK && data.length >= 11) {
+                // Device supports v2 — parse START_ACK
+                const ack = parseStartAck(data);
+                state.protocolVersion = 2;
+                state.negotiated = true;
+                state.windowSize = ack.windowSize;
+                state.totalPackets = ack.totalPackets;
+                state.fileSize = ack.fileSize;
+                log.info(`v2 negotiated: window=${ack.windowSize} packets=${ack.totalPackets} size=${ack.fileSize}`);
+                resetTimeout(30000); // wait for first window
+                return;
+              }
+              // Not a START_ACK — device is v1, process as DATA
+              state.protocolVersion = 1;
+              state.negotiated = true;
+              log.info('v1 fallback (no START_ACK)');
+            }
 
-            if (state.isComplete) {
-              // Assemble the audio data
+            const packet = parseTransferPacket(data);
+
+            switch (packet.type) {
+              case 'data':
+                if (packet.data) {
+                  state.receivedPackets.set(packet.sequenceNumber, Buffer.from(packet.data));
+                  state.totalBytes += packet.data.length;
+                  onProgress?.(state.totalBytes, state.fileSize || undefined);
+                }
+                break;
+
+              case 'window_end':
+                if (state.protocolVersion === 2 && packet.windowIndex !== undefined && packet.lastSeq !== undefined) {
+                  await handleWindowEnd(packet.windowIndex, packet.lastSeq);
+                }
+                break;
+
+              case 'eof':
+                if (state.protocolVersion === 2 && packet.checksum !== undefined) {
+                  await handleEof(packet.sequenceNumber, packet.checksum);
+                } else {
+                  // v1: same as before
+                  state.checksum = packet.checksum;
+                  state.isComplete = true;
+                }
+                break;
+
+              case 'error':
+                throw TransferError.deviceError(state.recordingUuid, packet.errorCode ?? 0xff);
+            }
+
+            // v1 completion path
+            if (state.protocolVersion === 1 && state.isComplete) {
               const audioData = this.assembleAudioData(state);
 
-              // Verify checksum if available
               if (state.checksum !== undefined) {
                 const calculatedChecksum = this.calculateCrc32(audioData);
                 if (calculatedChecksum !== state.checksum) {
-                  // CRC mismatch — send NACK and fail
+                  const missing = findMissing(0, Math.max(...state.receivedPackets.keys()));
+                  log.error(`v1 CRC mismatch: expected=${state.checksum.toString(16)} calculated=${calculatedChecksum.toString(16)} missing=${missing.length}`);
                   await this.sendAck(deviceId, 'nack', 0);
                   cleanup();
                   reject(TransferError.checksumMismatch(recordingUuid));
@@ -241,15 +426,9 @@ export class ProtocolHandler {
                 }
               }
 
-              // CRC OK — send final ACK to confirm transfer
               await this.sendAck(deviceId, 'ack', 0);
               cleanup();
-
-              log.info('Transfer completed', {
-                recordingUuid,
-                size: audioData.length,
-              });
-
+              log.info('Transfer completed', { recordingUuid, size: audioData.length, protocol: 'v1' });
               resolve(audioData);
             }
           } catch (error) {
@@ -263,54 +442,13 @@ export class ProtocolHandler {
         }
       );
 
-      // Send start transfer command
-      const command = createTransferCommand('start', recordingUuid);
+      // Send v2 START command (backward compatible — v1 devices ignore extra 2 bytes)
+      const command = createTransferStartV2(recordingUuid, DEFAULT_WINDOW_SIZE);
       this.bleManager
-        .writeCharacteristic(
-          deviceId,
-          SERVICE_BOTA_STORAGE,
-          CHAR_TRANSFER_CONTROL,
-          command
-        )
-        .then(() => {
-          resetTimeout();
-        })
-        .catch((error) => {
-          cleanup();
-          reject(error);
-        });
+        .writeCharacteristic(deviceId, SERVICE_BOTA_STORAGE, CHAR_TRANSFER_CONTROL, command)
+        .then(() => resetTimeout(30000))
+        .catch((error) => { cleanup(); reject(error); });
     });
-  }
-
-  /**
-   * Handle a transfer packet from device
-   */
-  private handleTransferPacket(
-    state: TransferState,
-    packet: TransferPacket,
-    onProgress?: TransferProgressCallback
-  ): void {
-    switch (packet.type) {
-      case 'data':
-        if (packet.data) {
-          // Store packet data (no ACK — streaming mode)
-          state.receivedPackets.set(packet.sequenceNumber, Buffer.from(packet.data));
-          state.totalBytes += packet.data.length;
-          onProgress?.(state.totalBytes);
-        }
-        break;
-
-      case 'eof':
-        state.checksum = packet.checksum;
-        state.isComplete = true;
-        break;
-
-      case 'error':
-        throw TransferError.deviceError(
-          state.recordingUuid,
-          packet.errorCode ?? 0xff
-        );
-    }
   }
 
   /**

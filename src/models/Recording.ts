@@ -114,8 +114,8 @@ export interface UploadTask {
  * Transfer packet from device
  */
 export interface TransferPacket {
-  /** Packet type: data, eof, paused (streaming), or error */
-  type: 'data' | 'eof' | 'paused' | 'error';
+  /** Packet type */
+  type: 'data' | 'eof' | 'paused' | 'window_end' | 'error';
   /** Sequence number */
   sequenceNumber: number;
   /** Audio data (for data packets) */
@@ -126,6 +126,10 @@ export interface TransferPacket {
   bytesSent?: number;
   /** Error code (for error packets) */
   errorCode?: number;
+  /** Window index (for window_end packets — v2) */
+  windowIndex?: number;
+  /** Last sequence in window (for window_end packets — v2) */
+  lastSeq?: number;
 }
 
 /**

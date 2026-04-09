@@ -127,12 +127,23 @@ export const TRANSFER_CMD_CONFIRM_SYNC = 0x07;
 export const PACKET_TYPE_DATA = 0x01;
 export const PACKET_TYPE_EOF = 0x02;
 export const PACKET_TYPE_PAUSED = 0x03; // Streaming mode: caught up to recording write position
+export const PACKET_TYPE_START_ACK = 0x03; // v2: transfer negotiation ack (same code as PAUSED, disambiguated by context)
+export const PACKET_TYPE_WINDOW_END = 0x04; // v2: end of window marker
 export const PACKET_TYPE_ERROR = 0xff;
 
 // ACK types (App → Device)
 export const ACK_TYPE_ACK = 0x10;
 export const ACK_TYPE_NACK = 0x11;
 export const ACK_TYPE_ABORT = 0x12;
+export const ACK_TYPE_WINDOW_ACK = 0x13; // v2: window acknowledgement with missing list
+export const ACK_TYPE_RETRANSMIT = 0x14; // v2: retransmit request at EOF
+
+// Transfer protocol versions
+export const TRANSFER_PROTOCOL_V1 = 0x01;
+export const TRANSFER_PROTOCOL_V2 = 0x02;
+export const DEFAULT_WINDOW_SIZE = 64;
+export const MAX_RETRANSMIT_ROUNDS = 3;
+export const MAX_MISSING_PER_WINDOW = 62;
 
 // Device command values
 export const DEVICE_CMD_FACTORY_RESET = 0x01;

@@ -53,10 +53,6 @@ import {
   PACKET_TYPE_EOF,
   PACKET_TYPE_PAUSED,
   PACKET_TYPE_ERROR,
-  PACKET_TYPE_WINDOW_END,
-  ACK_TYPE_WINDOW_ACK,
-  ACK_TYPE_RETRANSMIT,
-  TRANSFER_PROTOCOL_V2,
   CAP_BLE_SYNC,
   CAP_WIFI_UPLOAD,
   CAP_LTE_UPLOAD,
@@ -451,14 +447,6 @@ export function parseTransferPacket(data: Buffer): TransferPacket {
         bytesSent: data.length >= 7 ? data.readUInt32LE(3) : undefined,
       };
 
-    case PACKET_TYPE_WINDOW_END:
-      return {
-        type: 'window_end',
-        sequenceNumber,
-        windowIndex: data.readUInt16LE(1),
-        lastSeq: data.readUInt16LE(3),
-      };
-
     case PACKET_TYPE_ERROR:
       return {
         type: 'error',
@@ -554,76 +542,6 @@ export function createTransferCommand(
   }
 
   return Buffer.from([cmdByte]);
-}
-
-// ============================================================================
-// Transfer Protocol v2 — Windowed Transfer with Selective Retransmission
-// ============================================================================
-
-/** START_ACK (11 bytes): type(1) + version(1) + windowSize(1) + totalPackets(4) + fileSize(4) */
-export interface StartAckInfo {
-  protocolVersion: number;
-  windowSize: number;
-  totalPackets: number;
-  fileSize: number;
-}
-
-export function parseStartAck(data: Buffer): StartAckInfo {
-  if (data.length < 11) throw new Error(`Invalid START_ACK length: ${data.length}`);
-  return {
-    protocolVersion: data.readUInt8(1),
-    windowSize: data.readUInt8(2),
-    totalPackets: data.readUInt32LE(3),
-    fileSize: data.readUInt32LE(7),
-  };
-}
-
-/** WINDOW_END (5 bytes): type(1) + windowIndex(2) + lastSeq(2) */
-export interface WindowEndInfo {
-  windowIndex: number;
-  lastSeq: number;
-}
-
-export function parseWindowEnd(data: Buffer): WindowEndInfo {
-  if (data.length < 5) throw new Error(`Invalid WINDOW_END length: ${data.length}`);
-  return {
-    windowIndex: data.readUInt16LE(1),
-    lastSeq: data.readUInt16LE(3),
-  };
-}
-
-/** Create v2 START command (19 bytes): cmd(1) + uuid(16) + version(1) + windowSize(1) */
-export function createTransferStartV2(recordingUuid: string, windowSize: number): Buffer {
-  const uuidBuffer = Buffer.from(recordingUuid.replace(/-/g, ''), 'hex');
-  const buffer = Buffer.alloc(1 + uuidBuffer.length + 2);
-  buffer.writeUInt8(0x02, 0); // START command
-  uuidBuffer.copy(buffer, 1);
-  buffer.writeUInt8(TRANSFER_PROTOCOL_V2, 1 + uuidBuffer.length);
-  buffer.writeUInt8(windowSize, 1 + uuidBuffer.length + 1);
-  return buffer;
-}
-
-/** Create WINDOW_ACK (4 + 2*N bytes): type(1) + lastGoodSeq(2) + missingCount(1) + missingSeqs(2*N) */
-export function createWindowAck(lastGoodSeq: number, missingSeqs: number[]): Buffer {
-  const buffer = Buffer.alloc(4 + missingSeqs.length * 2);
-  buffer.writeUInt8(ACK_TYPE_WINDOW_ACK, 0);
-  buffer.writeUInt16LE(lastGoodSeq, 1);
-  buffer.writeUInt8(missingSeqs.length, 3);
-  for (let i = 0; i < missingSeqs.length; i++) {
-    buffer.writeUInt16LE(missingSeqs[i], 4 + i * 2);
-  }
-  return buffer;
-}
-
-/** Create RETRANSMIT request (2 + 2*N bytes): type(1) + missingCount(1) + missingSeqs(2*N) */
-export function createRetransmitRequest(missingSeqs: number[]): Buffer {
-  const buffer = Buffer.alloc(2 + missingSeqs.length * 2);
-  buffer.writeUInt8(ACK_TYPE_RETRANSMIT, 0);
-  buffer.writeUInt8(missingSeqs.length, 1);
-  for (let i = 0; i < missingSeqs.length; i++) {
-    buffer.writeUInt16LE(missingSeqs[i], 2 + i * 2);
-  }
-  return buffer;
 }
 
 // ============================================================================

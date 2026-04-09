@@ -141,7 +141,7 @@ export const ACK_TYPE_RETRANSMIT = 0x14; // v2: retransmit request at EOF
 // Transfer protocol versions
 export const TRANSFER_PROTOCOL_V1 = 0x01;
 export const TRANSFER_PROTOCOL_V2 = 0x02;
-export const DEFAULT_WINDOW_SIZE = 64;
+export const DEFAULT_WINDOW_SIZE = 128;
 export const MAX_RETRANSMIT_ROUNDS = 3;
 export const MAX_MISSING_PER_WINDOW = 62;
 

@@ -108,6 +108,11 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   private connectedDevices: Map<string, ConnectedDevice> = new Map();
   private statusSubscriptions: Map<string, Subscription> = new Map();
   private reconnectRegistry: Record<string, ReconnectInfo> = {};
+  // Cache of last known recording state per device (populated from status notifications)
+  private recordingStateCache: Map<string, RecordingState> = new Map();
+  // Pending promise set while a recording command is in-flight — bridges the race where
+  // the BLE heartbeat arrives before the recording status notification.
+  private recordingStatePending: Map<string, Promise<RecordingState>> = new Map();
   private isInitialized = false;
 
   // Auto-reconnect state
@@ -157,6 +162,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         device.connectionState = 'disconnected';
       }
       this.connectedDevices.delete(deviceId);
+      this.recordingStateCache.delete(deviceId);
 
       // Clean up status subscription
       this.statusSubscriptions.get(deviceId)?.remove();
@@ -953,13 +959,14 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       throw DeviceError.notConnected(device.id);
     }
 
-    const data = await this.bleManager.readCharacteristic(
-      device.id,
-      SERVICE_BOTA_CONTROL,
-      CHAR_RECORDING_STATUS
-    );
-
-    return this.parseRecordingState(data);
+    // CHAR_RECORDING_STATUS is notify-only — the device only sends it as a notification
+    // on state change (not readable via BLE read).
+    // Check pending FIRST: if a recording command is in-flight its result supersedes stale cache.
+    const pending = this.recordingStatePending.get(device.id);
+    if (pending) return pending;
+    const cached = this.recordingStateCache.get(device.id);
+    if (cached) return cached;
+    return { active: false, initiatedBy: 'local' };
   }
 
   /**
@@ -1001,9 +1008,17 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   private waitForRecordingResult(
     deviceId: string
   ): Promise<{ success: boolean; error?: string }> {
+    // Set up a pending promise so getRecordingState() can await the result
+    // rather than returning stale cache while the command is in-flight.
+    let resolvePending!: (state: RecordingState) => void;
+    const pendingPromise = new Promise<RecordingState>(resolve => { resolvePending = resolve; });
+    this.recordingStatePending.set(deviceId, pendingPromise);
+
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         subscription.remove();
+        resolvePending({ active: false, initiatedBy: 'local' });
+        this.recordingStatePending.delete(deviceId);
         resolve({ success: false, error: 'timeout' });
       }, OPERATION_TIMEOUT);
 
@@ -1016,11 +1031,19 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
           subscription.remove();
 
           if (data.length < 1) {
+            resolvePending({ active: false, initiatedBy: 'local' });
+            this.recordingStatePending.delete(deviceId);
             resolve({ success: false, error: 'invalid_response' });
             return;
           }
 
-          // Parse response: [state, timestamp(4), result_code, source]
+          // Cache the parsed recording state and resolve pending for getRecordingState()
+          const parsedState = this.parseRecordingState(data);
+          this.recordingStateCache.set(deviceId, parsedState);
+          resolvePending(parsedState);
+          this.recordingStatePending.delete(deviceId);
+
+          // Parse response: byte 0 = is_recording state
           const resultCode = data.length >= 6 ? data[5] : data[0];
 
           switch (resultCode) {
@@ -1051,6 +1074,8 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         (error) => {
           clearTimeout(timeout);
           subscription.remove();
+          resolvePending({ active: false, initiatedBy: 'local' });
+          this.recordingStatePending.delete(deviceId);
           reject(new DeviceError(
             `Recording control error: ${error.message}`,
             'RECORDING_CONTROL_ERROR',
@@ -1066,16 +1091,20 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
    * Parse recording state from BLE data
    */
   private parseRecordingState(data: Buffer): RecordingState {
-    // Format: [state, timestamp(4), result_code, source]
-    const state = data.length >= 1 ? data[0] : 0;
-    const timestamp = data.length >= 5 ? data.readUInt32LE(1) : 0;
-    const source = data.length >= 7 ? data[6] : 0;
+    // Format from firmware bota_build_recording_status() (18 bytes):
+    // Byte 0:     is_recording (0=idle, 1=active)
+    // Byte 1:     initiated_by (0=button, 1=remote)
+    // Bytes 2-17: recording_uuid (16 bytes)
+    const active = data.length >= 1 && data[0] === 0x01;
+    const initiatedBy: 'local' | 'remote' = data.length >= 2 && data[1] === 0x01 ? 'remote' : 'local';
 
-    return {
-      active: state === 0x01,
-      startedAt: timestamp > 0 ? new Date(timestamp * 1000) : undefined,
-      initiatedBy: source === 0x01 ? 'remote' : 'local',
-    };
+    let recordingId: string | undefined;
+    if (active && data.length >= 18) {
+      const hex = data.slice(2, 18).toString('hex');
+      recordingId = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+    }
+
+    return { active, recordingId, initiatedBy };
   }
 
   // ============================================================================

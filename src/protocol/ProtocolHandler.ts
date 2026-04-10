@@ -542,14 +542,17 @@ export class ProtocolHandler {
                 break;
 
               case 'eof':
-                cleanup();
                 log.info('Streaming transfer completed', {
                   recordingUuid,
                   totalBytes,
                   checksum: packet.checksum,
                 });
-                // Send final ACK
+                // Send final ACK before cleanup — same order as transferRecording.
+                // Calling cleanup() before sendAck() removes the subscription, which
+                // causes the BLE stack to fire the error callback asynchronously during
+                // the sendAck await, rejecting the promise before resolve() runs.
                 await this.sendAck(deviceId, 'ack', 0);
+                cleanup();
                 resolve({
                   totalBytes,
                   checksum: packet.checksum ?? 0,

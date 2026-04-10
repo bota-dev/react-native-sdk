@@ -139,6 +139,13 @@ export interface StreamingSyncOptions {
    * Default: 256 (from device settings.upload.streaming_chunk_kb)
    */
   chunkSizeKb?: number;
+  /**
+   * Time-based flush interval in milliseconds. Buffered data is uploaded
+   * as a partial chunk even if chunkSizeKb hasn't been reached yet.
+   * Mirrors firmware's streaming_flush_interval_seconds behaviour.
+   * 0 = disabled (flush on chunk full only). Default: 60000 (60s).
+   */
+  flushIntervalMs?: number;
 }
 
 /**
@@ -168,6 +175,24 @@ export interface StreamingSyncProgress {
   recordingId?: string;
   /** Error message (if failed) */
   error?: string;
+}
+
+/**
+ * Upload provider for streaming sync.
+ * Called by StreamingSession to create the backend record and upload chunks
+ * concurrently with BLE transfer — same pattern as firmware WiFi/4G upload.
+ */
+export interface StreamingUploadProvider {
+  /** Create backend record at session start to obtain recordingId for chunk URLs */
+  createRecording: (info: { startedAt: Date }) => Promise<{ recordingId: string }>;
+  /** Get pre-signed S3 URL for a specific chunk (1-indexed) */
+  getChunkUrl: (recordingId: string, chunkIndex: number) => Promise<string>;
+  /** Finalize after all chunks uploaded — triggers backend stitching + transcription */
+  finalizeRecording: (recordingId: string, info: {
+    totalChunks: number;
+    durationMs?: number;
+    fileSizeBytes?: number;
+  }) => Promise<void>;
 }
 
 /**

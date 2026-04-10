@@ -3,6 +3,7 @@
  */
 
 import EventEmitter from 'eventemitter3';
+import { Buffer } from 'buffer';
 
 import { ProtocolHandler } from '../protocol/ProtocolHandler';
 import { StorageManager } from '../storage/StorageManager';
@@ -16,6 +17,7 @@ import type {
   StreamingState,
   StreamingSessionEvents,
   StreamingSyncOptions,
+  StreamingUploadProvider,
 } from '../models/Recording';
 import type { RecordingManagerEvents } from '../models/Status';
 import { DeviceError } from '../utils/errors';
@@ -442,7 +444,7 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
   startStreamingSync(
     device: ConnectedDevice,
     recordingUuid: string,
-    uploadInfoProvider: UploadInfoProvider,
+    uploadInfoProvider: StreamingUploadProvider,
     options?: StreamingSyncOptions
   ): StreamingSession {
     if (!getBleManager().isConnected(device.id)) {
@@ -464,7 +466,8 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
       device,
       recordingUuid,
       uploadInfoProvider,
-      options?.chunkSizeKb
+      options?.chunkSizeKb,
+      options?.flushIntervalMs
     );
 
     this.activeStreamingSession = session;
@@ -509,11 +512,20 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
   }
 }
 
+// Globals available in React Native (Hermes) but not declared in this tsconfig's lib
+// eslint-disable-next-line no-var
+declare var fetch: (url: string, init?: { method?: string; headers?: Record<string, string>; body?: unknown }) => Promise<{ ok: boolean; status: number; statusText: string }>;
+// eslint-disable-next-line no-var
+declare var setInterval: (handler: () => void, timeout: number) => number;
+// eslint-disable-next-line no-var
+declare var clearInterval: (id: number | null) => void;
+
 /**
  * Streaming session — manages a live streaming sync of the current recording.
  *
- * Coordinates: BLE streaming transfer ↔ chunked S3 upload
- * Independent from batch sync — they don't share locks or state.
+ * Mirrors firmware WiFi/4G upload: creates backend record upfront, uploads
+ * chunks to S3 concurrently with BLE transfer (one chunk at a time, serialized),
+ * then finalizes after EOF. Same chunk-URL-per-chunk pattern as bota_upload_task().
  */
 export class StreamingSession extends EventEmitter<StreamingSessionEvents> {
   private _state: StreamingState = 'idle';
@@ -521,22 +533,30 @@ export class StreamingSession extends EventEmitter<StreamingSessionEvents> {
   private _chunksUploaded = 0;
   private _recordingId?: string;
   private _isAborted = false;
-  private chunkBuffer: Buffer[] = [];
-  private chunkBytesBuffered = 0;
+  private _startedAt = 0;
+  // Pending BLE data not yet assigned to a chunk upload
+  private pendingData: Buffer[] = [];
+  private pendingBytes = 0;
+  // Serialized upload chain — one chunk uploads at a time
+  private uploadChain: Promise<void> = Promise.resolve();
+  private chunkIndex = 0;
   private readonly chunkSize: number;
+  private readonly flushIntervalMs: number;
 
   constructor(
     private protocolHandler: ProtocolHandler,
-    private storageManager: StorageManager,
+    _storageManager: StorageManager,
     private device: ConnectedDevice,
     private recordingUuid: string,
-    private uploadInfoProvider: UploadInfoProvider,
-    chunkSizeKb?: number
+    private uploadProvider: StreamingUploadProvider,
+    chunkSizeKb?: number,
+    flushIntervalMs?: number
   ) {
     super();
-    // Clamp to 64KB-1MB, default 256KB (matches backend setting range)
-    const kb = Math.max(64, Math.min(1024, chunkSizeKb ?? 256));
+    // Default 512KB to match firmware BOTA_UPLOAD_CHUNK_SIZE
+    const kb = Math.max(64, Math.min(1024, chunkSizeKb ?? 512));
     this.chunkSize = kb * 1024;
+    this.flushIntervalMs = flushIntervalMs ?? 60_000;
   }
 
   get state(): StreamingState { return this._state; }
@@ -546,38 +566,71 @@ export class StreamingSession extends EventEmitter<StreamingSessionEvents> {
   get isActive(): boolean { return this._state === 'streaming' || this._state === 'paused'; }
 
   /**
+   * Enqueue a chunk upload after the current one finishes.
+   * Data is captured immediately; upload runs serially in the background.
+   */
+  private enqueueChunkUpload(): void {
+    if (this.pendingData.length === 0) return;
+    const chunkData = Buffer.concat(this.pendingData);
+    this.pendingData = [];
+    this.pendingBytes = 0;
+    const idx = ++this.chunkIndex;
+    const recordingId = this._recordingId!;
+
+    this.uploadChain = this.uploadChain.then(async () => {
+      if (this._isAborted) return;
+      const url = await this.uploadProvider.getChunkUrl(recordingId, idx);
+      const response = await fetch(url, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'audio/ogg' },
+        body: chunkData,
+      });
+      if (!response.ok) {
+        throw new Error(`Chunk ${idx} S3 upload failed: ${response.status} ${response.statusText}`);
+      }
+      this._chunksUploaded = idx;
+      this.emitProgress();
+      log.debug('Chunk uploaded', { chunkIndex: idx, size: chunkData.length });
+    });
+  }
+
+  /**
    * Start the streaming session (called internally by RecordingManager)
    */
   async start(): Promise<void> {
     this._state = 'streaming';
+    this._startedAt = Date.now();
+
+    // Create backend record immediately — needed to get chunk URLs.
+    // If BLE disconnects before data arrives the record is left un-finalized
+    // (status: 'streaming') and will not trigger transcription.
+    const { recordingId } = await this.uploadProvider.createRecording({
+      startedAt: new Date(this._startedAt),
+    });
+    this._recordingId = recordingId;
+
+    // Time-based flush: upload partial chunk even if chunkSize not yet reached
+    let flushTimer: number | null = null;
+    if (this.flushIntervalMs > 0) {
+      flushTimer = setInterval(() => {
+        if (this.pendingBytes > 0 && this.isActive) {
+          this.enqueueChunkUpload();
+        }
+      }, this.flushIntervalMs);
+    }
 
     try {
-      // Get upload info for the streaming recording
-      const fakeRecording: DeviceRecording = {
-        uuid: this.recordingUuid,
-        startedAt: new Date(),
-        durationMs: 0, // Unknown — still recording
-        fileSizeBytes: 0,
-        codec: 'opus_16k',
-      };
-      const uploadInfo = await this.uploadInfoProvider(fakeRecording);
-      this._recordingId = uploadInfo.recordingId;
-
-      // Start BLE streaming transfer
       const result = await this.protocolHandler.streamTransfer(
         this.device.id,
         this.recordingUuid,
         {
           onData: (_seq, data) => {
             this._bytesReceived += data.length;
-            this.chunkBuffer.push(data);
-            this.chunkBytesBuffered += data.length;
-
-            // Upload a chunk when we've buffered enough
-            if (this.chunkBytesBuffered >= this.chunkSize) {
-              this.flushChunk();
+            this.pendingData.push(Buffer.from(data));
+            this.pendingBytes += data.length;
+            if (this.pendingBytes >= this.chunkSize) {
+              this.enqueueChunkUpload();
             }
-
             this.emitProgress();
           },
           onPaused: (_bytesSent) => {
@@ -592,16 +645,34 @@ export class StreamingSession extends EventEmitter<StreamingSessionEvents> {
         }
       );
 
-      // EOF received — recording stopped, flush remaining data
+      if (flushTimer) { clearInterval(flushTimer); flushTimer = null; }
       this._state = 'uploading';
 
-      // Flush any remaining buffered data as final chunk
-      if (this.chunkBytesBuffered > 0) {
-        await this.flushChunk();
+      if (result.totalBytes === 0) {
+        // No data received — leave record un-finalized, let batch sync handle it
+        this._state = 'completed';
+        this.emit('completed', { recordingId: '', totalBytes: 0 });
+        return;
       }
 
-      // Finalize and confirm
+      // Flush any remaining buffered data as the final chunk
+      if (this.pendingBytes > 0) {
+        this.enqueueChunkUpload();
+      }
+
+      // Wait for all chunk uploads to finish
+      await this.uploadChain;
+
+      // Finalize — backend stitches chunks and triggers transcription
       this._state = 'completing';
+      const durationMs = Date.now() - this._startedAt;
+      await this.uploadProvider.finalizeRecording(this._recordingId, {
+        totalChunks: this.chunkIndex,
+        durationMs,
+        fileSizeBytes: this._bytesReceived,
+      });
+
+      // Tell device to delete the transferred file
       await this.protocolHandler.confirmSync(this.device.id, this.recordingUuid);
 
       this._state = 'completed';
@@ -609,13 +680,17 @@ export class StreamingSession extends EventEmitter<StreamingSessionEvents> {
         recordingId: this._recordingId!,
         totalBytes: result.totalBytes,
       });
+      log.info('Streaming sync completed', {
+        recordingUuid: this.recordingUuid,
+        recordingId: this._recordingId,
+        totalChunks: this.chunkIndex,
+        totalBytes: this._bytesReceived,
+      });
     } catch (error) {
-      if (this._isAborted) {
-        return; // Don't emit error for intentional abort
-      }
+      if (flushTimer) { clearInterval(flushTimer); }
+      if (this._isAborted) return;
 
       const err = error as Error;
-      // Check if this is a BLE disconnection
       if (err.message?.includes('disconnected') || err.message?.includes('interrupted')) {
         this._state = 'disconnected';
         this.emit('disconnected');
@@ -639,38 +714,10 @@ export class StreamingSession extends EventEmitter<StreamingSessionEvents> {
    */
   abort(): void {
     if (!this.isActive) return;
-
     this._isAborted = true;
     this.protocolHandler.cancelTransfer(this.device.id, this.recordingUuid);
     this._state = 'disconnected';
     this.emit('disconnected');
-  }
-
-  /**
-   * Flush buffered data as an S3 chunk upload
-   */
-  private async flushChunk(): Promise<void> {
-    if (this.chunkBuffer.length === 0) return;
-
-    const chunkData = Buffer.concat(this.chunkBuffer);
-    this.chunkBuffer = [];
-    this.chunkBytesBuffered = 0;
-    const chunkNumber = this._chunksUploaded + 1;
-
-    // Save chunk to local storage (for recovery if S3 upload fails)
-    await this.storageManager.saveRecordingData(
-      this.device.id,
-      `${this.recordingUuid}_chunk_${chunkNumber}`,
-      chunkData
-    );
-
-    this._chunksUploaded = chunkNumber;
-
-    log.debug('Flushed streaming chunk', {
-      chunkNumber,
-      size: chunkData.length,
-      totalReceived: this._bytesReceived,
-    });
   }
 
   private emitProgress(): void {

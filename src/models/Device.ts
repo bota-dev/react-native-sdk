@@ -434,6 +434,8 @@ export interface WiFiScanNetwork {
   quality: number;
   /** Whether this is the currently connected network */
   isCurrent: boolean;
+  /** Open network (no password required) */
+  isOpen?: boolean;
 }
 
 /**

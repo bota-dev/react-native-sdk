@@ -201,7 +201,7 @@ WiFi scanning is performed on the device itself via BLE — no platform-specific
 // Scan for nearby WiFi networks via the device's radio
 const result = await BotaClient.devices.scanWiFiNetworks(connectedDevice);
 
-result.networks;    // WiFiScanNetwork[] — { ssid, quality (0-100), isCurrent }
+result.networks;    // WiFiScanNetwork[] — { ssid, quality (0-100), isCurrent, isOpen? }
 result.currentSsid; // string | null — currently connected SSID
 ```
 

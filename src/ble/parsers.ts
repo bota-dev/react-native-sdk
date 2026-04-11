@@ -728,9 +728,10 @@ export function parseWiFiScanResult(data: Buffer): DeviceWiFiScanResult | null {
     offset += 1;
 
     const isCurrent = (flags & 0x01) !== 0;
+    const isOpen = (flags & 0x02) !== 0;
     if (isCurrent) currentSsid = ssid;
 
-    networks.push({ ssid, quality, isCurrent });
+    networks.push({ ssid, quality, isCurrent, isOpen });
   }
 
   return { networks, currentSsid };

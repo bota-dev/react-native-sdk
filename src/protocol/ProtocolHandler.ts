@@ -439,8 +439,8 @@ export class ProtocolHandler {
         };
 
         // Subscribe to TRANSFER_STATUS for the response
-        this.bleManager
-          .subscribeToCharacteristic(
+        try {
+          subscription = this.bleManager.subscribeToCharacteristic(
             deviceId,
             SERVICE_BOTA_STORAGE,
             CHAR_TRANSFER_STATUS,
@@ -451,23 +451,25 @@ export class ProtocolHandler {
                 resolve(response);
               }
             },
-          )
-          .then((sub: Subscription) => {
-            subscription = sub;
+          );
 
-            // Send the trigger command
-            const command = createTransferCommand('triggerDeviceUpload');
-            return this.bleManager.writeCharacteristic(
+          // Send the trigger command
+          const command = createTransferCommand('triggerDeviceUpload');
+          this.bleManager
+            .writeCharacteristic(
               deviceId,
               SERVICE_BOTA_STORAGE,
               CHAR_TRANSFER_CONTROL,
               command,
-            );
-          })
-          .catch((error: Error) => {
-            cleanup();
-            reject(error);
-          });
+            )
+            .catch((error: Error) => {
+              cleanup();
+              reject(error);
+            });
+        } catch (error) {
+          cleanup();
+          reject(error);
+        }
 
         // 5s timeout — old firmware won't respond
         timer = setTimeout(() => {

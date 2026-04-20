@@ -2,6 +2,9 @@
  * Recording Manager - Handles recording sync and upload operations
  */
 
+// React Native provides these globals but they're not in "lib": ["ES2020"]
+declare function setTimeout(callback: () => void, ms: number): number;
+
 import EventEmitter from 'eventemitter3';
 import { Buffer } from 'buffer';
 
@@ -23,6 +26,13 @@ import type { RecordingManagerEvents } from '../models/Status';
 import { DeviceError } from '../utils/errors';
 import { logger } from '../utils/logger';
 import { getBleManager } from '../ble/BleManager';
+import {
+  SERVICE_BOTA_CONTROL,
+  CHAR_DEVICE_STATUS,
+  DEVICE_UPLOAD_POLL_INTERVAL,
+  DEVICE_UPLOAD_TIMEOUT,
+} from '../ble/constants';
+import { parseDeviceStatus } from '../ble/parsers';
 
 const log = logger.tag('RecordingManager');
 
@@ -302,7 +312,96 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
   }
 
   /**
-   * Sync all recordings from a device
+   * Read device status once (for smart sync decision).
+   */
+  private async readDeviceStatus(device: ConnectedDevice) {
+    try {
+      const data = await getBleManager().readCharacteristic(
+        device.id,
+        SERVICE_BOTA_CONTROL,
+        CHAR_DEVICE_STATUS,
+      );
+      return parseDeviceStatus(data);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Monitor device-side upload progress by polling device status.
+   * Yields progress as pending_recordings decreases.
+   * Completes when syncActive clears or pending hits 0.
+   */
+  private async *monitorDeviceUpload(
+    device: ConnectedDevice,
+    initialPendingCount: number,
+  ): AsyncGenerator<SyncProgress & { recordingIndex?: number; totalRecordings?: number }> {
+    const startTime = Date.now();
+    let lastPending = initialPendingCount;
+
+    yield {
+      stage: 'device_uploading',
+      progress: 0,
+      recordingIndex: 0,
+      totalRecordings: initialPendingCount,
+    };
+
+    while (Date.now() - startTime < DEVICE_UPLOAD_TIMEOUT) {
+      await new Promise<void>((r) => setTimeout(() => r(), DEVICE_UPLOAD_POLL_INTERVAL));
+
+      if (!getBleManager().isConnected(device.id)) {
+        yield { stage: 'failed', progress: 0, error: 'BLE disconnected during device upload' };
+        return;
+      }
+
+      const status = await this.readDeviceStatus(device);
+      if (!status) {
+        continue;
+      }
+
+      const pending = status.pendingRecordings;
+      const uploaded = initialPendingCount - pending;
+
+      if (pending < lastPending) {
+        lastPending = pending;
+        yield {
+          stage: 'device_uploading',
+          progress: initialPendingCount > 0 ? uploaded / initialPendingCount : 1,
+          recordingIndex: uploaded,
+          totalRecordings: initialPendingCount,
+        };
+      }
+
+      if (!status.flags.syncActive && pending === 0) {
+        yield {
+          stage: 'completed',
+          progress: 1,
+          recordingIndex: initialPendingCount,
+          totalRecordings: initialPendingCount,
+        };
+        return;
+      }
+
+      if (!status.flags.syncActive && pending > 0) {
+        // Device stopped uploading but files remain — partial failure
+        yield {
+          stage: 'failed',
+          progress: initialPendingCount > 0 ? uploaded / initialPendingCount : 0,
+          error: `Device upload stopped with ${pending} files remaining`,
+          recordingIndex: uploaded,
+          totalRecordings: initialPendingCount,
+        };
+        return;
+      }
+    }
+
+    yield { stage: 'failed', progress: 0, error: 'Device upload timeout' };
+  }
+
+  /**
+   * Sync all recordings from a device.
+   * Smart path: if device has WiFi/4G, triggers device-side upload.
+   * Fallback: BLE transfer (existing behavior).
    */
   async *syncAllRecordings(
     device: ConnectedDevice,
@@ -327,7 +426,36 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
       count: recordings.length,
     });
 
-    // Sync each recording
+    // --- Smart sync: try device-side upload if WiFi/4G available ---
+    const status = await this.readDeviceStatus(device);
+    if (
+      status &&
+      (status.flags.wifiConnected || status.flags.lteConnected) &&
+      !status.flags.syncActive
+    ) {
+      log.info('Smart sync: device has WiFi/4G, triggering device-side upload', {
+        wifi: status.flags.wifiConnected,
+        lte: status.flags.lteConnected,
+        pending: status.pendingRecordings,
+      });
+
+      try {
+        const response = await this.protocolHandler.triggerDeviceUpload(device.id);
+        if (response?.accepted) {
+          yield* this.monitorDeviceUpload(device, recordings.length);
+          return;
+        }
+        log.info('Smart sync: device rejected trigger, falling back to BLE', {
+          errorCode: response?.errorCode,
+        });
+      } catch (err) {
+        log.warn('Smart sync: trigger failed, falling back to BLE', {
+          error: (err as Error).message,
+        });
+      }
+    }
+
+    // --- BLE sync path (existing behavior) ---
     for (let i = 0; i < recordings.length; i++) {
       const recording = recordings[i];
 

@@ -460,6 +460,29 @@ export function parseTransferPacket(data: Buffer): TransferPacket {
 }
 
 /**
+ * Parse trigger device upload response from TRANSFER_STATUS notification.
+ * Format: [0x03, status_code]
+ * Returns null if not a trigger response (different opcode).
+ */
+export interface TriggerDeviceUploadResponse {
+  accepted: boolean;
+  errorCode?: number; // 0x01=no_network, 0x02=busy, 0x03=no_token
+}
+
+export function parseTriggerDeviceUploadResponse(
+  data: Buffer,
+): TriggerDeviceUploadResponse | null {
+  if (data.length < 2 || data.readUInt8(0) !== 0x03) {
+    return null;
+  }
+  const code = data.readUInt8(1);
+  return {
+    accepted: code === 0x00,
+    errorCode: code === 0x00 ? undefined : code,
+  };
+}
+
+/**
  * Create time sync data buffer
  *
  * Format:
@@ -517,7 +540,7 @@ export function createAckPacket(
  * Bytes 1+: Recording UUID (for start/confirm)
  */
 export function createTransferCommand(
-  command: 'list' | 'start' | 'confirm',
+  command: 'list' | 'start' | 'triggerDeviceUpload' | 'confirm',
   recordingUuid?: string
 ): Buffer {
   let cmdByte: number;
@@ -527,6 +550,9 @@ export function createTransferCommand(
       break;
     case 'start':
       cmdByte = 0x02;
+      break;
+    case 'triggerDeviceUpload':
+      cmdByte = 0x03;
       break;
     case 'confirm':
       cmdByte = 0x07;

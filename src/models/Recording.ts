@@ -49,6 +49,7 @@ export type SyncStage =
   | 'preparing'
   | 'transferring'
   | 'uploading'
+  | 'device_uploading'
   | 'completing'
   | 'completed'
   | 'failed';

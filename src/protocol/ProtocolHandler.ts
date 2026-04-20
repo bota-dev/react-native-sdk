@@ -26,7 +26,9 @@ import {
   parseTransferPacket,
   createAckPacket,
   createTransferCommand,
+  parseTriggerDeviceUploadResponse,
 } from '../ble/parsers';
+import type { TriggerDeviceUploadResponse } from '../ble/parsers';
 import type { StorageInfo } from '../models/Device';
 import type { DeviceRecording, TransferPacket } from '../models/Recording';
 import { TransferError, DeviceError } from '../utils/errors';
@@ -405,6 +407,77 @@ export class ProtocolHandler {
       SERVICE_BOTA_STORAGE,
       CHAR_TRANSFER_CONTROL,
       command
+    );
+  }
+
+  /**
+   * Trigger device-side upload via WiFi/4G.
+   * Sends opcode 0x03 to TRANSFER_CONTROL and waits for a 2-byte response
+   * on TRANSFER_STATUS (byte[0]=0x03, byte[1]=status).
+   * Returns null if firmware doesn't support this command (timeout).
+   */
+  async triggerDeviceUpload(
+    deviceId: string,
+  ): Promise<TriggerDeviceUploadResponse | null> {
+    if (!this.bleManager.isConnected(deviceId)) {
+      throw DeviceError.notConnected(deviceId);
+    }
+
+    log.debug('Triggering device-side upload', { deviceId });
+
+    return new Promise<TriggerDeviceUploadResponse | null>(
+      (resolve, reject) => {
+        let subscription: Subscription | undefined;
+        let timer: number | undefined;
+
+        const cleanup = () => {
+          if (timer !== undefined) {
+            clearTimeout(timer);
+            timer = undefined;
+          }
+          subscription?.remove();
+        };
+
+        // Subscribe to TRANSFER_STATUS for the response
+        this.bleManager
+          .subscribeToCharacteristic(
+            deviceId,
+            SERVICE_BOTA_STORAGE,
+            CHAR_TRANSFER_STATUS,
+            (data: Buffer) => {
+              const response = parseTriggerDeviceUploadResponse(data);
+              if (response) {
+                cleanup();
+                resolve(response);
+              }
+            },
+          )
+          .then((sub: Subscription) => {
+            subscription = sub;
+
+            // Send the trigger command
+            const command = createTransferCommand('triggerDeviceUpload');
+            return this.bleManager.writeCharacteristic(
+              deviceId,
+              SERVICE_BOTA_STORAGE,
+              CHAR_TRANSFER_CONTROL,
+              command,
+            );
+          })
+          .catch((error: Error) => {
+            cleanup();
+            reject(error);
+          });
+
+        // 5s timeout — old firmware won't respond
+        timer = setTimeout(() => {
+          cleanup();
+          log.debug('triggerDeviceUpload timeout (old firmware?)', {
+            deviceId,
+          });
+          resolve(null);
+        }, 5000);
+      },
     );
   }
 

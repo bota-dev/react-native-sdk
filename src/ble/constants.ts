@@ -121,7 +121,18 @@ export const API_ENDPOINT_PROD = 0x01;
 // Transfer control commands
 export const TRANSFER_CMD_LIST = 0x01;
 export const TRANSFER_CMD_START = 0x02;
+export const TRANSFER_CMD_TRIGGER_DEVICE_UPLOAD = 0x03;
 export const TRANSFER_CMD_CONFIRM_SYNC = 0x07;
+
+// Trigger device upload response codes (on TRANSFER_STATUS, byte[0]=0x03)
+export const TRIGGER_UPLOAD_ACCEPTED = 0x00;
+export const TRIGGER_UPLOAD_NO_NETWORK = 0x01;
+export const TRIGGER_UPLOAD_BUSY = 0x02;
+export const TRIGGER_UPLOAD_NO_TOKEN = 0x03;
+
+// Device upload monitoring
+export const DEVICE_UPLOAD_POLL_INTERVAL = 3000; // Poll device status every 3s
+export const DEVICE_UPLOAD_TIMEOUT = 600000; // 10 minute max
 
 // Transfer packet types (Device → App)
 export const PACKET_TYPE_DATA = 0x01;

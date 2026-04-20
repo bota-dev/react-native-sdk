@@ -328,11 +328,19 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
   }
 
   /**
+   * Trigger device-side upload via WiFi/4G.
+   * Returns the response, or null if firmware doesn't support it (timeout).
+   */
+  async triggerDeviceUpload(device: ConnectedDevice) {
+    return this.protocolHandler.triggerDeviceUpload(device.id);
+  }
+
+  /**
    * Monitor device-side upload progress by polling device status.
    * Yields progress as pending_recordings decreases.
    * Completes when syncActive clears or pending hits 0.
    */
-  private async *monitorDeviceUpload(
+  async *monitorDeviceUpload(
     device: ConnectedDevice,
     initialPendingCount: number,
   ): AsyncGenerator<SyncProgress & { recordingIndex?: number; totalRecordings?: number }> {

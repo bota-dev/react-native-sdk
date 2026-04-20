@@ -427,13 +427,13 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
     });
 
     // --- Smart sync: try device-side upload if WiFi/4G available ---
+    // --- Smart sync: try device-side upload via WiFi/4G ---
+    // Always try the trigger — the firmware will connect on demand via
+    // conn_policy and reject if no network is available. This avoids
+    // gating on connected flags which are false during lazy boot.
     const status = await this.readDeviceStatus(device);
-    if (
-      status &&
-      (status.flags.wifiConnected || status.flags.lteConnected) &&
-      !status.flags.syncActive
-    ) {
-      log.info('Smart sync: device has WiFi/4G, triggering device-side upload', {
+    if (status && !status.flags.syncActive) {
+      log.info('Smart sync: triggering device-side upload', {
         wifi: status.flags.wifiConnected,
         lte: status.flags.lteConnected,
         pending: status.pendingRecordings,
@@ -445,7 +445,7 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
           yield* this.monitorDeviceUpload(device, recordings.length);
           return;
         }
-        log.info('Smart sync: device rejected trigger, falling back to BLE', {
+        log.info('Smart sync: device rejected, falling back to BLE', {
           errorCode: response?.errorCode,
         });
       } catch (err) {

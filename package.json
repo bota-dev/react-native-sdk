@@ -1,6 +1,6 @@
 {
   "name": "@bota-dev/react-native-sdk",
-  "version": "0.0.46",
+  "version": "0.0.47",
   "description": "Bota React Native SDK for BLE device communication",
   "main": "lib/commonjs/index.js",
   "module": "lib/module/index.js",

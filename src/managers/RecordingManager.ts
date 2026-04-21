@@ -503,19 +503,9 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
       }
     }
 
-    // Read fresh device status after sync completes so the app gets
-    // up-to-date pendingRecordings immediately — prevents stale count
-    // from retriggering auto-sync.
-    const freshStatus = await this.readDeviceStatus(device);
-    if (freshStatus) {
-      yield {
-        stage: 'completed',
-        progress: 1,
-        recordingIndex: recordings.length,
-        totalRecordings: recordings.length,
-        pendingRecordings: freshStatus.pendingRecordings,
-      } as SyncProgress & { recordingIndex?: number; totalRecordings?: number; pendingRecordings?: number };
-    }
+    // Read fresh device status so BLE characteristic cache is updated.
+    // The app's status subscription will pick up the new value on restart.
+    await this.readDeviceStatus(device);
   }
 
   /**

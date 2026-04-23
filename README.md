@@ -233,7 +233,7 @@ interface DeviceStatus {
   storageTotalMb: number;
   state: DeviceState;
   pendingRecordings: number;
-  lastSyncAt: Date | null;
+  lastTimeSyncAt: Date | null; // Device's clock-sync timestamp (RTC last set from time source)
   flags: DeviceFlags;
 }
 

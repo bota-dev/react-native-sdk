@@ -249,7 +249,7 @@ export function parseDeviceStatus(data: Buffer): DeviceStatus {
   const lteStatusByte = data.readUInt8(1);
   const state = parseDeviceState(data.readUInt8(2));
   const pendingRecordings = data.readUInt8(3);
-  const lastSyncTimestamp = data.readUInt32LE(4);
+  const lastTimeSyncTimestamp = data.readUInt32LE(4);
   const flagsValue = data.readUInt8(8);
   const flags = parseDeviceFlags(flagsValue);
   const storageTotalMb = data.readUInt16LE(9);
@@ -281,10 +281,10 @@ export function parseDeviceStatus(data: Buffer): DeviceStatus {
     storageUsedMb,
     state,
     pendingRecordings,
-    lastSyncAt: lastSyncTimestamp > 0 ? new Date(lastSyncTimestamp * 1000) : null,
+    lastTimeSyncAt: lastTimeSyncTimestamp > 0 ? new Date(lastTimeSyncTimestamp * 1000) : null,
     signalStrength: 0,
     flags,
-    timestamp: lastSyncTimestamp,
+    timestamp: lastTimeSyncTimestamp,
     lteStatus: lteStatusByte !== 0x00 ? lteStatus : undefined,
     lteSignalQuality,
     wifiStatus,

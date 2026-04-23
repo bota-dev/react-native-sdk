@@ -172,8 +172,10 @@ export interface DeviceStatus {
   state: DeviceState;
   /** Number of pending recordings to sync */
   pendingRecordings: number;
-  /** Last sync timestamp */
-  lastSyncAt: Date | null;
+  /** Last clock-sync timestamp (when the device's RTC was last set
+   *  from a time source — NTP, 4G QLTS/CCLK, or app BLE time-sync).
+   *  This is NOT the last recording-upload timestamp. */
+  lastTimeSyncAt: Date | null;
   /** Signal strength (for 4G devices, 0-5) */
   signalStrength?: number;
   /** Status flags */

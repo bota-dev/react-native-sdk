@@ -9,6 +9,7 @@ import EventEmitter from 'eventemitter3';
 
 import { getBleManager } from '../ble/BleManager';
 import type { ConnectedDevice } from '../models/Device';
+import type { DeviceManager } from './DeviceManager';
 import { DeviceError } from '../utils/errors';
 import { logger } from '../utils/logger';
 import { ProtocolHandler } from '../protocol/ProtocolHandler';
@@ -36,6 +37,7 @@ export type OtaStage =
   | 'preparing'
   | 'updating'
   | 'verifying'
+  | 'restarting'
   | 'completed'
   | 'failed';
 
@@ -63,9 +65,11 @@ interface OTAManagerEvents {
  */
 export class OTAManager extends EventEmitter<OTAManagerEvents> {
   private firmwareCdnUrl: string;
+  private deviceManager: DeviceManager;
 
-  constructor(firmwareCdnUrl: string = 'https://cdn.bota.dev/firmware') {
+  constructor(deviceManager: DeviceManager, firmwareCdnUrl: string = 'https://cdn.bota.dev/firmware') {
     super();
+    this.deviceManager = deviceManager;
     this.firmwareCdnUrl = firmwareCdnUrl;
   }
 
@@ -193,12 +197,17 @@ export class OTAManager extends EventEmitter<OTAManagerEvents> {
         }
       );
 
-      // 4. Device will verify CRC and reboot
+      // 4. Device verifies CRC and reboots; wait for it to come back online
       this.emit('progress', device.id, { stage: 'verifying', progress: 1 });
+      this.emit('progress', device.id, { stage: 'restarting', progress: 0 });
+
+      this.deviceManager.enableAutoReconnect(device.serialNumber);
+      await this.waitForReconnect(device.serialNumber);
+
       this.emit('progress', device.id, { stage: 'completed', progress: 1 });
       this.emit('completed', device.id, firmware.version);
 
-      log.info('Firmware update complete, device will reboot', {
+      log.info('Firmware update complete, device reconnected after reboot', {
         deviceId: device.id,
         version: firmware.version,
       });
@@ -215,6 +224,29 @@ export class OTAManager extends EventEmitter<OTAManagerEvents> {
 
       throw error;
     }
+  }
+
+  private waitForReconnect(serialNumber: string, timeoutMs = 120000): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error('Timed out waiting for device to restart'));
+      }, timeoutMs);
+
+      const onConnected = (connectedDevice: ConnectedDevice) => {
+        if (connectedDevice.serialNumber === serialNumber) {
+          cleanup();
+          resolve();
+        }
+      };
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.deviceManager.off('deviceConnected', onConnected);
+      };
+
+      this.deviceManager.on('deviceConnected', onConnected);
+    });
   }
 
   /**

@@ -134,6 +134,12 @@ export const TRIGGER_UPLOAD_NO_TOKEN = 0x03;
 export const DEVICE_UPLOAD_POLL_INTERVAL = 3000; // Poll device status every 3s
 export const DEVICE_UPLOAD_TIMEOUT = 600000; // 10 minute max
 
+// Smart-sync network warmup — wait for WiFi/4G to come up before triggering
+// device-side upload. Cellular registration + PDP activation can take 10–30s
+// after a cold modem boot, so a fixed delay is unreliable.
+export const NETWORK_WARMUP_TIMEOUT = 30000;
+export const NETWORK_WARMUP_POLL_INTERVAL = 2000;
+
 // Transfer packet types (Device → App)
 export const PACKET_TYPE_DATA = 0x01;
 export const PACKET_TYPE_EOF = 0x02;

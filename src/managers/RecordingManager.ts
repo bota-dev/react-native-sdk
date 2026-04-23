@@ -31,6 +31,8 @@ import {
   CHAR_DEVICE_STATUS,
   DEVICE_UPLOAD_POLL_INTERVAL,
   DEVICE_UPLOAD_TIMEOUT,
+  NETWORK_WARMUP_TIMEOUT,
+  NETWORK_WARMUP_POLL_INTERVAL,
 } from '../ble/constants';
 import { parseDeviceStatus } from '../ble/parsers';
 
@@ -328,6 +330,24 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
   }
 
   /**
+   * Poll device status until WiFi or 4G is connected, or until timeout.
+   * Cellular registration + PDP activation can take 10–30s after a cold
+   * modem boot, so we can't assume the link is up just because BLE is.
+   */
+  private async waitForNetwork(device: ConnectedDevice) {
+    const start = Date.now();
+    while (Date.now() - start < NETWORK_WARMUP_TIMEOUT) {
+      await new Promise<void>((r) => setTimeout(r, NETWORK_WARMUP_POLL_INTERVAL));
+      if (!getBleManager().isConnected(device.id)) return null;
+      const status = await this.readDeviceStatus(device);
+      if (status && (status.flags.wifiConnected || status.flags.lteConnected)) {
+        return status;
+      }
+    }
+    return null;
+  }
+
+  /**
    * Trigger device-side upload via WiFi/4G.
    * Returns the response, or null if firmware doesn't support it (timeout).
    */
@@ -434,13 +454,26 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
       count: recordings.length,
     });
 
-    // --- Smart sync: try device-side upload if WiFi/4G available ---
     // --- Smart sync: try device-side upload via WiFi/4G ---
-    // Always try the trigger — the firmware will connect on demand via
-    // conn_policy and reject if no network is available. This avoids
-    // gating on connected flags which are false during lazy boot.
-    const status = await this.readDeviceStatus(device);
-    if (status && !status.flags.syncActive) {
+    // 1. If device is already uploading, just monitor it.
+    // 2. If WiFi/4G is up, fire the trigger.
+    // 3. If neither is up yet, wait briefly for the modem to register
+    //    (cellular cold-boot takes 10–30s); fall back to BLE on timeout.
+    let status = await this.readDeviceStatus(device);
+
+    if (status?.flags.syncActive) {
+      log.info('Smart sync: device already uploading, monitoring');
+      yield* this.monitorDeviceUpload(device, recordings.length);
+      return;
+    }
+
+    if (status && !status.flags.wifiConnected && !status.flags.lteConnected) {
+      log.info('Smart sync: no network up yet, waiting for warmup');
+      const ready = await this.waitForNetwork(device);
+      if (ready) status = ready;
+    }
+
+    if (status && (status.flags.wifiConnected || status.flags.lteConnected)) {
       log.info('Smart sync: triggering device-side upload', {
         wifi: status.flags.wifiConnected,
         lte: status.flags.lteConnected,
@@ -461,6 +494,8 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
           error: (err as Error).message,
         });
       }
+    } else {
+      log.info('Smart sync: no WiFi/4G after warmup, falling back to BLE');
     }
 
     // --- BLE sync path (existing behavior) ---

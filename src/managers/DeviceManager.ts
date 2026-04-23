@@ -277,6 +277,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       };
 
       this.connectedDevices.set(device.id, connectedDevice);
+      this.emit('deviceConnected', connectedDevice);
 
       // Persist reconnect info for future reconnect() calls
       this.reconnectRegistry[serialNumber] = {

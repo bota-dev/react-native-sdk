@@ -285,7 +285,11 @@ export function parseDeviceStatus(data: Buffer): DeviceStatus {
     signalStrength: 0,
     flags,
     timestamp: lastTimeSyncTimestamp,
-    lteStatus: lteStatusByte !== 0x00 ? lteStatus : undefined,
+    /* Always emit the parsed LTE status — including 'off'. Suppressing
+     * 'off' here makes downstream consumers (e.g. BLE-relay heartbeat)
+     * unable to clear stale "connected" state on the backend after the
+     * modem idles down. */
+    lteStatus,
     lteSignalQuality,
     wifiStatus,
     modemInfo,

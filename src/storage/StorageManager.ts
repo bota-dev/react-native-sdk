@@ -33,6 +33,8 @@ export class StorageManager {
     deviceInfo: {},
   };
   private isInitialized = false;
+  // Audio buffers held in memory — avoids AsyncStorage size limits for large files
+  private audioBuffers: Map<string, Buffer> = new Map();
 
   /**
    * Initialize storage manager
@@ -251,11 +253,9 @@ export class StorageManager {
   }
 
   // Recording File Methods
-  // Note: For actual file storage, we'd need react-native-fs or similar
-  // For now, we'll store base64 encoded audio in AsyncStorage for small files
 
   /**
-   * Save recording data locally
+   * Save recording data locally (held in memory, not persisted to SQLite)
    */
   async saveRecordingData(
     deviceId: string,
@@ -263,48 +263,28 @@ export class StorageManager {
     data: Buffer
   ): Promise<string> {
     const key = `${STORAGE_PREFIX}recording:${deviceId}:${recordingUuid}`;
-
-    try {
-      // Store as base64 (not ideal for large files, but works for demo)
-      await AsyncStorage.setItem(key, data.toString('base64'));
-      log.debug('Saved recording data', {
-        deviceId,
-        recordingUuid,
-        size: data.length,
-      });
-      return key;
-    } catch (error) {
-      log.error('Failed to save recording data', error as Error);
-      throw error;
-    }
+    this.audioBuffers.set(key, data);
+    log.debug('Saved recording data', { deviceId, recordingUuid, size: data.length });
+    return key;
   }
 
   /**
    * Load recording data
    */
   async loadRecordingData(localPath: string): Promise<Buffer> {
-    try {
-      const data = await AsyncStorage.getItem(localPath);
-      if (!data) {
-        throw new Error(`Recording not found: ${localPath}`);
-      }
-      return Buffer.from(data, 'base64');
-    } catch (error) {
-      log.error('Failed to load recording data', error as Error);
-      throw error;
+    const buf = this.audioBuffers.get(localPath);
+    if (!buf) {
+      throw new Error(`Recording not found: ${localPath}`);
     }
+    return buf;
   }
 
   /**
    * Delete recording data
    */
   async deleteRecordingData(localPath: string): Promise<void> {
-    try {
-      await AsyncStorage.removeItem(localPath);
-      log.debug('Deleted recording data', { localPath });
-    } catch (error) {
-      log.error('Failed to delete recording data', error as Error);
-    }
+    this.audioBuffers.delete(localPath);
+    log.debug('Deleted recording data', { localPath });
   }
 
   /**
@@ -320,6 +300,7 @@ export class StorageManager {
 
       this.uploadQueue = [];
       this.sdkState = { lastSyncTimes: {}, deviceInfo: {} };
+      this.audioBuffers.clear();
     } catch (error) {
       log.error('Failed to clear storage', error as Error);
     }
@@ -331,6 +312,7 @@ export class StorageManager {
   destroy(): void {
     this.uploadQueue = [];
     this.sdkState = { lastSyncTimes: {}, deviceInfo: {} };
+    this.audioBuffers.clear();
     this.isInitialized = false;
   }
 }

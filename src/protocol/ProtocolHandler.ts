@@ -42,7 +42,7 @@ const log = logger.tag('ProtocolHandler');
 interface TransferState {
   recordingUuid: string;
   expectedSequence: number;
-  receivedPackets: Map<number, Buffer>;
+  chunks: Buffer[];
   totalBytes: number;
   isComplete: boolean;
   checksum?: number;
@@ -188,7 +188,7 @@ export class ProtocolHandler {
       const state: TransferState = {
         recordingUuid,
         expectedSequence: 0,
-        receivedPackets: new Map(),
+        chunks: [],
         totalBytes: 0,
         isComplete: false,
       };
@@ -228,12 +228,24 @@ export class ProtocolHandler {
             this.handleTransferPacket(state, packet, onProgress);
 
             if (state.isComplete) {
+              // Cancel the per-packet timeout — all data is received.
+              // assembleAudioData() + calculateCrc32() block the JS thread for
+              // several seconds on large files; without this the timer fires at
+              // the first await (sendAck) and rejects the already-resolved promise.
+              if (state.timeoutId) clearTimeout(state.timeoutId);
               // Assemble the audio data
               const audioData = this.assembleAudioData(state);
 
               // Verify checksum if available
               if (state.checksum !== undefined) {
                 const calculatedChecksum = this.calculateCrc32(audioData);
+                log.debug('CRC32 check', {
+                  recordingUuid,
+                  device: `0x${state.checksum.toString(16).padStart(8, '0')}`,
+                  calculated: `0x${calculatedChecksum.toString(16).padStart(8, '0')}`,
+                  assembledBytes: audioData.length,
+                  match: calculatedChecksum === state.checksum,
+                });
                 if (calculatedChecksum !== state.checksum) {
                   // CRC mismatch — send NACK and fail
                   await this.sendAck(deviceId, 'nack', 0);
@@ -295,8 +307,7 @@ export class ProtocolHandler {
     switch (packet.type) {
       case 'data':
         if (packet.data) {
-          // Store packet data (no ACK — streaming mode)
-          state.receivedPackets.set(packet.sequenceNumber, Buffer.from(packet.data));
+          state.chunks.push(Buffer.from(packet.data));
           state.totalBytes += packet.data.length;
           onProgress?.(state.totalBytes);
         }
@@ -338,20 +349,7 @@ export class ProtocolHandler {
    * Assemble audio data from received packets
    */
   private assembleAudioData(state: TransferState): Buffer {
-    // Sort packets by sequence number and concatenate
-    const sortedSequences = Array.from(state.receivedPackets.keys()).sort(
-      (a, b) => a - b
-    );
-
-    const chunks: Buffer[] = [];
-    for (const seq of sortedSequences) {
-      const data = state.receivedPackets.get(seq);
-      if (data) {
-        chunks.push(data);
-      }
-    }
-
-    return Buffer.concat(chunks);
+    return Buffer.concat(state.chunks);
   }
 
   /**
@@ -559,7 +557,7 @@ export class ProtocolHandler {
       const state: TransferState = {
         recordingUuid,
         expectedSequence: 0,
-        receivedPackets: new Map(), // Not used for streaming — data is forwarded via callback
+        chunks: [],
         totalBytes: 0,
         isComplete: false,
       };

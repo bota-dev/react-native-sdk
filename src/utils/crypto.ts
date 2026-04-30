@@ -44,7 +44,7 @@ export function deriveSessionKey(grantBlob: string): string {
 }
 
 /**
- * Encrypt WiFi credentials for BLE transmission using ChaCha20-Poly1305.
+ * Encrypt WiFi credentials for Bluetooth transmission using ChaCha20-Poly1305.
  *
  * Format sent to device:
  * - 12 bytes: nonce (random)
@@ -56,7 +56,7 @@ export function deriveSessionKey(grantBlob: string): string {
  * @param ssid - WiFi network SSID
  * @param password - WiFi password
  * @param sessionKey - K_session derived from grant (hex string)
- * @returns Encrypted payload ready for BLE transmission
+ * @returns Encrypted payload ready for Bluetooth transmission
  */
 export function encryptWiFiCredentials(
   ssid: string,
@@ -150,14 +150,14 @@ export function decryptWiFiCredential(
 }
 
 /**
- * Format encrypted WiFi credentials for BLE transmission.
+ * Format encrypted WiFi credentials for Bluetooth transmission.
  *
  * Packet format:
  * [nonce (12 bytes)][ssid_encrypted (N bytes)][ssid_tag (16 bytes)]
  * [password_encrypted (M bytes)][password_tag (16 bytes)]
  *
  * @param encrypted - Result from encryptWiFiCredentials
- * @returns Single buffer ready for BLE write
+ * @returns Single buffer ready for Bluetooth write
  */
 export function formatWiFiCredentialPacket(encrypted: {
   nonce: Buffer;

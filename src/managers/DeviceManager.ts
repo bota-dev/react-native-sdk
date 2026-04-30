@@ -111,7 +111,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   // Cache of last known recording state per device (populated from status notifications)
   private recordingStateCache: Map<string, RecordingState> = new Map();
   // Pending promise set while a recording command is in-flight — bridges the race where
-  // the BLE heartbeat arrives before the recording status notification.
+  // the Bluetooth heartbeat arrives before the recording status notification.
   private recordingStatePending: Map<string, Promise<RecordingState>> = new Map();
   private isInitialized = false;
 
@@ -141,7 +141,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   }
 
   /**
-   * Set up BLE event listeners
+   * Set up Bluetooth event listeners
    */
   private setupBleListeners(): void {
     this.bleManager.on('deviceDiscovered', (device) => {
@@ -246,7 +246,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     this.emit('connectionStateChanged', device.id, 'connecting');
 
     try {
-      // Connect via BLE manager
+      // Connect via Bluetooth manager
       await this.bleManager.connect(device.id);
 
       // Read device information
@@ -256,7 +256,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       const pairingState = await this.readPairingState(device.id);
       const mtu = await this.bleManager.getMtu(device.id);
 
-      // Detect capabilities from discovered BLE services
+      // Detect capabilities from discovered Bluetooth services
       const hasWifiService = await this.bleManager.hasService(device.id, SERVICE_BOTA_WIFI_CONFIG);
 
       const connectedDevice: ConnectedDevice = {
@@ -410,8 +410,8 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   /**
    * Reconnect to a previously paired device by serial number.
    *
-   * The SDK stores the BLE name and peripheral ID from the initial pairing.
-   * This method scans for nearby devices, matches by stored BLE name,
+   * The SDK stores the Bluetooth name and peripheral ID from the initial pairing.
+   * This method scans for nearby devices, matches by stored Bluetooth name,
    * stored peripheral ID, or Bota-prefix fallback, then connects.
    *
    * @param serialNumber - Serial number of the device to reconnect to
@@ -452,7 +452,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       devices: discovered.map((d) => `${d.name}(${d.id})`).join(', '),
     });
 
-    // Match by: 1) stored BLE name, 2) stored peripheral ID, 3) any Bota-prefix device
+    // Match by: 1) stored Bluetooth name, 2) stored peripheral ID, 3) any Bota-prefix device
     const target =
       discovered.find((d) => storedName && d.name === storedName) ||
       discovered.find((d) => storedId && d.id === storedId) ||
@@ -658,7 +658,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   }
 
   /**
-   * Read connection settings from device via BLE DEVICE_SETTINGS characteristic.
+   * Read connection settings from device via Bluetooth DEVICE_SETTINGS characteristic.
    * Returns parsed settings (enabled connections + network preference).
    */
   async readConnectionSettings(device: ConnectedDevice): Promise<DeviceConnectionSettings> {
@@ -674,7 +674,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   }
 
   /**
-   * Write connection settings to device via BLE DEVICE_SETTINGS characteristic.
+   * Write connection settings to device via Bluetooth DEVICE_SETTINGS characteristic.
    * Serializes settings to 8-byte binary format.
    */
   async writeConnectionSettings(device: ConnectedDevice, settings: DeviceConnectionSettings): Promise<void> {
@@ -762,7 +762,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     token: string
   ): Promise<void> {
     const mtu = await this.bleManager.getMtu(deviceId);
-    const maxChunkSize = mtu - 5; // Account for BLE overhead + chunk header
+    const maxChunkSize = mtu - 5; // Account for Bluetooth overhead + chunk header
 
     const tokenBuffer = Buffer.from(token, 'utf8');
     const totalChunks = Math.ceil(tokenBuffer.length / (maxChunkSize - 2));
@@ -961,7 +961,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     }
 
     // CHAR_RECORDING_STATUS is notify-only — the device only sends it as a notification
-    // on state change (not readable via BLE read).
+    // on state change (not readable via Bluetooth read).
     // Check pending FIRST: if a recording command is in-flight its result supersedes stale cache.
     const pending = this.recordingStatePending.get(device.id);
     if (pending) return pending;
@@ -1089,7 +1089,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   }
 
   /**
-   * Parse recording state from BLE data
+   * Parse recording state from Bluetooth data
    */
   private parseRecordingState(data: Buffer): RecordingState {
     // Format from firmware bota_build_recording_status() (18 bytes):
@@ -1331,7 +1331,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
   /**
    * Scan for WiFi networks using the device's WiFi radio.
-   * Sends a scan command via BLE and waits for the device to report results.
+   * Sends a scan command via Bluetooth and waits for the device to report results.
    *
    * @param device - Connected device with WiFi capability
    * @returns Scan result with networks sorted by signal quality

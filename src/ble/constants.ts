@@ -1,5 +1,5 @@
 /**
- * BLE Service and Characteristic UUIDs for Bota devices
+ * Bluetooth Service and Characteristic UUIDs for Bota devices
  * Based on Device-App Protocol specification
  */
 
@@ -217,7 +217,7 @@ export const CODEC_PCM_8K = 0x01;
 export const CODEC_OPUS_16K = 0x10;
 export const CODEC_OPUS_8K = 0x11;
 
-// BLE error codes
+// Bluetooth error codes
 export const BLE_ERROR_SUCCESS = 0x00;
 export const BLE_ERROR_INVALID_COMMAND = 0x01;
 export const BLE_ERROR_INVALID_STATE = 0x02;

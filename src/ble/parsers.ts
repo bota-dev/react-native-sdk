@@ -1,5 +1,5 @@
 /**
- * BLE data parsers for Bota device protocol
+ * Bluetooth data parsers for Bota device protocol
  */
 
 import { Buffer } from 'buffer';
@@ -793,7 +793,7 @@ function idToConnectionType(id: number): ConnectionType | null {
 }
 
 /**
- * Serialize connection settings to 12-byte buffer for BLE DEVICE_SETTINGS characteristic.
+ * Serialize connection settings to 12-byte buffer for Bluetooth DEVICE_SETTINGS characteristic.
  *
  * Layout (v0x02):
  * Byte 0: version (0x02)
@@ -842,7 +842,7 @@ export function serializeConnectionSettings(settings: DeviceConnectionSettings):
 }
 
 /**
- * Parse buffer from BLE DEVICE_SETTINGS characteristic into connection settings.
+ * Parse buffer from Bluetooth DEVICE_SETTINGS characteristic into connection settings.
  * Accepts v0x01 (8 bytes) and v0x02 (12 bytes). Returns defaults for unknown versions.
  */
 export function parseConnectionSettings(data: Buffer): DeviceConnectionSettings {

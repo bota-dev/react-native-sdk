@@ -1,5 +1,5 @@
 /**
- * BLE module exports
+ * Bluetooth module exports
  */
 
 export * from './constants';

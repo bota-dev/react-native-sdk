@@ -152,7 +152,7 @@ export class OTAManager extends EventEmitter<OTAManagerEvents> {
   }
 
   /**
-   * Perform firmware update via BLE transfer to SD card.
+   * Perform firmware update via Bluetooth transfer to SD card.
    *
    * Downloads firmware from URL, transfers to device via BLE,
    * device writes to SD card as update.ufw and reboots to apply.
@@ -173,7 +173,7 @@ export class OTAManager extends EventEmitter<OTAManagerEvents> {
       const firmwareBuffer = Buffer.from(arrayBuffer);
       this.emit('progress', device.id, { stage: 'downloading', progress: 1 });
 
-      // 2. Prepare for BLE transfer
+      // 2. Prepare for Bluetooth transfer
       this.emit('progress', device.id, { stage: 'preparing', progress: 0 });
 
       if (!getBleManager().isConnected(device.id)) {

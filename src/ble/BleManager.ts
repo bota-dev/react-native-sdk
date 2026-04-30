@@ -1,5 +1,5 @@
 /**
- * BLE Manager - Abstraction layer over react-native-ble-plx
+ * Bluetooth Manager - Abstraction layer over react-native-ble-plx
  */
 
 import {
@@ -45,7 +45,7 @@ function describeBleError(err: BleError | Error | null | undefined): string {
   if (ble.errorCode !== undefined) parts.push(`errorCode=${ble.errorCode}`);
   if ((ble as any).iosErrorCode != null) parts.push(`ios=${(ble as any).iosErrorCode}`);
   if ((ble as any).androidErrorCode != null) parts.push(`android=${(ble as any).androidErrorCode}`);
-  return parts.length > 0 ? parts.join(', ') : 'Unknown BLE error';
+  return parts.length > 0 ? parts.join(', ') : 'Unknown Bluetooth error';
 }
 
 /**
@@ -59,7 +59,7 @@ interface BleManagerEvents {
 }
 
 /**
- * BLE Manager class - singleton wrapper around react-native-ble-plx
+ * Bluetooth Manager class - singleton wrapper around react-native-ble-plx
  */
 export class BleManager extends EventEmitter<BleManagerEvents> {
   private manager: RNBleManager;
@@ -163,7 +163,7 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
       allowDuplicates = false,
     } = options;
 
-    log.info('Starting BLE scan', { timeout, deviceTypes, pairingState });
+    log.info('Starting Bluetooth scan', { timeout, deviceTypes, pairingState });
 
     this.discoveredDevices.clear();
     this.isScanning = true;
@@ -243,7 +243,7 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
       return;
     }
 
-    log.info('Stopping BLE scan');
+    log.info('Stopping Bluetooth scan');
     this.manager.stopDeviceScan();
     this.isScanning = false;
   }
@@ -256,7 +256,7 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
   }
 
   /**
-   * Parse a discovered device from BLE advertisement data
+   * Parse a discovered device from Bluetooth advertisement data
    */
   private parseDiscoveredDevice(device: Device): DiscoveredDevice | null {
     // Prioritize localName (from current advertisement) over name (iOS cached)
@@ -434,7 +434,7 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
   }
 
   /**
-   * Check if a connected device has a specific BLE service
+   * Check if a connected device has a specific Bluetooth service
    */
   async hasService(deviceId: string, serviceUuid: string): Promise<boolean> {
     const device = this.connectedDevices.get(deviceId);
@@ -590,7 +590,7 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
       characteristicUuid,
       (error, characteristic) => {
         if (error) {
-          const errorMessage = error.message || 'Unknown BLE error';
+          const errorMessage = error.message || 'Unknown Bluetooth error';
           log.debug('Subscription ended', { deviceId, charShort, reason: errorMessage });
           onError?.(new Error(errorMessage));
           return;
@@ -618,10 +618,10 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
   }
 
   /**
-   * Destroy the BLE manager and clean up resources
+   * Destroy the Bluetooth manager and clean up resources
    */
   destroy(): void {
-    log.info('Destroying BLE manager');
+    log.info('Destroying Bluetooth manager');
 
     this.stopScan();
 
@@ -654,7 +654,7 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
 let instance: BleManager | null = null;
 
 /**
- * Get or create the BLE manager singleton
+ * Get or create the Bluetooth manager singleton
  */
 export function getBleManager(): BleManager {
   if (!instance) {
@@ -664,7 +664,7 @@ export function getBleManager(): BleManager {
 }
 
 /**
- * Reset the BLE manager singleton (for testing)
+ * Reset the Bluetooth manager singleton (for testing)
  */
 export function resetBleManager(): void {
   if (instance) {

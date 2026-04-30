@@ -218,7 +218,7 @@ export class ProtocolHandler {
           try {
             resetTimeout();
 
-            // Skip ACK echo-back packets (App→Device only, may be echoed by BLE stack)
+            // Skip ACK echo-back packets (App→Device only, may be echoed by Bluetooth stack)
             const firstByte = data.readUInt8(0);
             if (firstByte >= 0x10 && firstByte <= 0x12) {
               return;
@@ -622,7 +622,7 @@ export class ProtocolHandler {
                 });
                 // Send final ACK before cleanup — same order as transferRecording.
                 // Calling cleanup() before sendAck() removes the subscription, which
-                // causes the BLE stack to fire the error callback asynchronously during
+                // causes the Bluetooth stack to fire the error callback asynchronously during
                 // the sendAck await, rejecting the promise before resolve() runs.
                 await this.sendAck(deviceId, 'ack', 0);
                 cleanup();

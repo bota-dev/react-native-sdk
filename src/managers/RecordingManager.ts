@@ -332,7 +332,7 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
   /**
    * Poll device status until WiFi or 4G is connected, or until timeout.
    * Cellular registration + PDP activation can take 10–30s after a cold
-   * modem boot, so we can't assume the link is up just because BLE is.
+   * modem boot, so we can't assume the link is up just because Bluetooth is.
    */
   private async waitForNetwork(device: ConnectedDevice) {
     const start = Date.now();
@@ -429,7 +429,7 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
   /**
    * Sync all recordings from a device.
    * Smart path: if device has WiFi/4G, triggers device-side upload.
-   * Fallback: BLE transfer (existing behavior).
+   * Fallback: Bluetooth transfer (existing behavior).
    */
   async *syncAllRecordings(
     device: ConnectedDevice,
@@ -458,7 +458,7 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
     // 1. If device is already uploading, just monitor it.
     // 2. If WiFi/4G is up, fire the trigger.
     // 3. If neither is up yet, wait briefly for the modem to register
-    //    (cellular cold-boot takes 10–30s); fall back to BLE on timeout.
+    //    (cellular cold-boot takes 10–30s); fall back to Bluetooth on timeout.
     let status = await this.readDeviceStatus(device);
 
     if (status?.flags.syncActive) {
@@ -498,7 +498,7 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
       log.info('Smart sync: no WiFi/4G after warmup, falling back to BLE');
     }
 
-    // --- BLE sync path (existing behavior) ---
+    // --- Bluetooth sync path (existing behavior) ---
     for (let i = 0; i < recordings.length; i++) {
       const recording = recordings[i];
 
@@ -538,7 +538,7 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
       }
     }
 
-    // Read fresh device status so BLE characteristic cache is updated.
+    // Read fresh device status so Bluetooth characteristic cache is updated.
     // The app's status subscription will pick up the new value on restart.
     await this.readDeviceStatus(device);
   }
@@ -605,10 +605,10 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
    * Start streaming sync for the current in-progress recording.
    *
    * This method is for live recordings only — it streams audio data from the
-   * device via BLE while the recording is still in progress, and uploads chunks
+   * device via Bluetooth while the recording is still in progress, and uploads chunks
    * to S3 as they arrive.
    *
-   * If BLE disconnects, the session emits 'disconnected'. The recording
+   * If Bluetooth disconnects, the session emits 'disconnected'. The recording
    * continues on the device and can be batch-synced later via syncRecording().
    *
    * @param device - Connected device that is currently recording
@@ -699,7 +699,7 @@ declare var clearInterval: (id: number | null) => void;
  * Streaming session — manages a live streaming sync of the current recording.
  *
  * Mirrors firmware WiFi/4G upload: creates backend record upfront, uploads
- * chunks to S3 concurrently with BLE transfer (one chunk at a time, serialized),
+ * chunks to S3 concurrently with Bluetooth transfer (one chunk at a time, serialized),
  * then finalizes after EOF. Same chunk-URL-per-chunk pattern as bota_upload_task().
  */
 export class StreamingSession extends EventEmitter<StreamingSessionEvents> {
@@ -709,7 +709,7 @@ export class StreamingSession extends EventEmitter<StreamingSessionEvents> {
   private _recordingId?: string;
   private _isAborted = false;
   private _startedAt = 0;
-  // Pending BLE data not yet assigned to a chunk upload
+  // Pending Bluetooth data not yet assigned to a chunk upload
   private pendingData: Buffer[] = [];
   private pendingBytes = 0;
   // Serialized upload chain — one chunk uploads at a time
@@ -777,7 +777,7 @@ export class StreamingSession extends EventEmitter<StreamingSessionEvents> {
     this._startedAt = Date.now();
 
     // Create backend record immediately — needed to get chunk URLs.
-    // If BLE disconnects before data arrives the record is left un-finalized
+    // If Bluetooth disconnects before data arrives the record is left un-finalized
     // (status: 'streaming') and will not trigger transcription.
     const { recordingId } = await this.uploadProvider.createRecording({
       startedAt: new Date(this._startedAt),

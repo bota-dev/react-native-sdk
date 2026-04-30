@@ -77,10 +77,10 @@ export type WifiStatus =
   | 'error';
 
 /**
- * Device discovered during BLE scan (not yet connected)
+ * Device discovered during Bluetooth scan (not yet connected)
  */
 export interface DiscoveredDevice {
-  /** BLE device identifier (platform-specific UUID) */
+  /** Bluetooth device identifier (platform-specific UUID) */
   id: string;
   /** Device name from advertisement (e.g., "Bota-Pin-A1B2C3") */
   name: string;
@@ -115,10 +115,10 @@ export interface DeviceCapabilities {
 }
 
 /**
- * Device after successful BLE connection
+ * Device after successful Bluetooth connection
  */
 export interface ConnectedDevice {
-  /** BLE device identifier */
+  /** Bluetooth device identifier */
   id: string;
   /** Device serial number (read from Device Info service) */
   serialNumber: string;
@@ -173,7 +173,7 @@ export interface DeviceStatus {
   /** Number of pending recordings to sync */
   pendingRecordings: number;
   /** Last clock-sync timestamp (when the device's RTC was last set
-   *  from a time source — NTP, 4G QLTS/CCLK, or app BLE time-sync).
+   *  from a time source — NTP, 4G QLTS/CCLK, or app Bluetooth time-sync).
    *  This is NOT the last recording-upload timestamp. */
   lastTimeSyncAt: Date | null;
   /** Signal strength (for 4G devices, 0-5) */
@@ -346,7 +346,7 @@ export interface RecordingState {
 export type ConnectionType = 'wifi' | 'ble' | 'cellular';
 
 /**
- * Per-device connection settings read/written via BLE DEVICE_SETTINGS characteristic
+ * Per-device connection settings read/written via Bluetooth DEVICE_SETTINGS characteristic
  */
 export interface DeviceConnectionSettings {
   enabled_connections: {

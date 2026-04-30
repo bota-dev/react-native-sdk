@@ -159,7 +159,7 @@ export type StreamingState =
   | 'uploading'    // Uploading final chunks to S3
   | 'completing'   // Finalizing upload
   | 'completed'
-  | 'disconnected' // BLE dropped — falls back to batch sync later
+  | 'disconnected' // Bluetooth dropped — falls back to batch sync later
   | 'failed';
 
 /**
@@ -181,7 +181,7 @@ export interface StreamingSyncProgress {
 /**
  * Upload provider for streaming sync.
  * Called by StreamingSession to create the backend record and upload chunks
- * concurrently with BLE transfer — same pattern as firmware WiFi/4G upload.
+ * concurrently with Bluetooth transfer — same pattern as firmware WiFi/4G upload.
  */
 export interface StreamingUploadProvider {
   /** Create backend record at session start to obtain recordingId for chunk URLs */
@@ -209,7 +209,7 @@ export interface StreamingSessionEvents {
   resumed: () => void;
   /** Emitted when recording stops and all data has been uploaded */
   completed: (result: { recordingId: string; totalBytes: number }) => void;
-  /** Emitted when BLE disconnects — recording continues on device, batch sync later */
+  /** Emitted when Bluetooth disconnects — recording continues on device, batch sync later */
   disconnected: () => void;
   /** Emitted on error */
   error: (err: Error) => void;

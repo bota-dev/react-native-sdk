@@ -51,7 +51,7 @@ react-native-sdk/
 
 The SDK supports three upload methods based on device connectivity:
 
-- **Bluetooth Sync**: Device transfers audio to app via BLE, app uploads to backend
+- **Bluetooth Sync**: Device transfers audio to app via Bluetooth, app uploads to backend
 - **WiFi Upload**: Device uploads directly to backend via WiFi (Bota Note)
 - **Cellular Upload**: Device uploads directly to backend via cellular (Bota Pin 4G - future)
 
@@ -64,7 +64,7 @@ For WiFi/Cellular devices, the SDK supports:
 
 ### Firmware Updates (OTA)
 
-The SDK supports app-driven firmware updates via BLE:
+The SDK supports app-driven firmware updates via Bluetooth:
 
 - `OTAManager.performUpdate(device, firmware)` — orchestrates the full flow: download `.ufw` from URL → transfer to device via Bluetooth → device writes to SD card → device reboots
 - `ProtocolHandler.uploadFirmware(deviceId, firmwareData, onProgress)` — low-level Bluetooth transfer: sends start command (0x08), data chunks (0x20) with flow control, verify command (0x09) with CRC32
@@ -81,7 +81,7 @@ The SDK supports app-driven firmware updates via BLE:
 
 ### Device Types
 
-- `Bota-Pin-*` - Basic BLE-only wearable (Bluetooth Sync)
+- `Bota-Pin-*` - Basic Bluetooth-only wearable (Bluetooth Sync)
 - `Bota-Pin4G-*` - Wearable with cellular connectivity (Bluetooth Sync + Cellular Upload)
 - `Bota-Note-*` - Note-taking device with WiFi (Bluetooth Sync + WiFi Upload)
 
@@ -201,7 +201,7 @@ for await (const progress of BotaClient.recordings.syncRecording(...)) { ... }
 
 ## Connection Settings
 
-The SDK provides methods to read/write per-device connection settings via BLE:
+The SDK provides methods to read/write per-device connection settings via Bluetooth:
 
 - `DeviceManager.readConnectionSettings(device)` — reads 8-byte binary from `DEVICE_SETTINGS` characteristic, returns `DeviceConnectionSettings`
 - `DeviceManager.writeConnectionSettings(device, settings)` — serializes `DeviceConnectionSettings` to 8 bytes and writes to device
@@ -210,7 +210,7 @@ The SDK provides methods to read/write per-device connection settings via BLE:
 - `ConnectionType = 'wifi' | 'ble' | 'cellular'`
 - `DeviceConnectionSettings` — `{ enabled_connections: { wifi: boolean, cellular: boolean }, upload_network_preference: ConnectionType[] }`
 
-**BLE binary layout (8 bytes):** version(0x01), enabled_mask(bit 0: WiFi, bit 1: 4G), upload_net_pref[3] (1=WiFi, 2=BLE, 3=4G, 0=end), reserved[3].
+**Bluetooth binary layout (8 bytes):** version(0x01), enabled_mask(bit 0: WiFi, bit 1: 4G), upload_net_pref[3] (1=WiFi, 2=BLE, 3=4G, 0=end), reserved[3].
 
 Serialization helpers live in `src/ble/parsers.ts`: `serializeConnectionSettings()` and `parseConnectionSettings()`.
 

@@ -1,6 +1,6 @@
 # AGENTS.md — @bota-dev/react-native-sdk
 
-Public React Native SDK for communicating with Bota wearable devices via BLE. Full context in [CLAUDE.md](CLAUDE.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
+Public React Native SDK for communicating with Bota wearable devices via Bluetooth. Full context in [CLAUDE.md](CLAUDE.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Documentation Rule
 
@@ -33,7 +33,7 @@ npm test            # Vitest unit tests
 1. Run `npm test` — all tests must pass
 2. Run `npm run build` — must produce clean lib/ output (no type errors)
 3. **Test against physical device**: link into demo app (see Local Testing below) and run the affected flow:
-   - **BLE discovery changes** — scan for devices, verify Bota-* prefix filtering
+   - **Bluetooth discovery changes** — scan for devices, verify Bota-* prefix filtering
    - **Recording transfer changes** — sync a recording end-to-end (list → transfer → confirm)
    - **Provisioning changes** — pair a fresh device, verify token write and pairing state
    - **Status changes** — verify DEVICE_STATUS notifications update correctly
@@ -75,7 +75,7 @@ npx expo start --clear
 | `src/ble/BLEManager.ts` | Low-level Bluetooth ops (CoreBluetooth/Android Bluetooth via react-native-ble-plx) |
 | `src/ble/constants.ts` | Bluetooth service + characteristic UUIDs (B07A prefix) |
 | `src/ble/parsers.ts` | Binary struct parsers (DeviceStatus, RecordingEntry, etc.) |
-| `src/ble/protocol.ts` | Protocol handler (BLE packet assembly, ACK logic) |
+| `src/ble/protocol.ts` | Protocol handler (Bluetooth packet assembly, ACK logic) |
 | `src/managers/DeviceManager.ts` | Device discovery, connection, bonding, provisioning |
 | `src/managers/RecordingManager.ts` | Recording list, Bluetooth transfer, upload orchestration |
 | `src/upload/UploadQueue.ts` | Persistent SQLite upload queue with retry |
@@ -91,7 +91,7 @@ All design docs live in [`../internal-docs/`](../internal-docs/).
 | [Mobile SDK System Design](../internal-docs/Mobile%20SDK%20System%20Design.md) | Full SDK architecture, upload queue, windowed transfer | In progress |
 | [FIRMWARE_INTEGRATION_GUIDE](../internal-docs/device/FIRMWARE_INTEGRATION_GUIDE.md) | Bluetooth GATT service defs, recording transfer protocol, heartbeat | ✅ Complete (protocol reference) |
 | [Device-App Protocol](../internal-docs/device/Device-App%20Protocol.md) | Bluetooth service definitions, OTA protocol | ✅ Complete |
-| [BLE Reliable Transfer Design](../internal-docs/device/BLE%20Reliable%20Transfer%20Design.md) | v2 windowed transfer (sliding window, replaces stop-and-wait) | ⬜ Not implemented |
+| [Bluetooth Reliable Transfer Design](../internal-docs/device/BLE%20Reliable%20Transfer%20Design.md) | v2 windowed transfer (sliding window, replaces stop-and-wait) | ⬜ Not implemented |
 | [Upload-Management](../internal-docs/device/Upload-Management.md) | Bluetooth sync, WiFi/4G direct upload, recovery, failover | ✅ Done |
 | [Device-Provisioning](../internal-docs/device/Device-Provisioning.md) | Bluetooth pairing, token write, QR claim flow | ✅ Done |
 | [WiFi-Configuration](../internal-docs/device/WiFi-Configuration.md) | WiFi credential provisioning via Bluetooth WIFI_CONFIG service | MVP done |

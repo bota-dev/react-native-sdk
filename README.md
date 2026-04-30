@@ -313,7 +313,7 @@ The SDK does not communicate directly with the Bota API. Your mobile app should:
 
 **Bluetooth Sync** (current implementation):
 
-- App transfers audio from device via BLE
+- App transfers audio from device via Bluetooth
 - App uploads to S3 using pre-signed URLs from your backend
 - App notifies backend when upload completes
 
@@ -323,7 +323,7 @@ The SDK does not communicate directly with the Bota API. Your mobile app should:
 - No app involvement in audio transfer
 - App can optionally configure WiFi credentials for WiFi-capable devices:
   - Request a stateless WiFi config grant from your backend (POST /devices/{id}/wifi-config/grant)
-  - SDK encrypts credentials with grant session key and transmits via BLE
+  - SDK encrypts credentials with grant session key and transmits via Bluetooth
   - Device stores credentials encrypted in Flash (backend never stores WiFi passwords)
 - Backend sends webhooks to notify your app when processing completes
 

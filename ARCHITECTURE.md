@@ -29,7 +29,7 @@ src/
 ├── BotaClient.ts           # Singleton entry point
 │
 ├── ble/
-│   ├── BLEManager.ts       # react-native-ble-plx wrapper; scan, connect, read, write, notify
+│   ├── BluetoothManager.ts       # react-native-ble-plx wrapper; scan, connect, read, write, notify
 │   ├── constants.ts        # UUIDs: B07A base service + all characteristics
 │   ├── parsers.ts          # Binary struct parsers (DeviceStatus 14B, RecordingEntry 24B, etc.)
 │   └── protocol.ts         # Packet assembly, sequence numbers, ACK handling
@@ -100,7 +100,7 @@ Device → SDK: RECORDING_TRANSFER notify (EOF + CRC32) ← transfer complete
 SDK → Device: TRANSFER_CONTROL write 0x07 + file_id → confirm (device deletes file)
 ```
 
-**Planned v2:** Sliding window (size 4) with gap detection — see [BLE Reliable Transfer Design](../internal-docs/device/BLE%20Reliable%20Transfer%20Design.md).
+**Planned v2:** Sliding window (size 4) with gap detection — see [Bluetooth Reliable Transfer Design](../internal-docs/device/BLE%20Reliable%20Transfer%20Design.md).
 
 ---
 
@@ -150,7 +150,7 @@ DISCONNECTED
 ```c
 struct bota_device_settings {
   u8 version;           // 0x01
-  u8 enabled_mask;      // bit0=WiFi, bit1=4G (BLE always on)
+  u8 enabled_mask;      // bit0=WiFi, bit1=4G (Bluetooth always on)
   u8 upload_net_pref[3]; // 1=WiFi, 2=BLE, 3=4G, 0=end
   u8 power_cfg_4g;      // idle timeout: 0=default(180s), 1-254=×10s, 255=always-on
   u8 power_cfg_wifi;    // same encoding as power_cfg_4g

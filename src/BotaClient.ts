@@ -146,7 +146,7 @@ class BotaClientImpl extends EventEmitter<BotaClientEvents> {
     this.setState('initializing');
 
     try {
-      // Initialize BLE manager
+      // Initialize Bluetooth manager
       this._bleManager = getBleManager();
 
       // Set up Bluetooth state listener

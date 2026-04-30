@@ -1,5 +1,9 @@
 # CLAUDE.md - Bota React Native SDK
 
+See [AGENTS.md](AGENTS.md) for build commands and conventions. See [ARCHITECTURE.md](ARCHITECTURE.md) for module map and protocol details.
+
+**Documentation rule:** Every public API change must include documentation updates — `CLAUDE.md`, `ARCHITECTURE.md`, `AGENTS.md`, `README.md`, public docs (`../docs/`) as needed, and `../internal-docs/` if the change implements or invalidates a design doc. See [`../internal-docs/CLAUDE.md`](../internal-docs/CLAUDE.md) for the downstream impact matrix.
+
 This file provides context for Claude Code when working in this repository.
 
 ## Repository Overview
@@ -16,15 +20,15 @@ react-native-sdk/
 │   ├── index.ts              # Public API exports
 │   ├── BotaClient.ts         # Main client class
 │   ├── ble/
-│   │   ├── BleManager.ts     # BLE connection management
-│   │   ├── constants.ts      # BLE UUIDs, commands, timeouts
+│   │   ├── BleManager.ts     # Bluetooth connection management
+│   │   ├── constants.ts      # Bluetooth UUIDs, commands, timeouts
 │   │   └── parsers.ts        # Binary protocol parsers
 │   ├── managers/
 │   │   ├── DeviceManager.ts  # Device discovery, pairing, provisioning
 │   │   ├── RecordingManager.ts # Recording sync and upload
 │   │   └── OTAManager.ts     # Firmware updates
 │   ├── protocol/
-│   │   └── ProtocolHandler.ts # BLE transfer protocol implementation
+│   │   └── ProtocolHandler.ts # Bluetooth transfer protocol implementation
 │   ├── storage/
 │   │   └── StorageManager.ts # AsyncStorage persistence
 │   ├── upload/
@@ -53,7 +57,7 @@ The SDK supports three upload methods based on device connectivity:
 
 For WiFi/Cellular devices, the SDK supports:
 
-- Device-side WiFi network scanning via BLE (`DeviceManager.scanWiFiNetworks`) — no platform dependencies, works on iOS and Android
+- Device-side WiFi network scanning via Bluetooth (`DeviceManager.scanWiFiNetworks`) — no platform dependencies, works on iOS and Android
 - WiFi network configuration and provisioning (`configureWiFi`, `getWiFiStatus`, `subscribeToWiFiStatus`)
 - Grant-based credential encryption (ChaCha20-Poly1305 via K_session)
 - Device capability detection (`CAP_WIFI_UPLOAD`, `CAP_LTE_UPLOAD`, `CAP_BLE_SYNC`)
@@ -62,12 +66,12 @@ For WiFi/Cellular devices, the SDK supports:
 
 The SDK supports app-driven firmware updates via BLE:
 
-- `OTAManager.performUpdate(device, firmware)` — orchestrates the full flow: download `.ufw` from URL → transfer to device via BLE → device writes to SD card → device reboots
-- `ProtocolHandler.uploadFirmware(deviceId, firmwareData, onProgress)` — low-level BLE transfer: sends start command (0x08), data chunks (0x20) with flow control, verify command (0x09) with CRC32
-- Uses a persistent BLE subscription to TRANSFER_STATUS for the entire upload to avoid missed notifications
+- `OTAManager.performUpdate(device, firmware)` — orchestrates the full flow: download `.ufw` from URL → transfer to device via Bluetooth → device writes to SD card → device reboots
+- `ProtocolHandler.uploadFirmware(deviceId, firmwareData, onProgress)` — low-level Bluetooth transfer: sends start command (0x08), data chunks (0x20) with flow control, verify command (0x09) with CRC32
+- Uses a persistent Bluetooth subscription to TRANSFER_STATUS for the entire upload to avoid missed notifications
 - Progress events via `OtaStage`: `downloading` → `preparing` → `updating` → `verifying` → `completed`
 
-### BLE Services (defined in `src/ble/constants.ts`)
+### Bluetooth Services (defined in `src/ble/constants.ts`)
 
 - `SERVICE_BOTA_AUDIO` (B07A0001) - Audio streaming
 - `SERVICE_BOTA_CONTROL` (B07A0002) - Device control, recording status
@@ -90,7 +94,7 @@ The SDK supports app-driven firmware updates via BLE:
 
 The SDK supports multiple audio codecs from devices:
 
-| Codec | BLE Value | MIME Type |
+| Codec | Bluetooth Value | MIME Type |
 |-------|-----------|-----------|
 | `opus_16k` | 0x02 | `audio/opus` |
 | `opus_8k` | 0x03 | `audio/opus` |
@@ -169,7 +173,7 @@ cd react-native-sdk && npm install && npm run build
 
 ## Important Files
 
-- `src/ble/constants.ts` - All BLE UUIDs and protocol constants
+- `src/ble/constants.ts` - All Bluetooth UUIDs and protocol constants
 - `src/ble/parsers.ts` - Binary data parsing/encoding
 - `src/protocol/ProtocolHandler.ts` - Recording transfer protocol
 - `src/BotaClient.ts` - Main public API

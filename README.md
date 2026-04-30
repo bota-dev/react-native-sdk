@@ -195,7 +195,7 @@ BotaClient.recordings.on('uploadProgress', (taskId, progress) => {});
 
 ### WiFi Scanning
 
-WiFi scanning is performed on the device itself via BLE — no platform-specific WiFi libraries needed. Works identically on iOS and Android.
+WiFi scanning is performed on the device itself via Bluetooth — no platform-specific WiFi libraries needed. Works identically on iOS and Android.
 
 ```typescript
 // Scan for nearby WiFi networks via the device's radio

@@ -10,7 +10,7 @@ Public React Native SDK for communicating with Bota wearable devices via Bluetoo
 2. **`ARCHITECTURE.md`** — module map, data flows, protocol details
 3. **`AGENTS.md`** — key files, verify steps, conventions (this file)
 4. **`README.md`** — if the public API changed (this is a public SDK)
-5. **`../internal-docs/`** — if the change implements or invalidates a design doc
+5. **`../internal-docs/`** — if the change implements, partially implements, or diverges from a design doc: update the doc status/content, and update the Status column in the Design Docs table at the bottom of this file. See [`../internal-docs/AGENTS.md`](../internal-docs/AGENTS.md) for the four sync cases.
 6. **`../docs/`** — update public API reference if any public method changed
 
 See the downstream impact matrix in [`../internal-docs/CLAUDE.md`](../internal-docs/CLAUDE.md).

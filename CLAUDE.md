@@ -77,7 +77,12 @@ The SDK supports app-driven firmware updates via Bluetooth:
 - `SERVICE_BOTA_CONTROL` (B07A0002) - Device control, recording status
 - `SERVICE_BOTA_PROVISIONING` (B07A0003) - Device pairing/provisioning
 - `SERVICE_BOTA_STORAGE` (B07A0004) - Recording list and transfer
+- `SERVICE_BOTA_AUTH` (B07A0005) - Device cryptographic identity (Ed25519 PK_D) — v1+ firmware only
 - `SERVICE_BOTA_WIFI_CONFIG` (B07A0006) - WiFi configuration (WiFi Upload)
+
+### Device Identity (Auth Service)
+
+`DeviceManager.readPublicKey(device)` reads the device's Ed25519 public key (PK_D) from `SERVICE_BOTA_AUTH` char `CHAR_PK_D` (B07A0005-0001). Returns a 64-char lowercase hex string (32 bytes), or `null` if the Auth service is absent (legacy firmware). Used during bind to register PK_D on the backend.
 
 ### Device Types
 

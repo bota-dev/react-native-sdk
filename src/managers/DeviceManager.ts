@@ -12,6 +12,7 @@ import {
   SERVICE_DEVICE_INFO,
   SERVICE_BOTA_PROVISIONING,
   SERVICE_BOTA_CONTROL,
+  SERVICE_BOTA_AUTH,
   SERVICE_BOTA_WIFI_CONFIG,
   CHAR_SERIAL_NUMBER,
   CHAR_FIRMWARE_REVISION,
@@ -45,6 +46,7 @@ import {
   DEVICE_CMD_FACTORY_RESET,
   CHAR_WIFI_SCAN,
   CHAR_DEVICE_SETTINGS,
+  CHAR_PK_D,
   WIFI_SCAN_TIMEOUT,
 } from '../ble/constants';
 import {
@@ -582,6 +584,34 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   async isProvisioned(device: ConnectedDevice): Promise<boolean> {
     const pairingState = await this.readPairingState(device.id);
     return pairingState === 'paired';
+  }
+
+  /**
+   * Read the device's Ed25519 public key (PK_D) from the Auth service.
+   * Returns the 32-byte key as a 64-char lowercase hex string, or null if
+   * the firmware does not expose the Auth service (legacy devices).
+   */
+  async readPublicKey(device: ConnectedDevice): Promise<string | null> {
+    if (!this.isConnected(device.id)) {
+      throw DeviceError.notConnected(device.id);
+    }
+
+    try {
+      const data = await this.bleManager.readCharacteristic(
+        device.id,
+        SERVICE_BOTA_AUTH,
+        CHAR_PK_D
+      );
+
+      if (data.length !== 32) {
+        return null;
+      }
+
+      return Buffer.from(data).toString('hex');
+    } catch {
+      // Auth service absent on legacy firmware — treat as no key
+      return null;
+    }
   }
 
   /**

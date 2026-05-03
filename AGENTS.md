@@ -15,6 +15,22 @@ Public React Native SDK for communicating with Bota wearable devices via Bluetoo
 
 See the downstream impact matrix in [`../internal-docs/CLAUDE.md`](../internal-docs/CLAUDE.md).
 
+## Compound Engineering
+
+Follow the **Plan → Work → Review → Compound** loop ([source](https://every.to/guides/compound-engineering)):
+
+1. **Plan first** — for any non-trivial task, state your approach and verify assumptions before writing code. 80% of value is in the plan.
+2. **Use skills** — invoke the relevant skill (see Superpowers) before starting work in a new area.
+3. **Compound** — after every change, update `CLAUDE.md`, `ARCHITECTURE.md`, and `AGENTS.md` so the next agent starts with full context.
+4. **Trust systems** — write tests and guardrails, then execute. Don't ask for permission on each line.
+
+## Superpowers
+
+| Task | Skill |
+| --- | --- |
+| React Native patterns, performance, native modules | `/bota-skills:react-native-skills` |
+| Expo + NativeWind + Bluetooth integration | `/bota-skills:bota-mobile` |
+
 ## Build
 
 ```bash

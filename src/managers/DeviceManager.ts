@@ -742,6 +742,16 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     return parsePairingState(data[0]);
   }
 
+  async setApiEndpoint(
+    device: ConnectedDevice,
+    environment: Environment
+  ): Promise<void> {
+    if (!this.isConnected(device.id)) {
+      throw DeviceError.notConnected(device.id);
+    }
+    await this.writeApiEndpoint(device.id, environment);
+  }
+
   private async writeApiEndpoint(
     deviceId: string,
     environment: Environment

@@ -62,6 +62,14 @@ For WiFi/Cellular devices, the SDK supports:
 - Grant-based credential encryption (ChaCha20-Poly1305 via K_session)
 - Device capability detection (`CAP_WIFI_UPLOAD`, `CAP_LTE_UPLOAD`, `CAP_BLE_SYNC`)
 
+### P2 Grant Auth (Recording Commands)
+
+BLE recording commands (start/stop) are gated by an HPKE-encrypted, ECDSA-signed short-lived grant:
+
+- `DeviceManager.writeGrant(device, grantBlob)` — writes 171-byte base64 grant blob to `CHAR_DEVICE_COMMAND`. Device decrypts via DHKEM-P256 + HKDF-SHA256 + ChaCha20-Poly1305 and verifies ECDSA-P256 signature.
+- `DeviceManager.requestStartRecording(device, grantBlob)` / `requestStopRecording(device, grantBlob)` — write grant to device, then send opcode to `CHAR_RECORDING_CONTROL`. Grant blob comes from `POST /v1/devices/{id}/grant` (TTL = 300s).
+- Grant blob is opaque at SDK layer — 171 bytes = enc[65] ‖ ct[106].
+
 ### Firmware Updates (OTA)
 
 The SDK supports app-driven firmware updates via Bluetooth:

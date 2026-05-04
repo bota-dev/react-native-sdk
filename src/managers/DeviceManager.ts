@@ -893,17 +893,41 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   // ============================================================================
 
   /**
-   * Request to start recording on a device remotely.
-   * This writes a signed grant token to the device via BLE.
+   * Write an HPKE grant blob to the device's CHAR_DEVICE_COMMAND characteristic.
+   * The device decrypts and verifies the blob; subsequent recording commands within
+   * the grant TTL are honoured.
    *
    * @param device - Connected device
-   * @param grantToken - Signed JWT grant token from backend
+   * @param grantBlob - Base64-encoded 171-byte HPKE grant blob from backend
+   */
+  async writeGrant(device: ConnectedDevice, grantBlob: string): Promise<void> {
+    log.debug('Writing grant blob to device', { deviceId: device.id });
+
+    if (!this.isConnected(device.id)) {
+      throw DeviceError.notConnected(device.id);
+    }
+
+    const blob = Buffer.from(grantBlob, 'base64');
+    await this.bleManager.writeCharacteristic(
+      device.id,
+      SERVICE_BOTA_CONTROL,
+      CHAR_DEVICE_COMMAND,
+      blob
+    );
+  }
+
+  /**
+   * Request to start recording on a device remotely.
+   * Writes the HPKE grant blob to the device, then sends the start opcode.
+   *
+   * @param device - Connected device
+   * @param grantBlob - Base64-encoded 171-byte HPKE grant blob from backend
    * @param _options - Optional recording options (for future use)
    * @returns Recording command result
    */
   async requestStartRecording(
     device: ConnectedDevice,
-    grantToken: string,
+    grantBlob: string,
     _options?: StartRecordingOptions
   ): Promise<{ success: boolean; error?: string }> {
     log.info('Requesting start recording', { deviceId: device.id });
@@ -913,24 +937,19 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     }
 
     try {
-      // Create payload: [opcode, grant_token_bytes]
-      const tokenBuffer = Buffer.from(grantToken, 'utf8');
-      const payload = Buffer.alloc(1 + tokenBuffer.length);
-      payload.writeUInt8(RECORDING_CMD_GRANT_START, 0);
-      tokenBuffer.copy(payload, 1);
+      // Step 1: deliver grant blob to CHAR_DEVICE_COMMAND
+      await this.writeGrant(device, grantBlob);
 
-      // Set up response listener before writing
+      // Step 2: subscribe for result, then send opcode to CHAR_RECORDING_CONTROL
       const resultPromise = this.waitForRecordingResult(device.id);
 
-      // Write to recording control characteristic
       await this.bleManager.writeCharacteristic(
         device.id,
         SERVICE_BOTA_CONTROL,
         CHAR_RECORDING_CONTROL,
-        payload
+        Buffer.from([RECORDING_CMD_GRANT_START])
       );
 
-      // Wait for device response
       const result = await resultPromise;
 
       log.info('Start recording result', { deviceId: device.id, result });
@@ -944,16 +963,16 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
   /**
    * Request to stop recording on a device remotely.
-   * This writes a signed grant token to the device via BLE.
+   * Writes the HPKE grant blob to the device, then sends the stop opcode.
    *
    * @param device - Connected device
-   * @param grantToken - Signed JWT grant token from backend
+   * @param grantBlob - Base64-encoded 171-byte HPKE grant blob from backend
    * @param _options - Optional stop options (for future use)
    * @returns Recording command result
    */
   async requestStopRecording(
     device: ConnectedDevice,
-    grantToken: string,
+    grantBlob: string,
     _options?: StopRecordingOptions
   ): Promise<{ success: boolean; error?: string }> {
     log.info('Requesting stop recording', { deviceId: device.id });
@@ -963,24 +982,19 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     }
 
     try {
-      // Create payload: [opcode, grant_token_bytes]
-      const tokenBuffer = Buffer.from(grantToken, 'utf8');
-      const payload = Buffer.alloc(1 + tokenBuffer.length);
-      payload.writeUInt8(RECORDING_CMD_GRANT_STOP, 0);
-      tokenBuffer.copy(payload, 1);
+      // Step 1: deliver grant blob to CHAR_DEVICE_COMMAND
+      await this.writeGrant(device, grantBlob);
 
-      // Set up response listener before writing
+      // Step 2: subscribe for result, then send opcode to CHAR_RECORDING_CONTROL
       const resultPromise = this.waitForRecordingResult(device.id);
 
-      // Write to recording control characteristic
       await this.bleManager.writeCharacteristic(
         device.id,
         SERVICE_BOTA_CONTROL,
         CHAR_RECORDING_CONTROL,
-        payload
+        Buffer.from([RECORDING_CMD_GRANT_STOP])
       );
 
-      // Wait for device response
       const result = await resultPromise;
 
       log.info('Stop recording result', { deviceId: device.id, result });

@@ -1142,7 +1142,9 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     let recordingId: string | undefined;
     if (active && data.length >= 18) {
       const hex = data.slice(2, 18).toString('hex');
-      recordingId = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+      if (hex !== '0'.repeat(32)) {
+        recordingId = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+      }
     }
 
     return { active, recordingId, initiatedBy };

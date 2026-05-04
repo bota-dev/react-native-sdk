@@ -82,7 +82,7 @@ The SDK supports app-driven firmware updates via Bluetooth:
 
 ### Device Identity (Auth Service)
 
-`DeviceManager.readPublicKey(device)` reads the device's Ed25519 public key (PK_D) from `SERVICE_BOTA_AUTH` char `CHAR_PK_D` (B07A0005-0001). Returns a 64-char lowercase hex string (32 bytes), or `null` if the Auth service is absent (legacy firmware). Used during bind to register PK_D on the backend.
+`DeviceManager.readPublicKey(device)` reads the device's secp256r1 public key (PK_D) from `SERVICE_BOTA_AUTH` char `CHAR_PK_D` (B07A0005-0001). Returns a 128-char lowercase hex string (64 bytes, raw x‖y), or `null` if the Auth service is absent (legacy firmware) or if the read returns the wrong length. Used during bind to register PK_D on the backend.
 
 ### Device Types
 

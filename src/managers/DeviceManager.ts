@@ -603,7 +603,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         CHAR_PK_D
       );
 
-      if (data.length !== 32) {
+      if (data.length !== 64) {
         return null;
       }
 

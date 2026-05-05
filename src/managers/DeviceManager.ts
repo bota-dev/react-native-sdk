@@ -42,6 +42,7 @@ import {
   RECORDING_RESULT_NOT_RECORDING,
   RECORDING_RESULT_INVALID_GRANT,
   RECORDING_RESULT_GRANT_EXPIRED,
+  RECORDING_RESULT_INVALID_STATE,
   CHAR_DEVICE_COMMAND,
   DEVICE_CMD_FACTORY_RESET,
   CHAR_WIFI_SCAN,
@@ -1116,6 +1117,9 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
               break;
             case RECORDING_RESULT_GRANT_EXPIRED:
               resolve({ success: false, error: 'grant_expired' });
+              break;
+            case RECORDING_RESULT_INVALID_STATE:
+              resolve({ success: false, error: 'invalid_state' });
               break;
             default:
               // State 0x01 = recording, 0x00 = idle

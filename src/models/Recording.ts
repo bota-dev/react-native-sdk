@@ -21,6 +21,8 @@ export interface DeviceRecording {
   fileSizeBytes: number;
   /** Audio codec used */
   codec: AudioCodec;
+  /** True if the file is stored encrypted at rest on the device (P4). False/undefined = legacy plaintext. */
+  isEncrypted?: boolean;
 }
 
 /**

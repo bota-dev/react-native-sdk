@@ -367,11 +367,13 @@ export function parseAudioCodec(byte: number): AudioCodec {
 
 /**
  * Parse recording list from notification data
- * Each recording entry is typically 24 bytes:
- * - UUID: 16 bytes
- * - Timestamp: 4 bytes (Unix seconds)
- * - Duration: 2 bytes (seconds)
- * - Size: 2 bytes (KB, or needs scaling)
+ * Each recording entry is 24 bytes:
+ * - file_id:    bytes [0:4]   (4-byte file ID, bytes [4:16] zero-padded)
+ * - flags:      byte  [4]     (bit 0 = encrypted at rest, P4)
+ * - reserved:   bytes [5:16]
+ * - timestamp:  bytes [16:20] (u32 LE, Unix seconds)
+ * - duration:   bytes [20:22] (u16 LE, seconds)
+ * - size_kb:    bytes [22:24] (u16 LE, kilobytes)
  */
 export function parseRecordingList(data: Buffer): DeviceRecording[] {
   const recordings: DeviceRecording[] = [];
@@ -386,6 +388,8 @@ export function parseRecordingList(data: Buffer): DeviceRecording[] {
 
   while (offset + entrySize <= data.length) {
     const uuid = formatUuid(data.slice(offset, offset + 16));
+    const flags = data.readUInt8(offset + 4);
+    const isEncrypted = (flags & 0x01) !== 0;
     const timestamp = data.readUInt32LE(offset + 16);
     const durationSeconds = data.readUInt16LE(offset + 20);
     const sizeKb = data.readUInt16LE(offset + 22);
@@ -396,6 +400,7 @@ export function parseRecordingList(data: Buffer): DeviceRecording[] {
       durationMs: durationSeconds * 1000,
       fileSizeBytes: sizeKb * 1024,
       codec: 'opus_16k', // Default, actual codec read separately
+      isEncrypted,
     });
 
     offset += entrySize;

@@ -474,9 +474,12 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   }
 
   /**
-   * Send factory reset command to a device.
-   * Clears stored token and recordings on the device.
-   * Device returns to unpaired state after this.
+   * @deprecated Firmware ≥ P5 rejects the unauthenticated BLE factory-reset opcode (0x01).
+   * Use the backend unbind/delete flow instead: `DELETE /v1/projects/{projectId}/devices/{id}`
+   * or `POST /v1/projects/{projectId}/devices/{id}/unbind`. The backend emits a `factory_reset`
+   * heartbeat command that the device processes over WiFi/4G.
+   *
+   * This method will fail silently on P5+ firmware (device returns INVALID_TOKEN).
    */
   async factoryReset(device: ConnectedDevice): Promise<void> {
     log.info('Sending factory reset to device', { deviceId: device.id });

@@ -156,10 +156,15 @@ export class OTAManager extends EventEmitter<OTAManagerEvents> {
    *
    * Downloads firmware from URL, transfers to device via BLE,
    * device writes to SD card as update.ufw and reboots to apply.
+   *
+   * @param grantBlob - P7: Base64-encoded 207-byte OTA grant blob. When provided,
+   *                    written to CHAR_DEVICE_COMMAND before upload begins so the
+   *                    device can verify the transfer against the grant's SHA-256.
    */
   async performUpdate(
     device: ConnectedDevice,
-    firmware: FirmwareInfo
+    firmware: FirmwareInfo,
+    grantBlob?: string
   ): Promise<void> {
     log.info('Starting firmware update', {
       deviceId: device.id,
@@ -178,6 +183,12 @@ export class OTAManager extends EventEmitter<OTAManagerEvents> {
 
       if (!getBleManager().isConnected(device.id)) {
         throw DeviceError.notConnected(device.id);
+      }
+
+      // P7: Write OTA grant to device before upload so firmware can verify SHA-256
+      if (grantBlob) {
+        await this.deviceManager.writeGrant(device, grantBlob);
+        log.info('OTA grant written to device', { deviceId: device.id });
       }
 
       const protocolHandler = new ProtocolHandler();

@@ -48,6 +48,7 @@ import {
   CHAR_WIFI_SCAN,
   CHAR_DEVICE_SETTINGS,
   CHAR_PK_D,
+  CHAR_AUTH_NONCE,
   WIFI_SCAN_TIMEOUT,
 } from '../ble/constants';
 import {
@@ -614,6 +615,37 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       return Buffer.from(data).toString('hex');
     } catch {
       // Auth service absent on legacy firmware — treat as no key
+      return null;
+    }
+  }
+
+  /**
+   * Read the P6 session nonce from the device's AUTH_NONCE characteristic.
+   *
+   * P6 firmware generates a fresh 16-byte nonce on every BLE connection.
+   * Pass this value as `nonce_d` to the backend grant endpoint so the grant
+   * is cryptographically bound to this session. Returns null on pre-P6 firmware
+   * (characteristic absent) — fall back to legacy grant flow without nonce.
+   */
+  async readAuthNonce(device: ConnectedDevice): Promise<string | null> {
+    if (!this.isConnected(device.id)) {
+      throw DeviceError.notConnected(device.id);
+    }
+
+    try {
+      const data = await this.bleManager.readCharacteristic(
+        device.id,
+        SERVICE_BOTA_AUTH,
+        CHAR_AUTH_NONCE
+      );
+
+      if (data.length !== 16) {
+        return null;
+      }
+
+      return Buffer.from(data).toString('hex');
+    } catch {
+      // AUTH_NONCE characteristic absent on pre-P6 firmware — not an error
       return null;
     }
   }

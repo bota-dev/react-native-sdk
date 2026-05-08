@@ -50,6 +50,7 @@ import {
   CHAR_PK_D,
   CHAR_AUTH_NONCE,
   WIFI_SCAN_TIMEOUT,
+  DEVICE_CMD_BLE_DEPROVISION,
 } from '../ble/constants';
 import {
   parsePairingState,
@@ -1038,6 +1039,56 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       return result;
     } catch (error) {
       log.error('Failed to stop recording', error as Error, { deviceId: device.id });
+      throw error;
+    }
+  }
+
+  /**
+   * Deprovision a device via a grant-gated BLE command (P5.B).
+   *
+   * Writes the recording grant blob, then sends opcode 0x05 to CHAR_DEVICE_COMMAND.
+   * The device verifies the grant and clears its pairing state + token, allowing
+   * re-provisioning without a physical firmware reflash.
+   *
+   * Call this BEFORE revoking the device token on the backend. Once the token is
+   * revoked the backend can no longer issue a grant for this device.
+   *
+   * Falls back gracefully on old firmware (no 0x05 handler): the device ignores
+   * the opcode and the result notification times out, which we treat as a soft
+   * failure — the caller should still proceed with server-side unbind and rely on
+   * the heartbeat factory_reset path for credential wipe.
+   */
+  async deprovision(
+    device: ConnectedDevice,
+    grantBlob: string
+  ): Promise<{ success: boolean; error?: string }> {
+    log.info('BLE deprovision', { deviceId: device.id });
+
+    if (!this.isConnected(device.id)) {
+      throw DeviceError.notConnected(device.id);
+    }
+
+    try {
+      // Step 1: deliver grant blob so firmware can verify it
+      await this.writeGrant(device, grantBlob);
+
+      // Step 2: subscribe for result, then send deprovision opcode
+      const resultPromise = this.waitForProvisioningResult(device.id);
+
+      await this.bleManager.writeCharacteristic(
+        device.id,
+        SERVICE_BOTA_CONTROL,
+        CHAR_DEVICE_COMMAND,
+        Buffer.from([DEVICE_CMD_BLE_DEPROVISION])
+      );
+
+      const result = await resultPromise;
+      log.info('BLE deprovision result', { deviceId: device.id, result });
+      return result.success
+        ? { success: true }
+        : { success: false, error: result.error };
+    } catch (error) {
+      log.error('BLE deprovision failed', error as Error, { deviceId: device.id });
       throw error;
     }
   }

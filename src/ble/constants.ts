@@ -160,6 +160,7 @@ export const ACK_TYPE_ABORT = 0x12;
 export const DEVICE_CMD_FACTORY_RESET = 0x01;
 export const DEVICE_CMD_ENTER_DFU = 0x03;
 export const DEVICE_CMD_BLE_DEPROVISION = 0x05; // P5.B: grant-gated BLE deprovision (clears token + pairing state)
+export const DEVICE_CMD_BLE_FACTORY_RESET = 0x06; // P5.B full: grant-gated full factory reset (token + pairing + WiFi creds + conn_policy + reboot)
 
 // Recording control opcodes (for remote start/stop)
 export const RECORDING_CMD_LOCAL_START = 0x01;

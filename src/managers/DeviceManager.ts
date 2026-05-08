@@ -51,6 +51,7 @@ import {
   CHAR_AUTH_NONCE,
   WIFI_SCAN_TIMEOUT,
   DEVICE_CMD_BLE_DEPROVISION,
+  DEVICE_CMD_BLE_FACTORY_RESET,
 } from '../ble/constants';
 import {
   parsePairingState,
@@ -1089,6 +1090,52 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         : { success: false, error: result.error };
     } catch (error) {
       log.error('BLE deprovision failed', error as Error, { deviceId: device.id });
+      throw error;
+    }
+  }
+
+  /**
+   * Full BLE factory reset (opcode 0x06). Requires a valid deprovision grant.
+   *
+   * Clears token, pairing state, all stored WiFi credentials, and conn_policy on
+   * the device, then reboots it. Use this for Reset/Delete flows where the device
+   * may not have WiFi/4G to receive a cloud-channel factory_reset command.
+   *
+   * The device reboots ~500ms after sending the success notification, so the BLE
+   * connection will drop shortly after a successful call.
+   *
+   * Falls back gracefully on firmware without 0x06: times out on the result
+   * notification — caller should still proceed with server-side reset.
+   */
+  async bleFactoryReset(
+    device: ConnectedDevice,
+    grantBlob: string
+  ): Promise<{ success: boolean; error?: string }> {
+    log.info('BLE factory reset', { deviceId: device.id });
+
+    if (!this.isConnected(device.id)) {
+      throw DeviceError.notConnected(device.id);
+    }
+
+    try {
+      await this.writeGrant(device, grantBlob);
+
+      const resultPromise = this.waitForProvisioningResult(device.id);
+
+      await this.bleManager.writeCharacteristic(
+        device.id,
+        SERVICE_BOTA_CONTROL,
+        CHAR_DEVICE_COMMAND,
+        Buffer.from([DEVICE_CMD_BLE_FACTORY_RESET])
+      );
+
+      const result = await resultPromise;
+      log.info('BLE factory reset result', { deviceId: device.id, result });
+      return result.success
+        ? { success: true }
+        : { success: false, error: result.error };
+    } catch (error) {
+      log.error('BLE factory reset failed', error as Error, { deviceId: device.id });
       throw error;
     }
   }

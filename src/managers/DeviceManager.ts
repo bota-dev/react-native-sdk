@@ -113,6 +113,9 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   private bleManager: BleManager;
   private connectedDevices: Map<string, ConnectedDevice> = new Map();
   private statusSubscriptions: Map<string, Subscription> = new Map();
+  private nonceSubscriptions: Map<string, Subscription> = new Map();
+  // Cache of P6 session nonce per device (received via notify on connect, cleared on disconnect)
+  private nonceCache: Map<string, string> = new Map();
   private reconnectRegistry: Record<string, ReconnectInfo> = {};
   // Cache of last known recording state per device (populated from status notifications)
   private recordingStateCache: Map<string, RecordingState> = new Map();
@@ -169,10 +172,13 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       }
       this.connectedDevices.delete(deviceId);
       this.recordingStateCache.delete(deviceId);
+      this.nonceCache.delete(deviceId);
 
-      // Clean up status subscription
+      // Clean up status and nonce subscriptions
       this.statusSubscriptions.get(deviceId)?.remove();
       this.statusSubscriptions.delete(deviceId);
+      this.nonceSubscriptions.get(deviceId)?.remove();
+      this.nonceSubscriptions.delete(deviceId);
 
       this.emit('deviceDisconnected', deviceId, error);
 
@@ -299,6 +305,10 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         isProvisioned: connectedDevice.isProvisioned,
       });
 
+      // Subscribe to P6 session nonce notifications (CHAR_AUTH_NONCE may be NOTIFY-only).
+      // Firmware sends the nonce when the CCC is written (subscription enabled).
+      this.subscribeToNonce(device.id);
+
       this.emit('connectionStateChanged', device.id, 'connected');
 
       return connectedDevice;
@@ -319,9 +329,12 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
     this.emit('connectionStateChanged', device.id, 'disconnecting');
 
-    // Clean up status subscription
+    // Clean up status and nonce subscriptions
     this.statusSubscriptions.get(device.id)?.remove();
     this.statusSubscriptions.delete(device.id);
+    this.nonceSubscriptions.get(device.id)?.remove();
+    this.nonceSubscriptions.delete(device.id);
+    this.nonceCache.delete(device.id);
 
     await this.bleManager.disconnect(device.id);
     this.connectedDevices.delete(device.id);
@@ -622,18 +635,64 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   }
 
   /**
+   * Subscribe to P6 session nonce notifications and cache the value.
+   * Called once per connect. Handles the case where CHAR_AUTH_NONCE is NOTIFY-only
+   * and the firmware sends the nonce when the CCC subscription is enabled.
+   */
+  private subscribeToNonce(deviceId: string): void {
+    // Clean up any stale subscription first
+    this.nonceSubscriptions.get(deviceId)?.remove();
+    this.nonceSubscriptions.delete(deviceId);
+
+    try {
+      const sub = this.bleManager.subscribeToCharacteristic(
+        deviceId,
+        SERVICE_BOTA_AUTH,
+        CHAR_AUTH_NONCE,
+        (data) => {
+          if (data.length === 16) {
+            const hex = Buffer.from(data).toString('hex');
+            this.nonceCache.set(deviceId, hex);
+            log.debug('readAuthNonce: nonce received via notify', { deviceId, nonce: hex.slice(0, 8) + '...' });
+          }
+        },
+        (error) => {
+          // CHAR_AUTH_NONCE absent on pre-P6 firmware — not an error
+          log.debug('readAuthNonce: notify subscription ended', { deviceId, reason: error.message });
+          this.nonceSubscriptions.delete(deviceId);
+        }
+      );
+      this.nonceSubscriptions.set(deviceId, sub);
+    } catch {
+      // Service not present on pre-P6 firmware — silently ignore
+    }
+  }
+
+  /**
    * Read the P6 session nonce from the device's AUTH_NONCE characteristic.
    *
    * P6 firmware generates a fresh 16-byte nonce on every BLE connection.
    * Pass this value as `nonce_d` to the backend grant endpoint so the grant
    * is cryptographically bound to this session. Returns null on pre-P6 firmware
    * (characteristic absent) — fall back to legacy grant flow without nonce.
+   *
+   * Checks the notification cache first (populated by subscribeToNonce on connect),
+   * then falls back to a direct BLE read for firmware that exposes the nonce as READ.
    */
   async readAuthNonce(device: ConnectedDevice): Promise<string | null> {
     if (!this.isConnected(device.id)) {
       throw DeviceError.notConnected(device.id);
     }
 
+    // Return the nonce received via notification (NOTIFY-only firmware path).
+    // Keep the cached value — nonce is only rotated on successful grant acceptance,
+    // not on rejection, so the same nonce may need to be retried.
+    const cached = this.nonceCache.get(device.id);
+    if (cached) {
+      return cached;
+    }
+
+    // Fall back to direct BLE read (READ | DYNAMIC firmware path)
     try {
       const data = await this.bleManager.readCharacteristic(
         device.id,

@@ -642,12 +642,20 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       );
 
       if (data.length !== 16) {
+        log.debug('readAuthNonce: unexpected length (notify-only or uninitialized?)', {
+          deviceId: device.id,
+          length: data.length,
+        });
         return null;
       }
 
       return Buffer.from(data).toString('hex');
-    } catch {
+    } catch (error) {
       // AUTH_NONCE characteristic absent on pre-P6 firmware — not an error
+      log.debug('readAuthNonce: read failed (pre-P6 firmware or notify-only char)', {
+        deviceId: device.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return null;
     }
   }

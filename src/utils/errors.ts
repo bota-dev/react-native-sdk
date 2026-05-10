@@ -158,6 +158,14 @@ export class ProvisioningError extends BotaError {
     );
   }
 
+  static alreadyPaired(deviceId: string): ProvisioningError {
+    return new ProvisioningError(
+      'Device is already paired with another credential. Factory reset the device before re-provisioning.',
+      'ALREADY_PAIRED',
+      deviceId
+    );
+  }
+
   static timeout(deviceId: string): ProvisioningError {
     return new ProvisioningError(
       'Provisioning timed out waiting for device response',

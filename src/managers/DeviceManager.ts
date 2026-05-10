@@ -34,6 +34,7 @@ import {
   PROVISIONING_INVALID_TOKEN,
   PROVISIONING_STORAGE_ERROR,
   PROVISIONING_CHUNK_ERROR,
+  PROVISIONING_ALREADY_PAIRED,
   OPERATION_TIMEOUT,
   RECORDING_CMD_GRANT_START,
   RECORDING_CMD_GRANT_STOP,
@@ -104,6 +105,23 @@ interface ReconnectInfo {
   bleId: string;
   bleName: string;
   deviceType: DeviceType;
+}
+
+/** Options for {@link DeviceManager.provision}. */
+export interface ProvisionOptions {
+  /**
+   * Optional fetcher invoked when the device rejects the token write with
+   * ALREADY_PAIRED — the device is still paired with a stale token from a
+   * previous owner. The fetcher should call the backend's deprovision-grant
+   * endpoint (e.g. POST /devices/{id}/grant with scope=deprovision) and
+   * return the base64 grant blob. The SDK then performs an opcode-0x05 BLE
+   * deprovision (no reboot) and retries the token write on the same connection.
+   *
+   * @param nonce_d Hex-encoded P6 session nonce read from the device, or null
+   *   on pre-P6 firmware. Pass through to the backend so it can bind the grant
+   *   to the current BLE session.
+   */
+  fetchDeprovisionGrant?: (nonce_d: string | null) => Promise<string>;
 }
 
 /**
@@ -536,63 +554,94 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   async provision(
     device: ConnectedDevice,
     deviceToken: string,
-    environment: Environment = 'production'
+    environment: Environment = 'production',
+    options?: ProvisionOptions
   ): Promise<void> {
     log.info('Provisioning device', {
       deviceId: device.id,
       environment,
+      hasGrantFetcher: !!options?.fetchDeprovisionGrant,
     });
 
     if (!this.isConnected(device.id)) {
       throw DeviceError.notConnected(device.id);
     }
 
-    // Always write the token. On rebind the device may still report PAIRED with a
-    // stale token from the previous owner — skipping here would leave it on the old,
-    // now-revoked token. Callers who want to avoid re-provisioning a connected device
-    // should check isProvisioned() themselves before calling provision().
-
-    // Set up provisioning result listener
-    const resultPromise = this.waitForProvisioningResult(device.id);
-
     try {
-      // Write API endpoint
-      await this.writeApiEndpoint(device.id, environment);
+      await this.writeProvisioningOnce(device, deviceToken, environment);
+    } catch (error) {
+      // Auto-recover from ALREADY_PAIRED if a grant fetcher was supplied:
+      // device retains a stale token from the previous owner — clear it via
+      // grant-gated BLE deprovision (opcode 0x05, no reboot), then retry.
+      if (
+        error instanceof ProvisioningError &&
+        error.code === 'ALREADY_PAIRED' &&
+        options?.fetchDeprovisionGrant
+      ) {
+        log.info('Provision rejected with ALREADY_PAIRED — auto-deprovisioning then retrying', {
+          deviceId: device.id,
+        });
 
-      // Write device token (chunked)
-      await this.writeDeviceToken(device.id, deviceToken);
-
-      // Wait for provisioning result
-      const result = await resultPromise;
-
-      if (!result.success) {
-        switch (result.error) {
-          case 'invalid_token':
-            throw ProvisioningError.invalidToken(device.id);
-          case 'storage_error':
-            throw ProvisioningError.storageError(device.id);
-          case 'chunk_error':
-            throw ProvisioningError.chunkError(device.id);
-          default:
-            throw new ProvisioningError(
-              'Provisioning failed',
-              'PROVISIONING_FAILED',
-              device.id
-            );
+        const nonce = await this.readAuthNonce(device);
+        const grantBlob = await options.fetchDeprovisionGrant(nonce);
+        const result = await this.deprovision(device, grantBlob);
+        if (!result.success) {
+          throw new ProvisioningError(
+            `Auto-deprovision failed: ${result.error ?? 'unknown'}`,
+            'PROVISIONING_FAILED',
+            device.id
+          );
         }
+
+        // Retry the original provision write — device should now be UNPAIRED
+        await this.writeProvisioningOnce(device, deviceToken, environment);
+        return;
       }
 
-      // Sync time to device
-      await this.syncTime(device.id);
-
-      // Update device state
-      device.isProvisioned = true;
-
-      log.info('Device provisioned successfully', { deviceId: device.id });
-    } catch (error) {
       log.error('Provisioning failed', error as Error, { deviceId: device.id });
       throw error;
     }
+  }
+
+  /**
+   * Single provisioning attempt: writes API endpoint + token, waits for result,
+   * throws a typed ProvisioningError on failure. No retry.
+   */
+  private async writeProvisioningOnce(
+    device: ConnectedDevice,
+    deviceToken: string,
+    environment: Environment
+  ): Promise<void> {
+    const resultPromise = this.waitForProvisioningResult(device.id);
+
+    await this.writeApiEndpoint(device.id, environment);
+    await this.writeDeviceToken(device.id, deviceToken);
+
+    const result = await resultPromise;
+
+    if (!result.success) {
+      switch (result.error) {
+        case 'invalid_token':
+          throw ProvisioningError.invalidToken(device.id);
+        case 'storage_error':
+          throw ProvisioningError.storageError(device.id);
+        case 'chunk_error':
+          throw ProvisioningError.chunkError(device.id);
+        case 'already_paired':
+          throw ProvisioningError.alreadyPaired(device.id);
+        default:
+          throw new ProvisioningError(
+            'Provisioning failed',
+            'PROVISIONING_FAILED',
+            device.id
+          );
+      }
+    }
+
+    await this.syncTime(device.id);
+    device.isProvisioned = true;
+
+    log.info('Device provisioned successfully', { deviceId: device.id });
   }
 
   /**
@@ -971,6 +1020,9 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
               break;
             case PROVISIONING_CHUNK_ERROR:
               resolve({ success: false, error: 'chunk_error' });
+              break;
+            case PROVISIONING_ALREADY_PAIRED:
+              resolve({ success: false, error: 'already_paired' });
               break;
             default:
               resolve({ success: false, error: 'unknown' });

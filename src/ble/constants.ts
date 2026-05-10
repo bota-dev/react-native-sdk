@@ -111,6 +111,7 @@ export const PROVISIONING_SUCCESS = 0x00;
 export const PROVISIONING_INVALID_TOKEN = 0x01;
 export const PROVISIONING_STORAGE_ERROR = 0x02;
 export const PROVISIONING_CHUNK_ERROR = 0x03;
+export const PROVISIONING_ALREADY_PAIRED = 0x04;
 
 // WiFi configuration result codes
 export const WIFI_CONFIG_SUCCESS = 0x00;

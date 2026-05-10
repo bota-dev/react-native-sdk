@@ -240,7 +240,7 @@ export type Environment = 'development' | 'production';
  */
 export interface ProvisioningResult {
   success: boolean;
-  error?: 'invalid_token' | 'storage_error' | 'chunk_error' | 'unknown';
+  error?: 'invalid_token' | 'storage_error' | 'chunk_error' | 'already_paired' | 'unknown';
 }
 
 // ============================================================================

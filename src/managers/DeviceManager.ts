@@ -583,11 +583,28 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         });
 
         const nonce = await this.readAuthNonce(device);
+        if (!nonce) {
+          log.warn(
+            '[NONCE] readAuthNonce returned null — deprovision grant will be issued without nonce binding and the device will likely reject it. ' +
+            'Check the [NONCE] read-probe / notify logs above to see what the firmware is actually serving on B07A0005-0002.',
+            { deviceId: device.id }
+          );
+        }
         const grantBlob = await options.fetchDeprovisionGrant(nonce);
         const result = await this.deprovision(device, grantBlob);
         if (!result.success) {
+          // The most common cause of invalid_token here is a nonce mismatch:
+          // the SDK couldn't read the device's session nonce, so the backend
+          // issued a grant bound to zeros, and the firmware's grant_check
+          // rejected it. Surface that hypothesis in the error so the demo
+          // app (and humans) can see what to investigate.
+          const isLikelyNonceIssue = result.error === 'invalid_token' && !nonce;
+          const detail = isLikelyNonceIssue
+            ? 'invalid_token — likely nonce_d unavailable (could not read CHAR_AUTH_NONCE). ' +
+              'Check the [NONCE] log lines from connect time.'
+            : (result.error ?? 'unknown');
           throw new ProvisioningError(
-            `Auto-deprovision failed: ${result.error ?? 'unknown'}`,
+            `Auto-deprovision failed: ${detail}`,
             'PROVISIONING_FAILED',
             device.id
           );
@@ -684,34 +701,68 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
    * Subscribe to P6 session nonce notifications and cache the value.
    * Called once per connect. Handles the case where CHAR_AUTH_NONCE is NOTIFY-only
    * and the firmware sends the nonce when the CCC subscription is enabled.
+   *
+   * Also runs an explicit READ probe at subscription time so the logs always show
+   * which transport (READ vs NOTIFY) the firmware actually serves, and at what length.
    */
   private subscribeToNonce(deviceId: string): void {
     // Clean up any stale subscription first
     this.nonceSubscriptions.get(deviceId)?.remove();
     this.nonceSubscriptions.delete(deviceId);
 
+    log.debug('[NONCE] Setting up AUTH_NONCE subscription', { deviceId });
+
+    let sub: Subscription | undefined;
     try {
-      const sub = this.bleManager.subscribeToCharacteristic(
+      sub = this.bleManager.subscribeToCharacteristic(
         deviceId,
         SERVICE_BOTA_AUTH,
         CHAR_AUTH_NONCE,
         (data) => {
+          log.debug('[NONCE] notify fired', { deviceId, length: data.length, hexPrefix: data.length > 0 ? data.subarray(0, 4).toString('hex') : '-' });
           if (data.length === 16) {
             const hex = Buffer.from(data).toString('hex');
             this.nonceCache.set(deviceId, hex);
-            log.debug('readAuthNonce: nonce received via notify', { deviceId, nonce: hex.slice(0, 8) + '...' });
+            log.debug('[NONCE] cached from notify', { deviceId, nonce: hex });
           }
         },
         (error) => {
-          // CHAR_AUTH_NONCE absent on pre-P6 firmware — not an error
-          log.debug('readAuthNonce: notify subscription ended', { deviceId, reason: error.message });
+          log.warn('[NONCE] notify subscription ended', { deviceId, reason: error.message });
           this.nonceSubscriptions.delete(deviceId);
         }
       );
       this.nonceSubscriptions.set(deviceId, sub);
-    } catch {
-      // Service not present on pre-P6 firmware — silently ignore
+      log.debug('[NONCE] subscription registered', { deviceId });
+    } catch (error) {
+      log.warn('[NONCE] subscribe threw synchronously', {
+        deviceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
+
+    // Probe READ in parallel (no await — runs in background, logs the result so we can
+    // tell from the next pair attempt whether the firmware exposes the nonce as READ
+    // or only via NOTIFY, or neither).
+    this.bleManager
+      .readCharacteristic(deviceId, SERVICE_BOTA_AUTH, CHAR_AUTH_NONCE)
+      .then((data) => {
+        log.debug('[NONCE] read probe', {
+          deviceId,
+          length: data.length,
+          hexPrefix: data.length > 0 ? data.subarray(0, 4).toString('hex') : '-',
+        });
+        if (data.length === 16 && !this.nonceCache.has(deviceId)) {
+          const hex = Buffer.from(data).toString('hex');
+          this.nonceCache.set(deviceId, hex);
+          log.debug('[NONCE] cached from read probe', { deviceId, nonce: hex });
+        }
+      })
+      .catch((error) => {
+        log.warn('[NONCE] read probe failed', {
+          deviceId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
   }
 
   /**
@@ -730,11 +781,14 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       throw DeviceError.notConnected(device.id);
     }
 
+    const cached = this.nonceCache.get(device.id);
+    log.debug('[NONCE] readAuthNonce called', { deviceId: device.id, hasCache: !!cached });
+
     // Return the nonce received via notification (NOTIFY-only firmware path).
     // Keep the cached value — nonce is only rotated on successful grant acceptance,
     // not on rejection, so the same nonce may need to be retried.
-    const cached = this.nonceCache.get(device.id);
     if (cached) {
+      log.debug('[NONCE] returning cached', { deviceId: device.id, nonce: cached });
       return cached;
     }
 
@@ -746,18 +800,26 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         CHAR_AUTH_NONCE
       );
 
+      log.debug('[NONCE] direct read returned', {
+        deviceId: device.id,
+        length: data.length,
+        hexPrefix: data.length > 0 ? data.subarray(0, 4).toString('hex') : '-',
+      });
+
       if (data.length !== 16) {
-        log.debug('readAuthNonce: unexpected length (notify-only or uninitialized?)', {
+        log.warn('[NONCE] unexpected length — returning null', {
           deviceId: device.id,
           length: data.length,
         });
         return null;
       }
 
-      return Buffer.from(data).toString('hex');
+      const hex = Buffer.from(data).toString('hex');
+      this.nonceCache.set(device.id, hex);
+      log.debug('[NONCE] returning from direct read', { deviceId: device.id, nonce: hex });
+      return hex;
     } catch (error) {
-      // AUTH_NONCE characteristic absent on pre-P6 firmware — not an error
-      log.debug('readAuthNonce: read failed (pre-P6 firmware or notify-only char)', {
+      log.warn('[NONCE] direct read threw — returning null', {
         deviceId: device.id,
         error: error instanceof Error ? error.message : String(error),
       });

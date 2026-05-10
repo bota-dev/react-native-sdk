@@ -547,13 +547,10 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       throw DeviceError.notConnected(device.id);
     }
 
-    // Check current pairing state — skip if already provisioned
-    const pairingState = await this.readPairingState(device.id);
-    if (pairingState === 'paired') {
-      log.info('Device is already provisioned, skipping', { deviceId: device.id });
-      device.isProvisioned = true;
-      return;
-    }
+    // Always write the token. On rebind the device may still report PAIRED with a
+    // stale token from the previous owner — skipping here would leave it on the old,
+    // now-revoked token. Callers who want to avoid re-provisioning a connected device
+    // should check isProvisioned() themselves before calling provision().
 
     // Set up provisioning result listener
     const resultPromise = this.waitForProvisioningResult(device.id);

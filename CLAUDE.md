@@ -70,6 +70,16 @@ BLE recording commands (start/stop) are gated by an HPKE-encrypted, ECDSA-signed
 - `DeviceManager.requestStartRecording(device, grantBlob)` / `requestStopRecording(device, grantBlob)` — write grant to device, then send opcode to `CHAR_RECORDING_CONTROL`. Grant blob comes from `POST /v1/devices/{id}/grant` (TTL = 300s).
 - Grant blob is opaque at SDK layer — 171 bytes = enc[65] ‖ ct[106].
 
+### P5.B Grant-Gated Deprovision / Factory Reset
+
+Since P5, the firmware rejects unauthenticated factory-reset opcodes and **rejects token writes while paired** (security measure to prevent stolen-device hijacking). Cleanup requires a backend-signed deprovision grant (`GRANT_SCOPE_DEPROVISION = 0x08`):
+
+- `DeviceManager.deprovision(device, grantBlob)` — opcode `0x05` to `CHAR_DEVICE_COMMAND`. Clears token + pairing state. **No reboot** — connection stays up. Use for rebind flows.
+- `DeviceManager.bleFactoryReset(device, grantBlob)` — opcode `0x06`. Clears token + pairing + WiFi creds + conn_policy, then reboots. Use for full delete-device flows.
+- Grant blob comes from `POST /dashboard/projects/:projectId/devices/:deviceId/deprovision-grant` — same wire format as recording grant, scope = `0x08`. The endpoint enforces project-membership authorization; the grant is HPKE-encrypted to the device's `pk_d` and ECDSA-signed.
+
+**Auto-recovery on rebind:** `DeviceManager.provision(device, token, env, options)` accepts `options.fetchDeprovisionGrant: (nonce_d) => Promise<grant_blob>`. When supplied and the device returns `ALREADY_PAIRED`, the SDK reads the P6 session nonce, invokes the fetcher, performs an opcode-0x05 deprovision, and retries the token write — all on the same BLE connection, transparent to the caller. Without the fetcher, `provision()` throws `ProvisioningError [ALREADY_PAIRED]` so callers can drive recovery manually. See [internal-docs Device-Provisioning §3](../internal-docs/device/Device-Provisioning.md#3-device-rebinding-change-user) for the full sequence diagram.
+
 ### Firmware Updates (OTA)
 
 The SDK supports app-driven firmware updates via Bluetooth:

@@ -1045,7 +1045,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     log.info('P10: delivering backend BLE-e2e pubkey', { deviceId: device.id });
     await this.bleManager.writeCharacteristic(
       device.id,
-      SERVICE_BOTA_PROVISIONING,
+      SERVICE_BOTA_AUTH,
       CHAR_BACKEND_PUBKEY,
       Buffer.from(pubkey)
     );

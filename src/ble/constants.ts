@@ -45,10 +45,6 @@ export const CHAR_API_ENDPOINT = 'B07A0003-0003-1000-8000-00805F9B34FB';
 export const CHAR_WIFI_CONFIG = 'B07A0003-0004-1000-8000-00805F9B34FB';
 export const CHAR_PROVISIONING_RESULT = 'B07A0003-0005-1000-8000-00805F9B34FB';
 export const CHAR_DEVICE_SETTINGS = 'B07A0003-0006-1000-8000-00805F9B34FB';
-/** P10: write the project's X25519 BLE-e2e backend pubkey (32 raw bytes).
- *  Device persists in syscfg and uses for hybrid encryption of audio chunks
- *  before BLE transfer. */
-export const CHAR_BACKEND_PUBKEY = 'B07A0003-0008-1000-8000-00805F9B34FB';
 
 // Bota Storage Service Characteristics (B07A0004)
 export const CHAR_STORAGE_INFO = 'B07A0004-0001-1000-8000-00805F9B34FB';
@@ -60,6 +56,10 @@ export const CHAR_TRANSFER_STATUS = 'B07A0004-0005-1000-8000-00805F9B34FB';
 // Bota Auth Service Characteristics (B07A0005)
 export const CHAR_PK_D = 'B07A0005-0001-1000-8000-00805F9B34FB';
 export const CHAR_AUTH_NONCE = 'B07A0005-0002-1000-8000-00805F9B34FB';
+/** P10: write the project's X25519 BLE-e2e backend pubkey (32 raw bytes).
+ *  Device persists in syscfg and uses for hybrid encryption of audio chunks
+ *  before BLE transfer. Lives in the Auth service since it's a crypto key. */
+export const CHAR_BACKEND_PUBKEY = 'B07A0005-0003-1000-8000-00805F9B34FB';
 
 // Bota WiFi Config Service Characteristics (B07A0006)
 export const CHAR_WIFI_GRANT = 'B07A0006-0001-1000-8000-00805F9B34FB';

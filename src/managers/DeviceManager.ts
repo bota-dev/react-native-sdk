@@ -21,6 +21,7 @@ import {
   CHAR_DEVICE_TOKEN,
   CHAR_API_ENDPOINT,
   CHAR_BACKEND_PUBKEY,
+  CHAR_DEVICE_CERT,
   CHAR_PROVISIONING_RESULT,
   CHAR_DEVICE_STATUS,
   CHAR_RECORDING_CONTROL,
@@ -1021,6 +1022,65 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       CHAR_API_ENDPOINT,
       Buffer.from([endpointByte])
     );
+  }
+
+  /**
+   * P4: Deliver the per-device X.509 leaf certificate + RSA-2048 private
+   * key issued by the Bota Device CA at bind time. The device persists
+   * both in syscfg and presents the cert on every WiFi/4G TLS handshake
+   * (mTLS) — the API gateway authenticates by chain validation against
+   * the Bota Device Root CA.
+   *
+   * Both PEMs are concatenated as a single payload separated by a newline:
+   *
+   *   <cert PEM>\n<privkey PEM>
+   *
+   * The firmware splits on the first `-----BEGIN ENCRYPTED|RSA|PRIVATE`
+   * marker. Chunked over the same chunk-header protocol used for the
+   * device token (max chunk = MTU-5; chunks prefixed with [index, total]).
+   *
+   * Call once after a successful `provision()`, before the first WiFi/4G
+   * upload from the device.
+   *
+   * @param device      - Connected device
+   * @param certPem     - PEM-encoded leaf certificate from bind response
+   * @param privkeyPem  - PEM-encoded RSA private key from bind response
+   */
+  async deliverCert(
+    device: ConnectedDevice,
+    certPem: string,
+    privkeyPem: string
+  ): Promise<void> {
+    if (!this.isConnected(device.id)) {
+      throw DeviceError.notConnected(device.id);
+    }
+    log.info('P4: delivering device cert + privkey', {
+      deviceId: device.id,
+      certBytes: certPem.length,
+      keyBytes: privkeyPem.length,
+    });
+
+    const payload = Buffer.from(`${certPem.trim()}\n${privkeyPem.trim()}\n`, 'utf8');
+    const mtu = await this.bleManager.getMtu(device.id);
+    const maxChunkSize = mtu - 5;
+    const totalChunks = Math.ceil(payload.length / (maxChunkSize - 2));
+
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * (maxChunkSize - 2);
+      const end = Math.min(start + (maxChunkSize - 2), payload.length);
+      const chunkData = payload.slice(start, end);
+      const chunk = Buffer.alloc(2 + chunkData.length);
+      chunk.writeUInt8(i, 0);
+      chunk.writeUInt8(totalChunks, 1);
+      chunkData.copy(chunk, 2);
+
+      await this.bleManager.writeCharacteristic(
+        device.id,
+        SERVICE_BOTA_PROVISIONING,
+        CHAR_DEVICE_CERT,
+        chunk
+      );
+    }
   }
 
   /**

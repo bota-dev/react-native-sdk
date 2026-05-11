@@ -45,6 +45,11 @@ export const CHAR_API_ENDPOINT = 'B07A0003-0003-1000-8000-00805F9B34FB';
 export const CHAR_WIFI_CONFIG = 'B07A0003-0004-1000-8000-00805F9B34FB';
 export const CHAR_PROVISIONING_RESULT = 'B07A0003-0005-1000-8000-00805F9B34FB';
 export const CHAR_DEVICE_SETTINGS = 'B07A0003-0006-1000-8000-00805F9B34FB';
+/** P4: write the per-device X.509 leaf cert (PEM) + RSA-2048 private key
+ *  (PEM) issued by the Bota Device CA at bind time. Device persists in
+ *  syscfg and presents on every WiFi/4G TLS handshake (mTLS).
+ *  Wire format: chunked write, same chunk header as CHAR_DEVICE_TOKEN. */
+export const CHAR_DEVICE_CERT = 'B07A0003-0007-1000-8000-00805F9B34FB';
 
 // Bota Storage Service Characteristics (B07A0004)
 export const CHAR_STORAGE_INFO = 'B07A0004-0001-1000-8000-00805F9B34FB';

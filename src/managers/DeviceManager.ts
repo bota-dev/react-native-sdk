@@ -20,6 +20,7 @@ import {
   CHAR_PAIRING_STATE,
   CHAR_DEVICE_TOKEN,
   CHAR_API_ENDPOINT,
+  CHAR_BACKEND_PUBKEY,
   CHAR_PROVISIONING_RESULT,
   CHAR_DEVICE_STATUS,
   CHAR_RECORDING_CONTROL,
@@ -1019,6 +1020,34 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       SERVICE_BOTA_PROVISIONING,
       CHAR_API_ENDPOINT,
       Buffer.from([endpointByte])
+    );
+  }
+
+  /**
+   * P10: Write the backend's X25519 BLE-e2e public key (32 raw bytes) to the
+   * device's `CHAR_BACKEND_PUBKEY`. The device persists it in syscfg and uses
+   * it to hybrid-encrypt audio chunks before BLE transfer; the app then
+   * relays ciphertext it cannot read to `POST /v1/recordings/{id}/upload-relay`.
+   *
+   * Call this once after a successful `provision()` and again after any
+   * pubkey rotation (re-fetch from `GET /v1/ble-pubkey`).
+   *
+   * @param device - Connected device
+   * @param pubkey - 32-byte raw X25519 public key (Buffer or 32-byte Uint8Array)
+   */
+  async deliverBackendPubkey(device: ConnectedDevice, pubkey: Uint8Array): Promise<void> {
+    if (pubkey.length !== 32) {
+      throw new Error(`backend pubkey must be 32 bytes, got ${pubkey.length}`);
+    }
+    if (!this.isConnected(device.id)) {
+      throw DeviceError.notConnected(device.id);
+    }
+    log.info('P10: delivering backend BLE-e2e pubkey', { deviceId: device.id });
+    await this.bleManager.writeCharacteristic(
+      device.id,
+      SERVICE_BOTA_PROVISIONING,
+      CHAR_BACKEND_PUBKEY,
+      Buffer.from(pubkey)
     );
   }
 

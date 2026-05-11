@@ -110,6 +110,70 @@ export class S3Uploader {
   }
 
   /**
+   * P10: Upload a BLE-e2e ciphertext blob via the backend relay endpoint.
+   *
+   * Used on the BLE sync path when the device encrypted audio chunks for the
+   * project's X25519 backend pubkey before transferring. The SDK never holds
+   * plaintext — the bytes received from the device are opaque ciphertext,
+   * POSTed here for server-side decryption + S3 write.
+   *
+   * The endpoint is `POST /v1/recordings/{id}/upload-relay` and expects
+   * `Content-Type: application/octet-stream`. Auth is a standard Bearer
+   * token (project secret/restricted key, or a device token).
+   */
+  async relayUpload(
+    ciphertext: Buffer,
+    relayUrl: string,
+    bearerToken: string,
+    options: UploadOptions = {}
+  ): Promise<void> {
+    const { onProgress, abortSignal } = options;
+
+    log.info('Starting BLE-e2e relay upload', {
+      size: ciphertext.length,
+      url: relayUrl,
+    });
+
+    try {
+      const response = await fetch(relayUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'Authorization': `Bearer ${bearerToken}`,
+          'Content-Length': ciphertext.length.toString(),
+        },
+        body: ciphertext,
+        signal: abortSignal,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => 'Unknown error');
+        log.error('Relay upload failed', undefined, {
+          status: response.status,
+          error: errorText,
+        });
+        throw new UploadError(
+          `Relay upload failed: ${response.status} ${response.statusText}`,
+          'RELAY_UPLOAD_FAILED'
+        );
+      }
+
+      onProgress?.(1.0);
+      log.info('Relay upload completed', { size: ciphertext.length });
+    } catch (error) {
+      if (error instanceof UploadError) throw error;
+      const err = error as Error;
+      if (err.name === 'AbortError') {
+        throw new UploadError('Upload was cancelled', 'UPLOAD_CANCELLED');
+      }
+      if (err.message?.includes('Network request failed')) {
+        throw UploadError.networkUnavailable();
+      }
+      throw new UploadError(`Relay upload failed: ${err.message}`, 'RELAY_UPLOAD_FAILED', undefined, err);
+    }
+  }
+
+  /**
    * Upload a file in chunks (for larger files)
    * Note: This requires multipart upload support from the pre-signed URL
    */

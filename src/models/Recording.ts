@@ -42,6 +42,17 @@ export interface UploadInfo {
   expiresAt?: Date;
   /** Content type for S3 upload (e.g., 'audio/opus', 'audio/wav') */
   contentType?: string;
+  /** P10: when present AND the transferred audio bytes are BLE-e2e ciphertext
+   *  (device encrypted before BLE relay), the SDK POSTs the raw bytes to this
+   *  endpoint instead of the presigned S3 PUT. Backend decrypts server-side
+   *  and writes plaintext to S3. Use the bind-time `cert`-flavored auth
+   *  token (or any valid Bearer for the project). */
+  relay?: {
+    /** Full URL of `/v1/recordings/{id}/upload-relay` */
+    url: string;
+    /** Bearer token (typically sk_*, rk_*, or dtok_*) */
+    bearerToken: string;
+  };
 }
 
 /**
@@ -101,6 +112,14 @@ export interface UploadTask {
   completeUrl?: string;
   /** Content type for S3 upload (e.g., 'audio/opus', 'audio/wav') */
   contentType?: string;
+  /** P10: when set, the file at `localPath` is BLE-e2e ciphertext that must
+   *  be POSTed to this relay endpoint (with the bearer token) instead of
+   *  PUT to the presigned `uploadUrl`. The backend decrypts and writes
+   *  plaintext to S3 on receipt. */
+  relay?: {
+    url: string;
+    bearerToken: string;
+  };
   /** Current status */
   status: UploadTaskStatus;
   /** Number of retry attempts */

@@ -206,6 +206,12 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
         uploadToken: uploadInfo.uploadToken,
         completeUrl: uploadInfo.completeUrl,
         contentType: uploadInfo.contentType,
+        // P10: if the caller passed a relay endpoint (BLE-e2e ciphertext
+        // path), the queue posts ciphertext there instead of doing the
+        // presigned S3 PUT. The caller is responsible for knowing the
+        // device delivered ciphertext (e.g. by checking a flag in the
+        // chunk header during transferRecording).
+        relay: uploadInfo.relay,
       });
 
       // Wait for upload to complete

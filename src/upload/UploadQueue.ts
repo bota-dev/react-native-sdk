@@ -72,6 +72,8 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
     uploadToken?: string;
     completeUrl?: string;
     contentType?: string;
+    /** P10: BLE-e2e relay upload — see UploadTask.relay. */
+    relay?: { url: string; bearerToken: string };
   }): Promise<UploadTask> {
     const task: UploadTask = {
       id: generateTaskId(),
@@ -82,6 +84,7 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
       uploadToken: params.uploadToken,
       completeUrl: params.completeUrl,
       contentType: params.contentType,
+      relay: params.relay,
       status: 'pending',
       retryCount: 0,
       createdAt: new Date(),
@@ -242,27 +245,49 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
       // Load the audio data
       const audioData = await this.storage.loadRecordingData(task.localPath);
 
-      // Upload to S3
-      await this.uploader.upload(audioData, task.uploadUrl, {
-        contentType: task.contentType,
-        onProgress: (progress) => {
-          this.emit('uploadProgress', task.id, progress);
-        },
-        abortSignal: abortController.signal,
-      });
-
-      // Notify completion (only if completeUrl and uploadToken are provided)
-      if (task.completeUrl && task.uploadToken) {
-        await this.uploader.notifyCompletion(
-          task.completeUrl,
-          task.recordingId,
-          task.uploadToken
-        );
-      } else {
-        log.debug('Skipping completion notification (custom completion flow)', {
+      if (task.relay) {
+        // P10 BLE-e2e relay path: POST ciphertext to backend; backend
+        // decrypts and writes plaintext to S3 server-side. The relay
+        // endpoint also marks the recording uploaded — no separate
+        // completion call needed.
+        log.info('Uploading via BLE-e2e relay', {
           taskId: task.id,
           recordingId: task.recordingId,
         });
+        await this.uploader.relayUpload(
+          audioData,
+          task.relay.url,
+          task.relay.bearerToken,
+          {
+            onProgress: (progress) => {
+              this.emit('uploadProgress', task.id, progress);
+            },
+            abortSignal: abortController.signal,
+          }
+        );
+      } else {
+        // Standard pre-signed S3 PUT
+        await this.uploader.upload(audioData, task.uploadUrl, {
+          contentType: task.contentType,
+          onProgress: (progress) => {
+            this.emit('uploadProgress', task.id, progress);
+          },
+          abortSignal: abortController.signal,
+        });
+
+        // Notify completion (only if completeUrl and uploadToken are provided)
+        if (task.completeUrl && task.uploadToken) {
+          await this.uploader.notifyCompletion(
+            task.completeUrl,
+            task.recordingId,
+            task.uploadToken
+          );
+        } else {
+          log.debug('Skipping completion notification (custom completion flow)', {
+            taskId: task.id,
+            recordingId: task.recordingId,
+          });
+        }
       }
 
       // Mark as completed

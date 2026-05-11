@@ -136,8 +136,11 @@ export interface UploadTask {
  * Transfer packet from device
  */
 export interface TransferPacket {
-  /** Packet type: data, eof, paused (streaming), or error */
-  type: 'data' | 'eof' | 'paused' | 'error';
+  /** Packet type. P10 adds:
+   *   - 'e2e_start'      session header (ephemeral_pk + salt)
+   *   - 'encrypted_data' DATA with ciphertext + tag payload
+   *   - 'encrypted_eof'  EOF for an encrypted transfer (no CRC) */
+  type: 'data' | 'eof' | 'paused' | 'error' | 'e2e_start' | 'encrypted_data' | 'encrypted_eof';
   /** Sequence number */
   sequenceNumber: number;
   /** Audio data (for data packets) */
@@ -148,6 +151,12 @@ export interface TransferPacket {
   bytesSent?: number;
   /** Error code (for error packets) */
   errorCode?: number;
+  /** P10 e2e_start only: ephemeral X25519 pubkey (32 bytes). */
+  e2eEphemeralPk?: Uint8Array;
+  /** P10 e2e_start only: session salt (4 bytes) for per-chunk nonce. */
+  e2eSalt?: Uint8Array;
+  /** P10 encrypted_data only: full payload (ciphertext + 16-byte tag). */
+  e2eChunk?: Uint8Array;
 }
 
 /**

@@ -48,6 +48,13 @@ interface TransferState {
   checksum?: number;
   subscription?: Subscription;
   timeoutId?: number;
+  /** P10: set when device sent BOTA_PKT_TYPE_E2E_START at transfer start.
+   *  When true, `chunks` holds ciphertext+tag pairs (per chunk) and the
+   *  final assembled body is the streaming-AEAD wire format the backend
+   *  `/upload-relay` endpoint decrypts. */
+  e2eEncrypted?: boolean;
+  e2eEphemeralPk?: Buffer;
+  e2eSalt?: Buffer;
 }
 
 /**
@@ -168,7 +175,7 @@ export class ProtocolHandler {
     deviceId: string,
     recordingUuid: string,
     onProgress?: TransferProgressCallback
-  ): Promise<Buffer> {
+  ): Promise<{ data: Buffer; e2eEncrypted: boolean }> {
     if (!this.bleManager.isConnected(deviceId)) {
       throw DeviceError.notConnected(deviceId);
     }
@@ -262,9 +269,10 @@ export class ProtocolHandler {
               log.info('Transfer completed', {
                 recordingUuid,
                 size: audioData.length,
+                e2eEncrypted: !!state.e2eEncrypted,
               });
 
-              resolve(audioData);
+              resolve({ data: audioData, e2eEncrypted: !!state.e2eEncrypted });
             }
           } catch (error) {
             cleanup();
@@ -318,6 +326,38 @@ export class ProtocolHandler {
         state.isComplete = true;
         break;
 
+      /* P10 BLE-e2e streaming AEAD. The session-start packet carries the
+       * device's ephemeral X25519 pubkey + 4-byte salt. Subsequent
+       * encrypted-data packets each hold one ciphertext+tag chunk; we
+       * frame them with a 2-byte length prefix so the backend can walk
+       * the body without a separate per-chunk count. */
+      case 'e2e_start':
+        state.e2eEncrypted = true;
+        state.e2eEphemeralPk = packet.e2eEphemeralPk
+          ? Buffer.from(packet.e2eEphemeralPk)
+          : undefined;
+        state.e2eSalt = packet.e2eSalt
+          ? Buffer.from(packet.e2eSalt)
+          : undefined;
+        break;
+
+      case 'encrypted_data':
+        if (packet.e2eChunk) {
+          const ct = Buffer.from(packet.e2eChunk);
+          const plainLen = ct.length - 16;  // last 16 bytes are the auth tag
+          const lenHdr = Buffer.alloc(2);
+          lenHdr.writeUInt16BE(plainLen);
+          state.chunks.push(Buffer.concat([lenHdr, ct]));
+          state.totalBytes += plainLen;
+          onProgress?.(state.totalBytes);
+        }
+        break;
+
+      case 'encrypted_eof':
+        // CRC field unused — per-chunk auth tags cover integrity.
+        state.isComplete = true;
+        break;
+
       case 'error':
         throw TransferError.deviceError(
           state.recordingUuid,
@@ -346,9 +386,26 @@ export class ProtocolHandler {
   }
 
   /**
-   * Assemble audio data from received packets
+   * Assemble audio data from received packets.
+   *
+   * Plaintext path: concatenate chunks back-to-back.
+   *
+   * P10 encrypted path: prepend the streaming-AEAD header (ephemeral_pk[32]
+   * + salt[4]); each accumulated chunk already includes its 2-byte
+   * length prefix and 16-byte auth tag so the body matches the wire
+   * format that `bleE2EService.decrypt()` parses server-side.
    */
   private assembleAudioData(state: TransferState): Buffer {
+    if (state.e2eEncrypted) {
+      if (!state.e2eEphemeralPk || !state.e2eSalt) {
+        throw new TransferError(
+          'E2E transfer missing session header',
+          'E2E_NO_SESSION',
+          state.recordingUuid
+        );
+      }
+      return Buffer.concat([state.e2eEphemeralPk, state.e2eSalt, ...state.chunks]);
+    }
     return Buffer.concat(state.chunks);
   }
 

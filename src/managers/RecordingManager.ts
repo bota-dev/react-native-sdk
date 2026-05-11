@@ -167,7 +167,7 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
       };
 
       // Stage: Transferring from device
-      const audioData = await this.protocolHandler.transferRecording(
+      const { data: audioData, e2eEncrypted } = await this.protocolHandler.transferRecording(
         device.id,
         recording.uuid,
         (_bytesReceived, _totalBytes) => {
@@ -197,7 +197,19 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
         totalBytes: audioData.length,
       };
 
-      // Queue for upload (this will process in background)
+      // Queue for upload (this will process in background).
+      // P10: when the device delivered the recording as encrypted chunks
+      // (BOTA_PKT_TYPE_E2E_START + ENCRYPTED_DATA + ENCRYPTED_EOF), the
+      // assembled body is the streaming-AEAD wire format that
+      // `bleE2EService.decrypt()` parses server-side. Route it to the
+      // /upload-relay endpoint; the caller MUST supply uploadInfo.relay
+      // when it provisioned a backend pubkey on the device.
+      const useRelay = e2eEncrypted && !!uploadInfo.relay;
+      if (e2eEncrypted && !uploadInfo.relay) {
+        log.warn('Device delivered ciphertext but caller did not provide UploadInfo.relay — upload will go to S3 presigned and fail to decrypt', {
+          recordingUuid: recording.uuid,
+        });
+      }
       const task = await this.uploadQueue.enqueue({
         recordingId: uploadInfo.recordingId,
         deviceId: device.id,
@@ -206,12 +218,7 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
         uploadToken: uploadInfo.uploadToken,
         completeUrl: uploadInfo.completeUrl,
         contentType: uploadInfo.contentType,
-        // P10: if the caller passed a relay endpoint (BLE-e2e ciphertext
-        // path), the queue posts ciphertext there instead of doing the
-        // presigned S3 PUT. The caller is responsible for knowing the
-        // device delivered ciphertext (e.g. by checking a flag in the
-        // chunk header during transferRecording).
-        relay: uploadInfo.relay,
+        relay: useRelay ? uploadInfo.relay : undefined,
       });
 
       // Wait for upload to complete

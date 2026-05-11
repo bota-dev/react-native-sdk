@@ -159,6 +159,14 @@ export const NETWORK_WARMUP_POLL_INTERVAL = 2000;
 export const PACKET_TYPE_DATA = 0x01;
 export const PACKET_TYPE_EOF = 0x02;
 export const PACKET_TYPE_PAUSED = 0x03; // Streaming mode: caught up to recording write position
+/** P10: session-start packet for BLE-e2e streaming AEAD. Carries the
+ *  device's ephemeral X25519 pubkey + 4-byte salt for nonce derivation.
+ *  Sent once at transfer start; followed by encrypted-data + encrypted-eof. */
+export const PACKET_TYPE_E2E_START = 0x05;
+/** DATA packet with encryption bit set: payload is [ciphertext][16-byte tag]. */
+export const PACKET_TYPE_ENCRYPTED_DATA = 0x81;
+/** EOF packet with encryption bit set: CRC field is unused (auth tags cover integrity). */
+export const PACKET_TYPE_ENCRYPTED_EOF = 0x82;
 export const PACKET_TYPE_ERROR = 0xff;
 
 // ACK types (App → Device)

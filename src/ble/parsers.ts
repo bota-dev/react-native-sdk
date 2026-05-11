@@ -52,6 +52,9 @@ import {
   PACKET_TYPE_DATA,
   PACKET_TYPE_EOF,
   PACKET_TYPE_PAUSED,
+  PACKET_TYPE_E2E_START,
+  PACKET_TYPE_ENCRYPTED_DATA,
+  PACKET_TYPE_ENCRYPTED_EOF,
   PACKET_TYPE_ERROR,
   CAP_BLE_SYNC,
   CAP_WIFI_UPLOAD,
@@ -454,6 +457,35 @@ export function parseTransferPacket(data: Buffer): TransferPacket {
         type: 'paused',
         sequenceNumber,
         bytesSent: data.length >= 7 ? data.readUInt32LE(3) : undefined,
+      };
+
+    case PACKET_TYPE_E2E_START: {
+      // [type=0x05, eph_pk[32], salt[4]] = 37 bytes. P10 streaming AEAD session.
+      if (data.length < 1 + 32 + 4) {
+        throw new Error(`E2E_START packet too short: ${data.length}`);
+      }
+      return {
+        type: 'e2e_start',
+        sequenceNumber: 0,
+        e2eEphemeralPk: data.slice(1, 33),
+        e2eSalt: data.slice(33, 37),
+      };
+    }
+
+    case PACKET_TYPE_ENCRYPTED_DATA:
+      // Same header as DATA: [type, seq(LE), wire_len(LE), ciphertext..., tag(16)].
+      // wire_len at bytes 3..4 covers the entire payload (ciphertext + tag).
+      return {
+        type: 'encrypted_data',
+        sequenceNumber,
+        e2eChunk: data.slice(5),
+      };
+
+    case PACKET_TYPE_ENCRYPTED_EOF:
+      // [type=0x82, seq(LE), 0u32]. CRC field unused — per-chunk tags cover integrity.
+      return {
+        type: 'encrypted_eof',
+        sequenceNumber,
       };
 
     case PACKET_TYPE_ERROR:

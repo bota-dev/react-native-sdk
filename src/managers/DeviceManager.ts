@@ -107,6 +107,18 @@ interface ReconnectInfo {
   deviceType: DeviceType;
 }
 
+/**
+ * Async fetcher invoked by {@link DeviceManager.requestStartRecording} and
+ * {@link DeviceManager.requestStopRecording} when called with the fetcher
+ * shape (instead of a pre-fetched grant blob). The SDK reads the device's
+ * P6 session nonce, then calls this with the nonce so the caller can bind
+ * the backend-issued grant to the current BLE session.
+ *
+ * @param nonce_d 16-byte hex session nonce, or null on pre-P6 firmware.
+ * @returns Base64-encoded 171-byte HPKE grant blob.
+ */
+export type RecordingGrantFetcher = (nonce_d: string | null) => Promise<string>;
+
 /** Options for {@link DeviceManager.provision}. */
 export interface ProvisionOptions {
   /**
@@ -1134,16 +1146,27 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
   /**
    * Request to start recording on a device remotely.
-   * Writes the HPKE grant blob to the device, then sends the start opcode.
    *
-   * @param device - Connected device
-   * @param grantBlob - Base64-encoded 171-byte HPKE grant blob from backend
-   * @param _options - Optional recording options (for future use)
+   * Two call shapes:
+   * 1. `requestStartRecording(device, grantBlob)` — caller already fetched the
+   *    grant blob (legacy / explicit usage).
+   * 2. `requestStartRecording(device, fetchGrant)` — pass an async fetcher and
+   *    the SDK runs the full P6 atomic sequence: read CHAR_AUTH_NONCE → invoke
+   *    `fetchGrant(nonce)` → write grant → send opcode. This keeps the nonce
+   *    read and grant fetch on a single BLE connection (avoids races where the
+   *    nonce rotates between read and grant write).
+   *
+   * @param device      - Connected device
+   * @param grantOrFetcher - Either a base64-encoded 171-byte grant blob, or an
+   *                         async fetcher invoked with the device's session
+   *                         nonce (16-byte hex, or null on pre-P6 firmware)
+   *                         that returns the grant blob.
+   * @param _options    - Reserved for future use
    * @returns Recording command result
    */
   async requestStartRecording(
     device: ConnectedDevice,
-    grantBlob: string,
+    grantOrFetcher: string | RecordingGrantFetcher,
     _options?: StartRecordingOptions
   ): Promise<{ success: boolean; error?: string }> {
     log.info('Requesting start recording', { deviceId: device.id });
@@ -1153,6 +1176,10 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     }
 
     try {
+      const grantBlob = typeof grantOrFetcher === 'string'
+        ? grantOrFetcher
+        : await this.fetchGrantWithNonce(device, grantOrFetcher);
+
       // Step 1: deliver grant blob to CHAR_DEVICE_COMMAND
       await this.writeGrant(device, grantBlob);
 
@@ -1177,18 +1204,32 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     }
   }
 
+  /** Read the device session nonce, then invoke the caller's fetcher.
+   *  Encapsulates the P6 nonce-read-then-fetch sequence so callers can pass a
+   *  one-line fetcher to {@link requestStartRecording} / {@link requestStopRecording}. */
+  private async fetchGrantWithNonce(
+    device: ConnectedDevice,
+    fetcher: RecordingGrantFetcher
+  ): Promise<string> {
+    const nonce = await this.readAuthNonce(device).catch(() => null);
+    return fetcher(nonce);
+  }
+
   /**
    * Request to stop recording on a device remotely.
-   * Writes the HPKE grant blob to the device, then sends the stop opcode.
    *
-   * @param device - Connected device
-   * @param grantBlob - Base64-encoded 171-byte HPKE grant blob from backend
-   * @param _options - Optional stop options (for future use)
+   * Same two call shapes as {@link requestStartRecording} — accepts either a
+   * pre-fetched grant blob or a fetcher that the SDK invokes after reading
+   * the device's session nonce.
+   *
+   * @param device         - Connected device
+   * @param grantOrFetcher - Base64 grant blob OR a fetcher (see {@link RecordingGrantFetcher})
+   * @param _options       - Reserved for future use
    * @returns Recording command result
    */
   async requestStopRecording(
     device: ConnectedDevice,
-    grantBlob: string,
+    grantOrFetcher: string | RecordingGrantFetcher,
     _options?: StopRecordingOptions
   ): Promise<{ success: boolean; error?: string }> {
     log.info('Requesting stop recording', { deviceId: device.id });
@@ -1198,6 +1239,10 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     }
 
     try {
+      const grantBlob = typeof grantOrFetcher === 'string'
+        ? grantOrFetcher
+        : await this.fetchGrantWithNonce(device, grantOrFetcher);
+
       // Step 1: deliver grant blob to CHAR_DEVICE_COMMAND
       await this.writeGrant(device, grantBlob);
 

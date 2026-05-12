@@ -83,9 +83,19 @@ Since P5, the firmware rejects unauthenticated factory-reset opcodes and **rejec
 
 ### Live BLE Streaming — Trailer Handling
 
-Firmware now emits the OGG/Opus post-fclose tail (final-page flush + EOS page) as additional DATA packets at the end of a live streaming transfer, before the EOF packet. The SDK's existing DATA-packet handler appends them transparently — no SDK change required for byte-equivalence with the device's SD file. The EOF packet's CRC32 covers the trailer bytes too. See firmware `le_trans_data.c` "Post-stream trailer drain" block.
+Firmware emits the OGG/Opus post-fclose tail (final-page flush + EOS page) as additional DATA packets at the end of a live streaming transfer, before the EOF packet. The SDK's existing DATA-packet handler appends them transparently — no SDK change required for byte-equivalence with the device's SD file. The EOF packet's CRC32 covers the trailer bytes too. See firmware `le_trans_data.c` "Post-stream trailer drain" block.
 
-**Open follow-up (server-side integrity verification on BLE-streamed recordings):** the SDK currently does not read or forward `content_sha256` from the device on the BLE path. The device computes a SHA-256 over the SD file at recording stop (`recording_compute_file_sha256`) and exposes it via `recording_get_last_sha256_hex()` in firmware, but there is no BLE characteristic or packet that surfaces it to the SDK today. To enable end-to-end integrity verification on BLE-streamed uploads (parity with the WiFi/4G direct-upload path), the SDK would need to: (1) read `content_sha256` from the device after the streaming transfer completes (new BLE read or appended EOF payload), and (2) include it in the `/v1/recordings/:id/upload-complete` or `/finalize` call dispatched from the host app. Without this, BLE-streamed recordings now have structurally complete S3 objects (trailer fix above) but are not server-verified.
+### BLE SHA-256 — End-to-End Integrity Verification
+
+Both transfer paths (`transferRecording` and `streamTransfer`) recognize a new `BOTA_PKT_TYPE_SHA256 = 0x04` packet emitted by firmware right after EOF on `CHAR_RECORDING_TRANSFER` (33 bytes: `[0x04, sha256[32]]`). Wire-up:
+
+- **EOF holds the resolve.** When EOF arrives in `ProtocolHandler`, the transfer is **not** finalized immediately — `state.eofReceived = true` and a 200ms `SHA256_GRACE_WINDOW_MS` timer starts. Either the SHA packet arrives within the window (timer cancelled, finalize immediately with the hash) OR the timer fires (finalize without a hash, pre-P9.F2 firmware path).
+- **`transferRecording`** returns `{ data, e2eEncrypted, sha256? }` (hex string, 64 chars).
+- **`streamTransfer`** returns `{ totalBytes, checksum, sha256? }`.
+- **`RecordingManager.syncRecording`** emits `contentSha256` on the `transferring` and `completed` stages of its `SyncProgress` generator AND forwards it on the upload-task so the SDK's `notifyCompletion` includes `content_sha256` in the `/upload-complete` POST body.
+- **Backward-compat both directions**: old SDKs ignore the unknown 0x04 packet type; new SDK on old firmware sees the 200ms grace window time out and resolves without a hash (no integrity verify, same as before). E2E relay path (P10) suppresses SHA forwarding — backend decrypts and hashes plaintext on receipt, no client SHA in scope.
+
+End-to-end: device computes SHA over SD bytes at `recording_stop` → emits over BLE after EOF → SDK forwards in upload-complete body → backend integrity-verify worker (P9.B) compares against a server-side SHA of the assembled S3 object → mismatch sets `status=integrity_failure`. This closes the BLE gap and gives parity with the WiFi/4G direct-upload path.
 
 ### Firmware Updates (OTA)
 

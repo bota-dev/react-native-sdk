@@ -36,6 +36,12 @@ import { logger } from '../utils/logger';
 
 const log = logger.tag('ProtocolHandler');
 
+/** Time to wait after EOF for the optional P9.F2 SHA-256 packet to arrive before
+ *  finalizing the transfer. Firmware sends it back-to-back with EOF on the same
+ *  characteristic; a tight window keeps the resolve fast on old firmware (which
+ *  never sends one) while reliably catching the packet on new firmware. */
+const SHA256_GRACE_WINDOW_MS = 200;
+
 /**
  * Transfer state for tracking ongoing transfers
  */
@@ -55,6 +61,15 @@ interface TransferState {
   e2eEncrypted?: boolean;
   e2eEphemeralPk?: Buffer;
   e2eSalt?: Buffer;
+  /** P9.F2 BLE integrity hash. Set when device sent BOTA_PKT_TYPE_SHA256 after
+   *  EOF. Forwarded to the backend on /upload-complete so the server can verify
+   *  the assembled S3 object matches the file the device hashed. */
+  sha256Hex?: string;
+  /** Set to true when EOF arrived. SHA (if any) arrives ≤200ms after EOF; we
+   *  hold completion until SHA lands or the grace window expires. */
+  eofReceived?: boolean;
+  /** Timer that closes the EOF-SHA grace window if no SHA packet arrives. */
+  shaGraceTimerId?: number;
 }
 
 /**
@@ -175,7 +190,7 @@ export class ProtocolHandler {
     deviceId: string,
     recordingUuid: string,
     onProgress?: TransferProgressCallback
-  ): Promise<{ data: Buffer; e2eEncrypted: boolean }> {
+  ): Promise<{ data: Buffer; e2eEncrypted: boolean; sha256?: string }> {
     if (!this.bleManager.isConnected(deviceId)) {
       throw DeviceError.notConnected(deviceId);
     }
@@ -204,6 +219,7 @@ export class ProtocolHandler {
 
       const cleanup = () => {
         if (state.timeoutId) clearTimeout(state.timeoutId);
+        if (state.shaGraceTimerId) clearTimeout(state.shaGraceTimerId);
         state.subscription?.remove();
         this.activeTransfers.delete(recordingUuid);
       };
@@ -214,6 +230,60 @@ export class ProtocolHandler {
           cleanup();
           reject(TransferError.timeout(recordingUuid));
         }, TRANSFER_PACKET_TIMEOUT);
+      };
+
+      /** Finalize the transfer: CRC-verify, ACK, resolve. Idempotent — guarded
+       *  by state.isComplete so EOF-then-SHA and grace-timeout both invoke it
+       *  safely. Called by complete() once SHA has landed (or after the grace
+       *  window expires with no SHA). */
+      const finalize = async (): Promise<void> => {
+        if (state.isComplete) return;
+        state.isComplete = true;
+        if (state.shaGraceTimerId) {
+          clearTimeout(state.shaGraceTimerId);
+          state.shaGraceTimerId = undefined;
+        }
+        if (state.timeoutId) clearTimeout(state.timeoutId);
+
+        try {
+          const audioData = this.assembleAudioData(state);
+
+          if (state.checksum !== undefined) {
+            const calculatedChecksum = this.calculateCrc32(audioData);
+            log.debug('CRC32 check', {
+              recordingUuid,
+              device: `0x${state.checksum.toString(16).padStart(8, '0')}`,
+              calculated: `0x${calculatedChecksum.toString(16).padStart(8, '0')}`,
+              assembledBytes: audioData.length,
+              match: calculatedChecksum === state.checksum,
+            });
+            if (calculatedChecksum !== state.checksum) {
+              await this.sendAck(deviceId, 'nack', 0);
+              cleanup();
+              reject(TransferError.checksumMismatch(recordingUuid));
+              return;
+            }
+          }
+
+          await this.sendAck(deviceId, 'ack', 0);
+          cleanup();
+
+          log.info('Transfer completed', {
+            recordingUuid,
+            size: audioData.length,
+            e2eEncrypted: !!state.e2eEncrypted,
+            sha256Prefix: state.sha256Hex?.slice(0, 16) ?? null,
+          });
+
+          resolve({
+            data: audioData,
+            e2eEncrypted: !!state.e2eEncrypted,
+            sha256: state.sha256Hex,
+          });
+        } catch (error) {
+          cleanup();
+          reject(error);
+        }
       };
 
       // Subscribe to transfer data notifications
@@ -232,47 +302,34 @@ export class ProtocolHandler {
             }
 
             const packet = parseTransferPacket(data);
+
+            // 'sha256' packet arrives ≤200ms after EOF on P9.F2+ firmware.
+            // Store it and finalize immediately — no need to wait for the grace timer.
+            if (packet.type === 'sha256' && packet.sha256) {
+              state.sha256Hex = Buffer.from(packet.sha256).toString('hex');
+              log.debug('SHA-256 packet received', {
+                recordingUuid,
+                sha256Prefix: state.sha256Hex.slice(0, 16),
+              });
+              if (state.eofReceived) {
+                await finalize();
+              }
+              return;
+            }
+
             this.handleTransferPacket(state, packet, onProgress);
 
-            if (state.isComplete) {
-              // Cancel the per-packet timeout — all data is received.
-              // assembleAudioData() + calculateCrc32() block the JS thread for
-              // several seconds on large files; without this the timer fires at
-              // the first await (sendAck) and rejects the already-resolved promise.
-              if (state.timeoutId) clearTimeout(state.timeoutId);
-              // Assemble the audio data
-              const audioData = this.assembleAudioData(state);
-
-              // Verify checksum if available
-              if (state.checksum !== undefined) {
-                const calculatedChecksum = this.calculateCrc32(audioData);
-                log.debug('CRC32 check', {
-                  recordingUuid,
-                  device: `0x${state.checksum.toString(16).padStart(8, '0')}`,
-                  calculated: `0x${calculatedChecksum.toString(16).padStart(8, '0')}`,
-                  assembledBytes: audioData.length,
-                  match: calculatedChecksum === state.checksum,
-                });
-                if (calculatedChecksum !== state.checksum) {
-                  // CRC mismatch — send NACK and fail
-                  await this.sendAck(deviceId, 'nack', 0);
+            if (state.eofReceived && !state.isComplete && !state.shaGraceTimerId) {
+              // EOF landed. Open a short grace window for the optional SHA packet
+              // that P9.F2 firmware sends right after EOF. Old firmware never
+              // sends it — the timer fires and we finalize without a hash.
+              state.shaGraceTimerId = setTimeout(() => {
+                state.shaGraceTimerId = undefined;
+                finalize().catch((err) => {
                   cleanup();
-                  reject(TransferError.checksumMismatch(recordingUuid));
-                  return;
-                }
-              }
-
-              // CRC OK — send final ACK to confirm transfer
-              await this.sendAck(deviceId, 'ack', 0);
-              cleanup();
-
-              log.info('Transfer completed', {
-                recordingUuid,
-                size: audioData.length,
-                e2eEncrypted: !!state.e2eEncrypted,
-              });
-
-              resolve({ data: audioData, e2eEncrypted: !!state.e2eEncrypted });
+                  reject(err);
+                });
+              }, SHA256_GRACE_WINDOW_MS);
             }
           } catch (error) {
             cleanup();
@@ -323,7 +380,9 @@ export class ProtocolHandler {
 
       case 'eof':
         state.checksum = packet.checksum;
-        state.isComplete = true;
+        // Don't set isComplete here — finalize() runs after a brief grace
+        // window so the optional SHA-256 packet (P9.F2 firmware) can land.
+        state.eofReceived = true;
         break;
 
       /* P10 BLE-e2e streaming AEAD. The session-start packet carries the
@@ -354,8 +413,9 @@ export class ProtocolHandler {
         break;
 
       case 'encrypted_eof':
-        // CRC field unused — per-chunk auth tags cover integrity.
-        state.isComplete = true;
+        // CRC field unused — per-chunk auth tags cover integrity. Same SHA-256
+        // grace window as plaintext path.
+        state.eofReceived = true;
         break;
 
       case 'error':
@@ -592,7 +652,7 @@ export class ProtocolHandler {
       onPaused?: (bytesSent: number) => void;
       onResumed?: () => void;
     }
-  ): Promise<{ totalBytes: number; checksum: number }> {
+  ): Promise<{ totalBytes: number; checksum: number; sha256?: string }> {
     if (!this.bleManager.isConnected(deviceId)) {
       throw DeviceError.notConnected(deviceId);
     }
@@ -610,6 +670,7 @@ export class ProtocolHandler {
     return new Promise((resolve, reject) => {
       let totalBytes = 0;
       let isPaused = false;
+      let eofChecksum = 0;
 
       const state: TransferState = {
         recordingUuid,
@@ -623,6 +684,7 @@ export class ProtocolHandler {
 
       const cleanup = () => {
         if (state.timeoutId) clearTimeout(state.timeoutId);
+        if (state.shaGraceTimerId) clearTimeout(state.shaGraceTimerId);
         state.subscription?.remove();
         this.activeTransfers.delete(recordingUuid);
       };
@@ -633,6 +695,35 @@ export class ProtocolHandler {
           cleanup();
           reject(TransferError.timeout(recordingUuid));
         }, ms);
+      };
+
+      /** Streaming-transfer finalize — idempotent; called from SHA arrival or
+       *  the grace-window timer. Sends ACK and resolves. */
+      const finalize = async (): Promise<void> => {
+        if (state.isComplete) return;
+        state.isComplete = true;
+        if (state.shaGraceTimerId) {
+          clearTimeout(state.shaGraceTimerId);
+          state.shaGraceTimerId = undefined;
+        }
+        try {
+          await this.sendAck(deviceId, 'ack', 0);
+          cleanup();
+          log.info('Streaming transfer completed', {
+            recordingUuid,
+            totalBytes,
+            checksum: eofChecksum,
+            sha256Prefix: state.sha256Hex?.slice(0, 16) ?? null,
+          });
+          resolve({
+            totalBytes,
+            checksum: eofChecksum,
+            sha256: state.sha256Hex,
+          });
+        } catch (error) {
+          cleanup();
+          reject(error);
+        }
       };
 
       // Subscribe to transfer data notifications
@@ -672,21 +763,26 @@ export class ProtocolHandler {
                 break;
 
               case 'eof':
-                log.info('Streaming transfer completed', {
-                  recordingUuid,
-                  totalBytes,
-                  checksum: packet.checksum,
-                });
-                // Send final ACK before cleanup — same order as transferRecording.
-                // Calling cleanup() before sendAck() removes the subscription, which
-                // causes the Bluetooth stack to fire the error callback asynchronously during
-                // the sendAck await, rejecting the promise before resolve() runs.
-                await this.sendAck(deviceId, 'ack', 0);
-                cleanup();
-                resolve({
-                  totalBytes,
-                  checksum: packet.checksum ?? 0,
-                });
+                eofChecksum = packet.checksum ?? 0;
+                state.eofReceived = true;
+                if (!state.shaGraceTimerId && !state.isComplete) {
+                  state.shaGraceTimerId = setTimeout(() => {
+                    state.shaGraceTimerId = undefined;
+                    finalize().catch((err) => {
+                      cleanup();
+                      reject(err);
+                    });
+                  }, SHA256_GRACE_WINDOW_MS);
+                }
+                break;
+
+              case 'sha256':
+                if (packet.sha256) {
+                  state.sha256Hex = Buffer.from(packet.sha256).toString('hex');
+                }
+                if (state.eofReceived) {
+                  await finalize();
+                }
                 break;
 
               case 'error':

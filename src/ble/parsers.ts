@@ -52,6 +52,7 @@ import {
   PACKET_TYPE_DATA,
   PACKET_TYPE_EOF,
   PACKET_TYPE_PAUSED,
+  PACKET_TYPE_SHA256,
   PACKET_TYPE_E2E_START,
   PACKET_TYPE_ENCRYPTED_DATA,
   PACKET_TYPE_ENCRYPTED_EOF,
@@ -458,6 +459,20 @@ export function parseTransferPacket(data: Buffer): TransferPacket {
         sequenceNumber,
         bytesSent: data.length >= 7 ? data.readUInt32LE(3) : undefined,
       };
+
+    case PACKET_TYPE_SHA256: {
+      // [type=0x04, sha256[32]] = 33 bytes. P9.F2 BLE integrity hash, sent right
+      // after EOF. The SDK forwards the hex value to the backend so the server
+      // can verify the assembled S3 object matches what the device hashed.
+      if (data.length < 1 + 32) {
+        throw new Error(`SHA256 packet too short: ${data.length}`);
+      }
+      return {
+        type: 'sha256',
+        sequenceNumber: 0,
+        sha256: data.slice(1, 33),
+      };
+    }
 
     case PACKET_TYPE_E2E_START: {
       // [type=0x05, eph_pk[32], salt[4]] = 37 bytes. P10 streaming AEAD session.

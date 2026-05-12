@@ -164,6 +164,12 @@ export const NETWORK_WARMUP_POLL_INTERVAL = 2000;
 export const PACKET_TYPE_DATA = 0x01;
 export const PACKET_TYPE_EOF = 0x02;
 export const PACKET_TYPE_PAUSED = 0x03; // Streaming mode: caught up to recording write position
+/** P9.F2: 33-byte SHA-256 packet [0x04, sha256[32]] emitted by firmware right
+ *  after EOF. Lets the SDK forward content_sha256 to the backend via
+ *  /upload-complete, closing the BLE integrity-verification gap (WiFi/4G already
+ *  send this in the finalize/upload-complete body). Old firmware never sends
+ *  this packet; old SDK ignores it — wire-compat both directions. */
+export const PACKET_TYPE_SHA256 = 0x04;
 /** P10: session-start packet for BLE-e2e streaming AEAD. Carries the
  *  device's ephemeral X25519 pubkey + 4-byte salt for nonce derivation.
  *  Sent once at transfer start; followed by encrypted-data + encrypted-eof. */

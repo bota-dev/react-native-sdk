@@ -85,6 +85,12 @@ export interface SyncProgress {
   recordingId?: string;
   /** Error message (set when failed) */
   error?: string;
+  /** P9.F2 BLE integrity hash. SHA-256 (64-char hex) the device computed over
+   *  the SD-file bytes. Set on the `transferring` and `completed` stages when
+   *  P9.F2+ firmware emitted a BOTA_PKT_TYPE_SHA256 packet after EOF. Forward
+   *  to your backend's /upload-complete (or equivalent) so server-side stitch
+   *  can verify integrity. Undefined on pre-P9.F2 firmware. */
+  contentSha256?: string;
 }
 
 /**
@@ -112,6 +118,10 @@ export interface UploadTask {
   completeUrl?: string;
   /** Content type for S3 upload (e.g., 'audio/opus', 'audio/wav') */
   contentType?: string;
+  /** P9.F2 BLE integrity hash. SHA-256 (64-char hex) the device computed over
+   *  the SD-file bytes — forwarded to the host app's backend in the
+   *  /upload-complete body so server-side stitch+SHA can verify integrity. */
+  contentSha256?: string;
   /** P10: when set, the file at `localPath` is BLE-e2e ciphertext that must
    *  be POSTed to this relay endpoint (with the bearer token) instead of
    *  PUT to the presigned `uploadUrl`. The backend decrypts and writes
@@ -140,7 +150,7 @@ export interface TransferPacket {
    *   - 'e2e_start'      session header (ephemeral_pk + salt)
    *   - 'encrypted_data' DATA with ciphertext + tag payload
    *   - 'encrypted_eof'  EOF for an encrypted transfer (no CRC) */
-  type: 'data' | 'eof' | 'paused' | 'error' | 'e2e_start' | 'encrypted_data' | 'encrypted_eof';
+  type: 'data' | 'eof' | 'paused' | 'error' | 'sha256' | 'e2e_start' | 'encrypted_data' | 'encrypted_eof';
   /** Sequence number */
   sequenceNumber: number;
   /** Audio data (for data packets) */
@@ -157,6 +167,8 @@ export interface TransferPacket {
   e2eSalt?: Uint8Array;
   /** P10 encrypted_data only: full payload (ciphertext + 16-byte tag). */
   e2eChunk?: Uint8Array;
+  /** P9.F2 sha256 only: device's SHA-256 over the SD-file bytes (32 raw bytes). */
+  sha256?: Uint8Array;
 }
 
 /**

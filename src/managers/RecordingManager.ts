@@ -167,7 +167,7 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
       };
 
       // Stage: Transferring from device
-      const { data: audioData, e2eEncrypted } = await this.protocolHandler.transferRecording(
+      const { data: audioData, e2eEncrypted, sha256 } = await this.protocolHandler.transferRecording(
         device.id,
         recording.uuid,
         (_bytesReceived, _totalBytes) => {
@@ -180,6 +180,7 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
         progress: 1,
         bytesTransferred: audioData.length,
         totalBytes: recording.fileSizeBytes,
+        contentSha256: sha256,
       };
 
       // Save locally
@@ -218,6 +219,10 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
         uploadToken: uploadInfo.uploadToken,
         completeUrl: uploadInfo.completeUrl,
         contentType: uploadInfo.contentType,
+        // P9.F2: forward the device-emitted SHA-256 (if any) so the host app's
+        // completeUrl receives it. Skip on the E2E relay path — the server
+        // decrypts and hashes plaintext on receipt, no client SHA in scope.
+        contentSha256: useRelay ? undefined : sha256,
         relay: useRelay ? uploadInfo.relay : undefined,
       });
 
@@ -240,6 +245,7 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
         stage: 'completed',
         progress: 1,
         recordingId: uploadInfo.recordingId,
+        contentSha256: sha256,
       };
 
       log.info('Recording sync completed', {

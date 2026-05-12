@@ -72,6 +72,8 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
     uploadToken?: string;
     completeUrl?: string;
     contentType?: string;
+    /** P9.F2: device-computed SHA-256 (hex) forwarded to completeUrl. */
+    contentSha256?: string;
     /** P10: BLE-e2e relay upload — see UploadTask.relay. */
     relay?: { url: string; bearerToken: string };
   }): Promise<UploadTask> {
@@ -84,6 +86,7 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
       uploadToken: params.uploadToken,
       completeUrl: params.completeUrl,
       contentType: params.contentType,
+      contentSha256: params.contentSha256,
       relay: params.relay,
       status: 'pending',
       retryCount: 0,
@@ -280,7 +283,8 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
           await this.uploader.notifyCompletion(
             task.completeUrl,
             task.recordingId,
-            task.uploadToken
+            task.uploadToken,
+            task.contentSha256
           );
         } else {
           log.debug('Skipping completion notification (custom completion flow)', {

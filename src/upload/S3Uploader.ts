@@ -193,9 +193,15 @@ export class S3Uploader {
   async notifyCompletion(
     completeUrl: string,
     recordingId: string,
-    uploadToken: string
+    uploadToken: string,
+    contentSha256?: string
   ): Promise<void> {
-    log.debug('Notifying upload completion', { recordingId });
+    log.debug('Notifying upload completion', { recordingId, hasSha256: !!contentSha256 });
+
+    const body: Record<string, unknown> = { recording_id: recordingId };
+    // P9.F2: include device-computed SHA-256 when present so the host app's
+    // backend can forward it to the Bota API for server-side integrity verify.
+    if (contentSha256) body.content_sha256 = contentSha256;
 
     try {
       const response = await fetch(completeUrl, {
@@ -204,7 +210,7 @@ export class S3Uploader {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${uploadToken}`,
         },
-        body: JSON.stringify({ recording_id: recordingId }),
+        body: JSON.stringify(body),
       });
 
       if (!response.ok) {

@@ -1076,7 +1076,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
       await this.bleManager.writeCharacteristic(
         device.id,
-        SERVICE_BOTA_PROVISIONING,
+        SERVICE_BOTA_AUTH,
         CHAR_DEVICE_CERT,
         chunk
       );

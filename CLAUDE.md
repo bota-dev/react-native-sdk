@@ -69,6 +69,7 @@ BLE recording commands (start/stop) are gated by an HPKE-encrypted, ECDSA-signed
 - `DeviceManager.writeGrant(device, grantBlob)` — writes 171-byte base64 grant blob to `CHAR_DEVICE_COMMAND`. Device decrypts via DHKEM-P256 + HKDF-SHA256 + ChaCha20-Poly1305 and verifies ECDSA-P256 signature.
 - `DeviceManager.requestStartRecording(device, grantBlob)` / `requestStopRecording(device, grantBlob)` — write grant to device, then send opcode to `CHAR_RECORDING_CONTROL`. Grant blob comes from `POST /v1/devices/{id}/grant` (TTL = 300s).
 - Grant blob is opaque at SDK layer — 171 bytes = enc[65] ‖ ct[106].
+- **P6 nonce handling:** `DeviceManager.readAuthNonce()` always issues a fresh BLE read against `CHAR_AUTH_NONCE` (not a cache lookup). The firmware rotates its session nonce on **every** well-formed grant attempt — success AND most rejection paths per the P6 design — so any cached value is stale immediately after the previous grant. An earlier version of this method returned cached values and produced "nonce mismatch / process result: -1" failures on every recording after the first. The NOTIFY-populated cache is kept only as a fallback for hypothetical NOTIFY-only firmware variants where READ isn't supported.
 
 ### P5.B Grant-Gated Deprovision / Factory Reset
 

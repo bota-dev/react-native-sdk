@@ -795,18 +795,13 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       throw DeviceError.notConnected(device.id);
     }
 
-    const cached = this.nonceCache.get(device.id);
-    log.debug('[NONCE] readAuthNonce called', { deviceId: device.id, hasCache: !!cached });
+    log.debug('[NONCE] readAuthNonce called', { deviceId: device.id });
 
-    // Return the nonce received via notification (NOTIFY-only firmware path).
-    // Keep the cached value — nonce is only rotated on successful grant acceptance,
-    // not on rejection, so the same nonce may need to be retried.
-    if (cached) {
-      log.debug('[NONCE] returning cached', { deviceId: device.id, nonce: cached });
-      return cached;
-    }
-
-    // Fall back to direct BLE read (READ | DYNAMIC firmware path)
+    // Always issue a fresh BLE read first. The device rotates its session nonce
+    // on EVERY well-formed grant attempt — both acceptance and most rejection
+    // paths (bad version, nonce mismatch, expired) per firmware P6 design — so
+    // any cached value is stale after the previous grant. Cache is kept only as
+    // a fallback for NOTIFY-only firmware variants where READ isn't supported.
     try {
       const data = await this.bleManager.readCharacteristic(
         device.id,
@@ -820,25 +815,34 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         hexPrefix: data.length > 0 ? data.subarray(0, 4).toString('hex') : '-',
       });
 
-      if (data.length !== 16) {
-        log.warn('[NONCE] unexpected length — returning null', {
-          deviceId: device.id,
-          length: data.length,
-        });
-        return null;
+      if (data.length === 16) {
+        const hex = Buffer.from(data).toString('hex');
+        this.nonceCache.set(device.id, hex);
+        log.debug('[NONCE] returning from direct read', { deviceId: device.id, nonce: hex });
+        return hex;
       }
 
-      const hex = Buffer.from(data).toString('hex');
-      this.nonceCache.set(device.id, hex);
-      log.debug('[NONCE] returning from direct read', { deviceId: device.id, nonce: hex });
-      return hex;
+      log.warn('[NONCE] unexpected length — falling back to cache', {
+        deviceId: device.id,
+        length: data.length,
+      });
     } catch (error) {
-      log.warn('[NONCE] direct read threw — returning null', {
+      log.warn('[NONCE] direct read threw — falling back to cache', {
         deviceId: device.id,
         error: error instanceof Error ? error.message : String(error),
       });
-      return null;
     }
+
+    // Direct read failed — try the NOTIFY-populated cache as a fallback. May be
+    // stale if the device rotated since the last notify, but better than nothing.
+    const cached = this.nonceCache.get(device.id);
+    if (cached) {
+      log.debug('[NONCE] returning cached fallback', { deviceId: device.id, nonce: cached });
+      return cached;
+    }
+
+    log.warn('[NONCE] no nonce available', { deviceId: device.id });
+    return null;
   }
 
   /**

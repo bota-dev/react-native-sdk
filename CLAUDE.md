@@ -80,6 +80,12 @@ Since P5, the firmware rejects unauthenticated factory-reset opcodes and **rejec
 
 **Auto-recovery on rebind:** `DeviceManager.provision(device, token, env, options)` accepts `options.fetchDeprovisionGrant: (nonce_d) => Promise<grant_blob>`. When supplied and the device returns `ALREADY_PAIRED`, the SDK reads the P6 session nonce, invokes the fetcher, performs an opcode-0x05 deprovision, and retries the token write — all on the same BLE connection, transparent to the caller. Without the fetcher, `provision()` throws `ProvisioningError [ALREADY_PAIRED]` so callers can drive recovery manually. See [internal-docs Device-Provisioning §3](../internal-docs/device/Device-Provisioning.md#3-device-rebinding-change-user) for the full sequence diagram.
 
+### Live BLE Streaming — Trailer Handling
+
+Firmware now emits the OGG/Opus post-fclose tail (final-page flush + EOS page) as additional DATA packets at the end of a live streaming transfer, before the EOF packet. The SDK's existing DATA-packet handler appends them transparently — no SDK change required for byte-equivalence with the device's SD file. The EOF packet's CRC32 covers the trailer bytes too. See firmware `le_trans_data.c` "Post-stream trailer drain" block.
+
+**Open follow-up (server-side integrity verification on BLE-streamed recordings):** the SDK currently does not read or forward `content_sha256` from the device on the BLE path. The device computes a SHA-256 over the SD file at recording stop (`recording_compute_file_sha256`) and exposes it via `recording_get_last_sha256_hex()` in firmware, but there is no BLE characteristic or packet that surfaces it to the SDK today. To enable end-to-end integrity verification on BLE-streamed uploads (parity with the WiFi/4G direct-upload path), the SDK would need to: (1) read `content_sha256` from the device after the streaming transfer completes (new BLE read or appended EOF payload), and (2) include it in the `/v1/recordings/:id/upload-complete` or `/finalize` call dispatched from the host app. Without this, BLE-streamed recordings now have structurally complete S3 objects (trailer fix above) but are not server-verified.
+
 ### Firmware Updates (OTA)
 
 The SDK supports app-driven firmware updates via Bluetooth:

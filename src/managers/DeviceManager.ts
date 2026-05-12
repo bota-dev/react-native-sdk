@@ -1080,16 +1080,6 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         CHAR_DEVICE_CERT,
         chunk
       );
-
-      // Inter-chunk pause. At MTU=23 a Cert_D + RSA-2048 privkey blob is
-      // ~187 chunks. JieLi's BLE stack drops the connection under back-to-back
-      // writes at this size; a 20ms gap matches one ~30ms iOS connection
-      // interval and gives the firmware time to drain its inbound queue.
-      // Remove once the device negotiates higher MTU or this char gains
-      // WRITE_WITHOUT_RESPONSE properties.
-      if (i + 1 < totalChunks) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
     }
   }
 

@@ -285,29 +285,22 @@ export class ProtocolHandler {
         }
       );
 
-      // Send start transfer command.
-      // 100 ms gap after subscribeToCharacteristic so iOS can finish dispatching
-      // the CCC-enable write to the peripheral before we issue the START write
-      // to TRANSFER_CONTROL. Without the gap, iOS queues both writes back-to-back
-      // and the JieLi BLE stack on Bota Note drops the connection between
-      // ccc:0037,01 and dispatching the START opcode — observed 2026-05-13.
+      // Send start transfer command
       const command = createTransferCommand('start', recordingUuid);
-      setTimeout(() => {
-        this.bleManager
-          .writeCharacteristic(
-            deviceId,
-            SERVICE_BOTA_STORAGE,
-            CHAR_TRANSFER_CONTROL,
-            command
-          )
-          .then(() => {
-            resetTimeout();
-          })
-          .catch((error) => {
-            cleanup();
-            reject(error);
-          });
-      }, 100);
+      this.bleManager
+        .writeCharacteristic(
+          deviceId,
+          SERVICE_BOTA_STORAGE,
+          CHAR_TRANSFER_CONTROL,
+          command
+        )
+        .then(() => {
+          resetTimeout();
+        })
+        .catch((error) => {
+          cleanup();
+          reject(error);
+        });
     });
   }
 

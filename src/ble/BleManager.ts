@@ -468,19 +468,44 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
   }
 
   /**
-   * Get negotiated MTU for a device
+   * Get negotiated MTU for a device.
+   *
+   * react-native-ble-plx captures `device.mtu` at the moment connectToDevice
+   * resolves, which on iOS happens BEFORE the async ATT-MTU exchange
+   * completes. The cached value stays at the BLE default (23) even after the
+   * peripheral has negotiated up to its real maximum (e.g. 509 on JieLi).
+   * Re-querying the Device through `manager.devices([id])` returns a fresh
+   * object reflecting the current MTU. Falls back to the cached value if the
+   * refresh fails. Polls briefly because the negotiation can lag the connect
+   * by ~1 s; chunked writes that read MTU=23 explode into 200+ chunks and
+   * pairing crawls.
    */
   async getMtu(deviceId: string): Promise<number> {
-    const device = this.connectedDevices.get(deviceId);
-    if (!device) {
+    const cached = this.connectedDevices.get(deviceId);
+    if (!cached) {
       return DEFAULT_MTU;
     }
 
+    // Poll for up to ~2 s for the negotiated MTU to settle above default.
+    for (let attempt = 0; attempt < 10; attempt++) {
+      try {
+        const [fresh] = await this.manager.devices([deviceId]);
+        const mtu = fresh?.mtu ?? cached.mtu ?? DEFAULT_MTU;
+        if (mtu > DEFAULT_MTU) {
+          return mtu;
+        }
+      } catch {
+        // ignore — fall through to retry or default
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+
+    // Settle for whatever the latest read returned, even if still default.
     try {
-      // mtu is a property, not a method in react-native-ble-plx
-      return device.mtu ?? DEFAULT_MTU;
+      const [fresh] = await this.manager.devices([deviceId]);
+      return fresh?.mtu ?? cached.mtu ?? DEFAULT_MTU;
     } catch {
-      return DEFAULT_MTU;
+      return cached.mtu ?? DEFAULT_MTU;
     }
   }
 

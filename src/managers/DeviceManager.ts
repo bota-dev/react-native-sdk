@@ -32,6 +32,7 @@ import {
   CHAR_WIFI_STATUS,
   API_ENDPOINT_DEV,
   API_ENDPOINT_PROD,
+  API_ENDPOINT_GAMMA,
   PROVISIONING_SUCCESS,
   PROVISIONING_INVALID_TOKEN,
   PROVISIONING_STORAGE_ERROR,
@@ -1018,7 +1019,9 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     environment: Environment
   ): Promise<void> {
     const endpointByte =
-      environment === 'production' ? API_ENDPOINT_PROD : API_ENDPOINT_DEV;
+      environment === 'production' ? API_ENDPOINT_PROD :
+      environment === 'gamma'      ? API_ENDPOINT_GAMMA :
+                                     API_ENDPOINT_DEV;
 
     await this.bleManager.writeCharacteristic(
       deviceId,

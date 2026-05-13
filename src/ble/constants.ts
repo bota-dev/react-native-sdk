@@ -137,6 +137,7 @@ export const WIFI_CONFIG_STORAGE_ERROR = 0x04;
 // API endpoint values
 export const API_ENDPOINT_DEV = 0x00;
 export const API_ENDPOINT_PROD = 0x01;
+export const API_ENDPOINT_GAMMA = 0x02;
 
 // Transfer control commands
 export const TRANSFER_CMD_LIST = 0x01;

@@ -233,7 +233,7 @@ export interface ScanOptions {
 /**
  * Environment for API endpoint configuration
  */
-export type Environment = 'development' | 'production';
+export type Environment = 'development' | 'gamma' | 'production';
 
 /**
  * Provisioning result

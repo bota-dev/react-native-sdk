@@ -14,8 +14,8 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'none';
  * SDK configuration options
  */
 export interface BotaConfig {
-  /** Environment for API endpoint (development or production) */
-  environment?: 'development' | 'production';
+  /** Environment for API endpoint (development, gamma, or production) */
+  environment?: 'development' | 'gamma' | 'production';
   /** Enable background sync (default: true) */
   backgroundSyncEnabled?: boolean;
   /** Only upload on WiFi (default: false) */

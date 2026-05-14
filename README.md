@@ -285,7 +285,7 @@ import {
   ProvisioningError,
   TransferError,
   UploadError,
-} from '@bota/react-native-sdk';
+} from '@bota.dev/react-native-sdk';
 
 try {
   await BotaClient.devices.connect(device);

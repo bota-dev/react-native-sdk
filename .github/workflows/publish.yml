@@ -1,4 +1,4 @@
-name: Publish to npm
+name: Publish
 
 on:
   release:
@@ -8,8 +8,9 @@ on:
       - 'v*'
 
 permissions:
-  id-token: write  # Required for OIDC
+  id-token: write   # OIDC for npmjs trusted publisher
   contents: read
+  packages: write   # GitHub Packages publish
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
@@ -21,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js (npmjs.org)
         uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -39,5 +40,37 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Publish
+      # ── Primary publish: public npmjs.org (existing behavior) ──
+      - name: Publish to npmjs.org
         run: npm publish --access public
+
+      # ── Mirror publish: GitHub Packages ──
+      # Why mirror? Bota One depends on `@bota-dev/shared` which is GHPR-only,
+      # so its `.npmrc` maps the `@bota-dev` scope to npm.pkg.github.com.
+      # Without this mirror, `@bota-dev/react-native-sdk` 404s in those repos
+      # because the scope mapping doesn't fall back to the public registry.
+      # See https://github.com/bota-dev/bota-one for the consumer setup.
+      - name: Setup Node.js (GitHub Packages)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@bota-dev'
+
+      # Idempotent: re-running on a tag that's already published should not fail
+      # the workflow. `npm publish` exits 0 only on success; treat 409 (already
+      # exists) as a no-op so manual re-runs of the workflow are safe.
+      - name: Publish to GitHub Packages (idempotent)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if npm publish --registry=https://npm.pkg.github.com 2>&1 | tee /tmp/publish.log; then
+            echo "Published to GitHub Packages."
+          else
+            if grep -qE "EPUBLISHCONFLICT|already exists|Conflict|409" /tmp/publish.log; then
+              echo "Version already on GitHub Packages — skipping (no-op)."
+            else
+              echo "Publish to GitHub Packages failed for non-conflict reason." >&2
+              exit 1
+            fi
+          fi

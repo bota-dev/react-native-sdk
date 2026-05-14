@@ -8,9 +8,9 @@ This file provides context for Claude Code when working in this repository.
 
 ## Repository Overview
 
-This is the **Bota React Native SDK** (`@bota-dev/react-native-sdk`) - a React Native library for communicating with Bota wearable devices via Bluetooth Low Energy (BLE).
+This is the **Bota React Native SDK** (`@bota.dev/react-native-sdk`) - a React Native library for communicating with Bota wearable devices via Bluetooth Low Energy (BLE).
 
-Published on npm: https://www.npmjs.com/package/@bota-dev/react-native-sdk
+Published on npm: https://www.npmjs.com/package/@bota.dev/react-native-sdk
 
 ## Project Structure
 
@@ -221,7 +221,7 @@ cd react-native-sdk && npm install && npm run build
 ## Public API
 
 ```typescript
-import { BotaClient } from '@bota-dev/react-native-sdk';
+import { BotaClient } from '@bota.dev/react-native-sdk';
 
 // Configure
 BotaClient.configure({ logLevel: 'info' });

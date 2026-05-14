@@ -1,4 +1,4 @@
-# Architecture — @bota-dev/react-native-sdk
+# Architecture — @bota.dev/react-native-sdk
 
 Public React Native SDK for Bluetooth communication with Bota wearable devices.
 

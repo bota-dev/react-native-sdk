@@ -1,4 +1,4 @@
-# AGENTS.md — @bota-dev/react-native-sdk
+# AGENTS.md — @bota.dev/react-native-sdk
 
 Public React Native SDK for communicating with Bota wearable devices via Bluetooth. Full context in [CLAUDE.md](CLAUDE.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
 

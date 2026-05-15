@@ -725,6 +725,9 @@ export class StreamingSession extends EventEmitter<StreamingSessionEvents> {
   private _state: StreamingState = 'idle';
   private _bytesReceived = 0;
   private _chunksUploaded = 0;
+  // P10: when device delivers e2e ciphertext, the assembled body POSTs to this
+  // /upload-relay endpoint at EOF (same flow as batch transferRecording).
+  private relay?: { url: string; bearerToken: string };
   private _recordingId?: string;
   private _isAborted = false;
   private _startedAt = 0;
@@ -798,10 +801,12 @@ export class StreamingSession extends EventEmitter<StreamingSessionEvents> {
     // Create backend record immediately — needed to get chunk URLs.
     // If Bluetooth disconnects before data arrives the record is left un-finalized
     // (status: 'streaming') and will not trigger transcription.
-    const { recordingId } = await this.uploadProvider.createRecording({
+    const { recordingId, relay } = await this.uploadProvider.createRecording({
       startedAt: new Date(this._startedAt),
     });
     this._recordingId = recordingId;
+    // P10: stash for the post-EOF e2e-relay upload (if the device delivers ciphertext).
+    this.relay = relay;
 
     // Time-based flush: upload partial chunk even if chunkSize not yet reached
     let flushTimer: number | null = null;
@@ -849,22 +854,67 @@ export class StreamingSession extends EventEmitter<StreamingSessionEvents> {
         return;
       }
 
-      // Flush any remaining buffered data as the final chunk
-      if (this.pendingBytes > 0) {
-        this.enqueueChunkUpload();
+      // P10: e2e-encrypted streaming. The device delivered ciphertext chunks
+      // which cannot be uploaded to per-chunk S3 presigned URLs (S3 sees
+      // opaque bytes, can't decrypt). Instead, POST the assembled relay body
+      // to /upload-relay — exact same wire format and endpoint that batch
+      // transferRecording() uses. Backend decrypts, writes plaintext to S3,
+      // marks recording as uploaded. No separate finalizeRecording call: the
+      // relay endpoint handles the full lifecycle (status → 'uploaded' +
+      // s3_key + file_size_bytes), same as batch.
+      if (result.e2eEncrypted) {
+        if (!result.e2eBody || !this.relay) {
+          throw new Error(
+            !this.relay
+              ? 'E2E streaming requires uploadProvider.createRecording to return relay info (url + bearerToken)'
+              : 'E2E streaming: device delivered e2e packets but assembled body is missing',
+          );
+        }
+        this._state = 'completing';
+        // Mirror S3Uploader.relayUpload's header set (incl. Content-Length —
+        // some RN fetch impls don't auto-set it for Buffer bodies, and the
+        // backend body-parser is strict about octet-stream).
+        const response = await fetch(this.relay.url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/octet-stream',
+            'Content-Length': result.e2eBody.length.toString(),
+            Authorization: `Bearer ${this.relay.bearerToken}`,
+          },
+          body: result.e2eBody,
+        });
+        if (!response.ok) {
+          const errorText = await response.text().catch(() => '');
+          throw new Error(
+            `E2E streaming relay upload failed: ${response.status} ${response.statusText}${errorText ? ` — ${errorText}` : ''}`,
+          );
+        }
+        this._chunksUploaded = 1;
+        this.emitProgress();
+        log.info('E2E streaming relay upload completed', {
+          recordingUuid: this.recordingUuid,
+          recordingId: this._recordingId,
+          relayBodyBytes: result.e2eBody.length,
+          plaintextBytes: this._bytesReceived,
+        });
+      } else {
+        // Flush any remaining buffered data as the final chunk
+        if (this.pendingBytes > 0) {
+          this.enqueueChunkUpload();
+        }
+
+        // Wait for all chunk uploads to finish
+        await this.uploadChain;
+
+        // Finalize — backend stitches chunks and triggers transcription
+        this._state = 'completing';
+        const durationMs = Date.now() - this._startedAt;
+        await this.uploadProvider.finalizeRecording(this._recordingId, {
+          totalChunks: this.chunkIndex,
+          durationMs,
+          fileSizeBytes: this._bytesReceived,
+        });
       }
-
-      // Wait for all chunk uploads to finish
-      await this.uploadChain;
-
-      // Finalize — backend stitches chunks and triggers transcription
-      this._state = 'completing';
-      const durationMs = Date.now() - this._startedAt;
-      await this.uploadProvider.finalizeRecording(this._recordingId, {
-        totalChunks: this.chunkIndex,
-        durationMs,
-        fileSizeBytes: this._bytesReceived,
-      });
 
       // Tell device to delete the transferred file
       await this.protocolHandler.confirmSync(this.device.id, this.recordingUuid);

@@ -652,7 +652,18 @@ export class ProtocolHandler {
       onPaused?: (bytesSent: number) => void;
       onResumed?: () => void;
     }
-  ): Promise<{ totalBytes: number; checksum: number; sha256?: string }> {
+  ): Promise<{
+    totalBytes: number;
+    checksum: number;
+    sha256?: string;
+    /** P10: true when device delivered the stream as e2e-encrypted chunks. */
+    e2eEncrypted?: boolean;
+    /** P10: assembled relay body when e2eEncrypted=true. Same wire format as
+     *  the batch transferRecording() return value — `[ephemeral_pk[32] ||
+     *  salt[4] || (length[2 BE] || ct+tag)*]` — so the streaming session can
+     *  POST it to the existing /upload-relay endpoint without backend changes. */
+    e2eBody?: Buffer;
+  }> {
     if (!this.bleManager.isConnected(deviceId)) {
       throw DeviceError.notConnected(deviceId);
     }
@@ -706,19 +717,50 @@ export class ProtocolHandler {
           clearTimeout(state.shaGraceTimerId);
           state.shaGraceTimerId = undefined;
         }
+        // Belt-and-suspenders: also kill the data timeout. EOF cleared it
+        // earlier; this guards against the race where sendAck-write delays
+        // past the original 2s budget while concurrent BLE writes (heartbeat,
+        // connection-settings) saturate the write queue.
+        if (state.timeoutId) {
+          clearTimeout(state.timeoutId);
+          state.timeoutId = undefined;
+        }
         try {
           await this.sendAck(deviceId, 'ack', 0);
           cleanup();
+
+          // P10: if device delivered e2e-encrypted chunks, assemble the
+          // [eph_pk || salt || chunks...] body so the streaming session can
+          // POST it to /upload-relay (same format batch transferRecording
+          // returns via assembleAudioData).
+          let e2eBody: Buffer | undefined;
+          if (state.e2eEncrypted) {
+            if (!state.e2eEphemeralPk || !state.e2eSalt) {
+              cleanup();
+              reject(new TransferError(
+                'E2E streaming missing ephemeral_pk/salt',
+                'E2E_HEADER_MISSING',
+                recordingUuid
+              ));
+              return;
+            }
+            e2eBody = Buffer.concat([state.e2eEphemeralPk, state.e2eSalt, ...state.chunks]);
+          }
+
           log.info('Streaming transfer completed', {
             recordingUuid,
             totalBytes,
             checksum: eofChecksum,
             sha256Prefix: state.sha256Hex?.slice(0, 16) ?? null,
+            e2eEncrypted: !!state.e2eEncrypted,
+            e2eBodyBytes: e2eBody?.length ?? null,
           });
           resolve({
             totalBytes,
             checksum: eofChecksum,
             sha256: state.sha256Hex,
+            e2eEncrypted: !!state.e2eEncrypted,
+            e2eBody,
           });
         } catch (error) {
           cleanup();
@@ -765,6 +807,14 @@ export class ProtocolHandler {
               case 'eof':
                 eofChecksum = packet.checksum ?? 0;
                 state.eofReceived = true;
+                // No more data packets after EOF — kill the inter-packet timeout.
+                // SHA grace window below is the only deadline that still matters.
+                // Without this, sendAck inside finalize() can race against the 2s
+                // budget when concurrent BLE writes hog the write queue.
+                if (state.timeoutId) {
+                  clearTimeout(state.timeoutId);
+                  state.timeoutId = undefined;
+                }
                 if (!state.shaGraceTimerId && !state.isComplete) {
                   state.shaGraceTimerId = setTimeout(() => {
                     state.shaGraceTimerId = undefined;
@@ -782,6 +832,62 @@ export class ProtocolHandler {
                 }
                 if (state.eofReceived) {
                   await finalize();
+                }
+                break;
+
+              /* P10 BLE-e2e streaming — same wire format as batch (see the
+               * transferRecording switch above for the canonical impl). The
+               * device emits e2e_start once, followed by encrypted_data chunks,
+               * terminated by encrypted_eof. We accumulate framed ciphertext
+               * into state.chunks and resolve with the assembled relay body
+               * at finalize() time. */
+              case 'e2e_start':
+                state.e2eEncrypted = true;
+                state.e2eEphemeralPk = packet.e2eEphemeralPk
+                  ? Buffer.from(packet.e2eEphemeralPk)
+                  : undefined;
+                state.e2eSalt = packet.e2eSalt
+                  ? Buffer.from(packet.e2eSalt)
+                  : undefined;
+                resetTimeout(TRANSFER_PACKET_TIMEOUT);
+                break;
+
+              case 'encrypted_data':
+                if (packet.e2eChunk) {
+                  resetTimeout(TRANSFER_PACKET_TIMEOUT);
+                  if (isPaused) {
+                    isPaused = false;
+                    callbacks.onResumed?.();
+                  }
+                  const ct = Buffer.from(packet.e2eChunk);
+                  const plainLen = ct.length - 16;  // last 16 bytes are AEAD tag
+                  const lenHdr = Buffer.alloc(2);
+                  lenHdr.writeUInt16BE(plainLen);
+                  state.chunks.push(Buffer.concat([lenHdr, ct]));
+                  totalBytes += plainLen;
+                  state.totalBytes = totalBytes;
+                  // Intentionally NOT calling callbacks.onData here — the
+                  // streaming session can't upload encrypted chunks to S3
+                  // presigned URLs individually. It picks up the assembled
+                  // e2eBody from finalize() and POSTs once to /upload-relay.
+                }
+                break;
+
+              case 'encrypted_eof':
+                // CRC field is unused for e2e (per-chunk AEAD tags cover integrity).
+                state.eofReceived = true;
+                if (state.timeoutId) {
+                  clearTimeout(state.timeoutId);
+                  state.timeoutId = undefined;
+                }
+                if (!state.shaGraceTimerId && !state.isComplete) {
+                  state.shaGraceTimerId = setTimeout(() => {
+                    state.shaGraceTimerId = undefined;
+                    finalize().catch((err) => {
+                      cleanup();
+                      reject(err);
+                    });
+                  }, SHA256_GRACE_WINDOW_MS);
                 }
                 break;
 

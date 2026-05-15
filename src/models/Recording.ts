@@ -226,8 +226,24 @@ export interface StreamingSyncProgress {
  * concurrently with Bluetooth transfer — same pattern as firmware WiFi/4G upload.
  */
 export interface StreamingUploadProvider {
-  /** Create backend record at session start to obtain recordingId for chunk URLs */
-  createRecording: (info: { startedAt: Date }) => Promise<{ recordingId: string }>;
+  /**
+   * Create backend record at session start to obtain recordingId for chunk URLs.
+   * Optionally return `relay` info so the SDK can route an e2e-encrypted body
+   * (when the device delivers P10 ciphertext) to the existing /upload-relay
+   * endpoint, instead of trying to push individual encrypted chunks to S3
+   * presigned URLs. Required when the project has a backend pubkey provisioned
+   * and the device emits encrypted streaming packets; without it, the SDK
+   * cannot deliver the recording.
+   */
+  createRecording: (info: { startedAt: Date }) => Promise<{
+    recordingId: string;
+    relay?: {
+      /** Full URL of `/v1/recordings/{id}/upload-relay` (or dashboard variant) */
+      url: string;
+      /** Bearer token for the relay endpoint */
+      bearerToken: string;
+    };
+  }>;
   /** Get pre-signed S3 URL for a specific chunk (1-indexed) */
   getChunkUrl: (recordingId: string, chunkIndex: number) => Promise<string>;
   /** Finalize after all chunks uploaded — triggers backend stitching + transcription */

@@ -228,19 +228,26 @@ export interface StreamingSyncProgress {
 export interface StreamingUploadProvider {
   /**
    * Create backend record at session start to obtain recordingId for chunk URLs.
-   * Optionally return `relay` info so the SDK can route an e2e-encrypted body
-   * (when the device delivers P10 ciphertext) to the existing /upload-relay
-   * endpoint, instead of trying to push individual encrypted chunks to S3
-   * presigned URLs. Required when the project has a backend pubkey provisioned
-   * and the device emits encrypted streaming packets; without it, the SDK
-   * cannot deliver the recording.
+   *
+   * Optionally return `relay` info so the SDK can route P10 e2e-encrypted
+   * chunks (when the device delivers ciphertext) to the per-chunk streaming
+   * relay endpoints instead of trying to push them to S3 presigned URLs.
+   * Required when the project has a backend pubkey provisioned and the
+   * device emits encrypted streaming packets; without it, the SDK cannot
+   * deliver the recording.
+   *
+   * Per-chunk model (foundation for real-time downstream features):
+   *   chunkUrl(seq)  → POST [eph_pk||salt||ct+tag] for seq=0, [ct+tag] for seq>0
+   *   finalizeUrl    → POST { total_chunks, ... } once EOF received
    */
   createRecording: (info: { startedAt: Date }) => Promise<{
     recordingId: string;
     relay?: {
-      /** Full URL of `/v1/recordings/{id}/upload-relay` (or dashboard variant) */
-      url: string;
-      /** Bearer token for the relay endpoint */
+      /** Build the per-chunk POST URL for chunk `seq` (0-indexed). */
+      chunkUrl: (seq: number) => string;
+      /** POST URL for the finalize call after all chunks have been POSTed. */
+      finalizeUrl: string;
+      /** Bearer token used for both chunkUrl and finalizeUrl. */
       bearerToken: string;
     };
   }>;

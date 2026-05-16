@@ -725,9 +725,22 @@ export class StreamingSession extends EventEmitter<StreamingSessionEvents> {
   private _state: StreamingState = 'idle';
   private _bytesReceived = 0;
   private _chunksUploaded = 0;
-  // P10: when device delivers e2e ciphertext, the assembled body POSTs to this
-  // /upload-relay endpoint at EOF (same flow as batch transferRecording).
-  private relay?: { url: string; bearerToken: string };
+  // P10: per-chunk relay info. Each encrypted chunk POSTs independently to
+  // chunkUrl(seq) so the backend can decrypt + write to S3 (and, in the
+  // future, fan out to streaming-ASR / translation pipelines) in real time.
+  // finalizeUrl wraps up the session after EOF.
+  private relay?: {
+    chunkUrl: (seq: number) => string;
+    finalizeUrl: string;
+    bearerToken: string;
+  };
+  // P10 e2e session header captured from the device's e2e_start packet.
+  // Prepended only to chunk 0's POST body; chunks 1..N reuse it server-side
+  // (persisted on the recording row at chunk 0).
+  private e2eSessionHeader?: { ephemeralPk: Buffer; salt: Buffer };
+  // Tracks how many encrypted chunks have been successfully POSTed. Drives
+  // total_chunks in the finalize POST.
+  private e2eChunksPosted = 0;
   private _recordingId?: string;
   private _isAborted = false;
   private _startedAt = 0;
@@ -841,6 +854,62 @@ export class StreamingSession extends EventEmitter<StreamingSessionEvents> {
             this._state = 'streaming';
             this.emit('resumed');
           },
+          // P10: capture session header from e2e_start packet. Prepended only
+          // to chunk 0's POST body — backend persists and reuses server-side.
+          onE2eStart: (ephemeralPk, salt) => {
+            this.e2eSessionHeader = { ephemeralPk, salt };
+          },
+          // P10: per-chunk relay POST. Each encrypted chunk POSTs to
+          // chunkUrl(seq) the moment the device emits it (foundation for
+          // streaming ASR / translation). Chunks are serialized through
+          // uploadChain so backend receives them in order — required because
+          // chunk 0 carries the session header and the others reference it.
+          // App never holds plaintext.
+          onE2eChunk: (seq, ciphertextWithTag) => {
+            // Track plaintext size for progress (ct.length includes 16-byte tag).
+            this._bytesReceived += ciphertextWithTag.length - 16;
+            this.emitProgress();
+
+            this.uploadChain = this.uploadChain.then(async () => {
+              if (this._isAborted) return;
+              if (!this.relay) {
+                throw new Error(
+                  'E2E streaming chunk arrived but uploadProvider.createRecording did not return relay info',
+                );
+              }
+              let body: Buffer;
+              if (seq === 0) {
+                if (!this.e2eSessionHeader) {
+                  throw new Error('E2E chunk 0 arrived before e2e_start packet');
+                }
+                body = Buffer.concat([
+                  this.e2eSessionHeader.ephemeralPk,
+                  this.e2eSessionHeader.salt,
+                  ciphertextWithTag,
+                ]);
+              } else {
+                body = ciphertextWithTag;
+              }
+              const response = await fetch(this.relay.chunkUrl(seq), {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/octet-stream',
+                  'Content-Length': body.length.toString(),
+                  Authorization: `Bearer ${this.relay.bearerToken}`,
+                },
+                body,
+              });
+              if (!response.ok) {
+                throw new Error(
+                  `E2E streaming chunk ${seq} upload failed: ${response.status} ${response.statusText}`,
+                );
+              }
+              this.e2eChunksPosted = seq + 1;
+              this._chunksUploaded = this.e2eChunksPosted;
+              this.emitProgress();
+              log.debug('E2E chunk uploaded', { seq, bytes: body.length });
+            });
+          },
         }
       );
 
@@ -854,46 +923,52 @@ export class StreamingSession extends EventEmitter<StreamingSessionEvents> {
         return;
       }
 
-      // P10: e2e-encrypted streaming. The device delivered ciphertext chunks
-      // which cannot be uploaded to per-chunk S3 presigned URLs (S3 sees
-      // opaque bytes, can't decrypt). Instead, POST the assembled relay body
-      // to /upload-relay — exact same wire format and endpoint that batch
-      // transferRecording() uses. Backend decrypts, writes plaintext to S3,
-      // marks recording as uploaded. No separate finalizeRecording call: the
-      // relay endpoint handles the full lifecycle (status → 'uploaded' +
-      // s3_key + file_size_bytes), same as batch.
+      // P10: e2e-encrypted streaming. Per-chunk POSTs already happened during
+      // the BLE transfer via the onE2eChunk callback. Wait for any in-flight
+      // POSTs to drain, then POST finalize so the backend can run the existing
+      // chunk-stitching pipeline (assemble → audio.opus → trigger
+      // auto-transcription / Cleanvoice / integrity verify).
       if (result.e2eEncrypted) {
-        if (!result.e2eBody || !this.relay) {
+        if (!this.relay) {
           throw new Error(
-            !this.relay
-              ? 'E2E streaming requires uploadProvider.createRecording to return relay info (url + bearerToken)'
-              : 'E2E streaming: device delivered e2e packets but assembled body is missing',
+            'E2E streaming requires uploadProvider.createRecording to return relay info',
           );
         }
+        // Wait for all per-chunk POSTs to land at the backend before finalize.
+        await this.uploadChain;
+
+        const expectedChunks = result.e2eChunkCount ?? this.e2eChunksPosted;
+        if (this.e2eChunksPosted !== expectedChunks) {
+          throw new Error(
+            `E2E streaming chunk count mismatch: posted ${this.e2eChunksPosted}, expected ${expectedChunks}`,
+          );
+        }
+
         this._state = 'completing';
-        // Mirror S3Uploader.relayUpload's header set (incl. Content-Length —
-        // some RN fetch impls don't auto-set it for Buffer bodies, and the
-        // backend body-parser is strict about octet-stream).
-        const response = await fetch(this.relay.url, {
+        const durationMs = Date.now() - this._startedAt;
+        const finalizeBody = JSON.stringify({
+          total_chunks: expectedChunks,
+          final_duration_ms: durationMs,
+          final_file_size_bytes: this._bytesReceived,
+        });
+        const finalizeResp = await fetch(this.relay.finalizeUrl, {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/octet-stream',
-            'Content-Length': result.e2eBody.length.toString(),
+            'Content-Type': 'application/json',
+            'Content-Length': finalizeBody.length.toString(),
             Authorization: `Bearer ${this.relay.bearerToken}`,
           },
-          body: result.e2eBody,
+          body: finalizeBody,
         });
-        if (!response.ok) {
+        if (!finalizeResp.ok) {
           throw new Error(
-            `E2E streaming relay upload failed: ${response.status} ${response.statusText}`,
+            `E2E streaming finalize failed: ${finalizeResp.status} ${finalizeResp.statusText}`,
           );
         }
-        this._chunksUploaded = 1;
-        this.emitProgress();
-        log.info('E2E streaming relay upload completed', {
+        log.info('E2E streaming completed', {
           recordingUuid: this.recordingUuid,
           recordingId: this._recordingId,
-          relayBodyBytes: result.e2eBody.length,
+          totalChunks: expectedChunks,
           plaintextBytes: this._bytesReceived,
         });
       } else {

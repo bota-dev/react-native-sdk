@@ -651,6 +651,18 @@ export class ProtocolHandler {
       onData: (sequenceNumber: number, data: Buffer) => void;
       onPaused?: (bytesSent: number) => void;
       onResumed?: () => void;
+      /** P10: called when the device emits the e2e session-start packet (eph_pk
+       *  + salt). Foundation for real-time per-chunk relay — receivers stash
+       *  the header and pass it (with chunkSeq) along with each subsequent
+       *  encrypted chunk to the backend's /upload-relay/chunk/{seq} endpoint. */
+      onE2eStart?: (ephemeralPk: Buffer, salt: Buffer) => void;
+      /** P10: called for every encrypted_data packet. `ciphertextWithTag` is
+       *  the ChaCha20-Poly1305 ciphertext immediately followed by the 16-byte
+       *  AEAD tag. Receivers POST it (chunk 0 prepended with eph_pk + salt by
+       *  the session, chunks 1..N raw) for inline backend decrypt + S3 write.
+       *  `chunkSeq` is monotonically increasing from 0 across the session and
+       *  must be passed to the backend (forms part of the AEAD nonce). */
+      onE2eChunk?: (chunkSeq: number, ciphertextWithTag: Buffer) => void;
     }
   ): Promise<{
     totalBytes: number;
@@ -658,11 +670,8 @@ export class ProtocolHandler {
     sha256?: string;
     /** P10: true when device delivered the stream as e2e-encrypted chunks. */
     e2eEncrypted?: boolean;
-    /** P10: assembled relay body when e2eEncrypted=true. Same wire format as
-     *  the batch transferRecording() return value — `[ephemeral_pk[32] ||
-     *  salt[4] || (length[2 BE] || ct+tag)*]` — so the streaming session can
-     *  POST it to the existing /upload-relay endpoint without backend changes. */
-    e2eBody?: Buffer;
+    /** P10: number of encrypted chunks emitted (0..totalChunks-1 sequence). */
+    e2eChunkCount?: number;
   }> {
     if (!this.bleManager.isConnected(deviceId)) {
       throw DeviceError.notConnected(deviceId);
@@ -708,6 +717,11 @@ export class ProtocolHandler {
         }, ms);
       };
 
+      // Per-chunk seq counter for the e2e callbacks (foundation for real-time
+      // relay — chunks are pushed to backend the moment they arrive, not
+      // accumulated and POSTed at EOF).
+      let e2eChunkCount = 0;
+
       /** Streaming-transfer finalize — idempotent; called from SHA arrival or
        *  the grace-window timer. Sends ACK and resolves. */
       const finalize = async (): Promise<void> => {
@@ -729,22 +743,16 @@ export class ProtocolHandler {
           await this.sendAck(deviceId, 'ack', 0);
           cleanup();
 
-          // P10: if device delivered e2e-encrypted chunks, assemble the
-          // [eph_pk || salt || chunks...] body so the streaming session can
-          // POST it to /upload-relay (same format batch transferRecording
-          // returns via assembleAudioData).
-          let e2eBody: Buffer | undefined;
-          if (state.e2eEncrypted) {
-            if (!state.e2eEphemeralPk || !state.e2eSalt) {
-              cleanup();
-              reject(new TransferError(
-                'E2E streaming missing ephemeral_pk/salt',
-                'E2E_HEADER_MISSING',
-                recordingUuid
-              ));
-              return;
-            }
-            e2eBody = Buffer.concat([state.e2eEphemeralPk, state.e2eSalt, ...state.chunks]);
+          // P10: validate the e2e session was well-formed (header arrived
+          // before any chunks). Chunks themselves are already POSTed by the
+          // session via the onE2eChunk callback; nothing to assemble here.
+          if (state.e2eEncrypted && (!state.e2eEphemeralPk || !state.e2eSalt)) {
+            reject(new TransferError(
+              'E2E streaming missing ephemeral_pk/salt',
+              'E2E_HEADER_MISSING',
+              recordingUuid
+            ));
+            return;
           }
 
           log.info('Streaming transfer completed', {
@@ -753,14 +761,14 @@ export class ProtocolHandler {
             checksum: eofChecksum,
             sha256Prefix: state.sha256Hex?.slice(0, 16) ?? null,
             e2eEncrypted: !!state.e2eEncrypted,
-            e2eBodyBytes: e2eBody?.length ?? null,
+            e2eChunkCount: state.e2eEncrypted ? e2eChunkCount : null,
           });
           resolve({
             totalBytes,
             checksum: eofChecksum,
             sha256: state.sha256Hex,
             e2eEncrypted: !!state.e2eEncrypted,
-            e2eBody,
+            e2eChunkCount: state.e2eEncrypted ? e2eChunkCount : undefined,
           });
         } catch (error) {
           cleanup();
@@ -835,12 +843,12 @@ export class ProtocolHandler {
                 }
                 break;
 
-              /* P10 BLE-e2e streaming — same wire format as batch (see the
-               * transferRecording switch above for the canonical impl). The
-               * device emits e2e_start once, followed by encrypted_data chunks,
-               * terminated by encrypted_eof. We accumulate framed ciphertext
-               * into state.chunks and resolve with the assembled relay body
-               * at finalize() time. */
+              /* P10 BLE-e2e streaming — per-chunk relay model.
+               *
+               * Device emits e2e_start once, followed by encrypted_data chunks
+               * (each fired through onE2eChunk so the streaming session can
+               * POST it to backend in real time — foundation for streaming
+               * transcription / translation). Terminated by encrypted_eof. */
               case 'e2e_start':
                 state.e2eEncrypted = true;
                 state.e2eEphemeralPk = packet.e2eEphemeralPk
@@ -849,6 +857,9 @@ export class ProtocolHandler {
                 state.e2eSalt = packet.e2eSalt
                   ? Buffer.from(packet.e2eSalt)
                   : undefined;
+                if (state.e2eEphemeralPk && state.e2eSalt) {
+                  callbacks.onE2eStart?.(state.e2eEphemeralPk, state.e2eSalt);
+                }
                 resetTimeout(TRANSFER_PACKET_TIMEOUT);
                 break;
 
@@ -861,15 +872,15 @@ export class ProtocolHandler {
                   }
                   const ct = Buffer.from(packet.e2eChunk);
                   const plainLen = ct.length - 16;  // last 16 bytes are AEAD tag
-                  const lenHdr = Buffer.alloc(2);
-                  lenHdr.writeUInt16BE(plainLen);
-                  state.chunks.push(Buffer.concat([lenHdr, ct]));
                   totalBytes += plainLen;
                   state.totalBytes = totalBytes;
-                  // Intentionally NOT calling callbacks.onData here — the
-                  // streaming session can't upload encrypted chunks to S3
-                  // presigned URLs individually. It picks up the assembled
-                  // e2eBody from finalize() and POSTs once to /upload-relay.
+                  // Per-chunk relay: hand the ciphertext to the session
+                  // immediately. The session POSTs each chunk independently
+                  // to /upload-relay/chunk/{seq} so the backend can decrypt
+                  // and stream to S3 / future ASR pipelines as bytes arrive.
+                  // Plaintext never enters app memory.
+                  callbacks.onE2eChunk?.(e2eChunkCount, ct);
+                  e2eChunkCount += 1;
                 }
                 break;
 

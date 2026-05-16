@@ -884,9 +884,8 @@ export class StreamingSession extends EventEmitter<StreamingSessionEvents> {
           body: result.e2eBody,
         });
         if (!response.ok) {
-          const errorText = await response.text().catch(() => '');
           throw new Error(
-            `E2E streaming relay upload failed: ${response.status} ${response.statusText}${errorText ? ` — ${errorText}` : ''}`,
+            `E2E streaming relay upload failed: ${response.status} ${response.statusText}`,
           );
         }
         this._chunksUploaded = 1;

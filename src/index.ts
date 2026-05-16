@@ -70,6 +70,16 @@ export type {
   BotaClientEvents,
 } from './models/Status';
 
+// Sync status — centralized derivation of "what's happening with recordings".
+// Pure function; consumers wire their stores/hooks to call it.
+export { deriveSyncStatus } from './sync/syncStatus';
+export type {
+  SyncStatus,
+  SyncStatusInputs,
+  SyncKind,
+  SyncChannel,
+} from './sync/syncStatus';
+
 // Logger types
 export type { LogHandler, SdkLogEntry, SdkLogLevel } from './utils/logger';
 

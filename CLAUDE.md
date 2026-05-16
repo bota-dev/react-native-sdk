@@ -239,6 +239,34 @@ const recordings = await BotaClient.recordings.listRecordings(connected);
 for await (const progress of BotaClient.recordings.syncRecording(...)) { ... }
 ```
 
+## Sync Status (centralized derivation)
+
+`deriveSyncStatus(inputs)` is a pure function that returns the single canonical "what's happening with the recordings right now" status for any consumer screen — sync banners, pending-recordings rows, recording detail pages, list-item subtitles. Putting it in the SDK means every Bota-platform app (demo, bota-one, and any third-party app) gets identical precedence rules without each one re-deriving from raw flags.
+
+```typescript
+import { deriveSyncStatus, type SyncStatus } from '@bota-dev/react-native-sdk';
+
+const status: SyncStatus = deriveSyncStatus({
+  appDriving: { active: isSyncing, currentIndex, total },
+  device: {
+    syncActive: status.flags.syncActive,
+    isRecording: status.isRecording,
+    wifiConnected: status.flags.wifiConnected,
+    lteConnected: status.flags.lteConnected,
+    wifiAttempting: WIFI_ATTEMPTING.has(status.wifiStatus ?? ''),
+    lteAttempting: LTE_ATTEMPTING.has(status.lteStatus ?? ''),
+    streamingEnabled: connSettings.streaming_enabled ?? false,
+  },
+  bleConnected: bleStatus === 'connected',
+});
+// status.label      → "Uploading 1/3 via 4G..."        (banner)
+// status.shortLabel → "4G uploading 1/3"               (compact row)
+// status.kind       → 'ble_pull' | 'wifi_upload' | 'lte_upload' | 'streaming' | 'waiting_channel' | 'idle'
+// status.channel    → 'Bluetooth' | 'WiFi' | '4G' | undefined
+```
+
+**Precedence** (top wins): live streaming → device-side actual transport (WiFi/4G with `syncActive`) → app-driven BLE pull → waiting for radio → idle. Source: `src/sync/syncStatus.ts`. Consumer-side wiring (subscribing to the right stores/queries) is a thin app-level hook — see `demo/app/lib/hooks/useSyncStatus.ts` and `bota-one/app/lib/hooks/useSyncStatus.ts`.
+
 ## Connection Settings
 
 The SDK provides methods to read/write per-device connection settings via Bluetooth:

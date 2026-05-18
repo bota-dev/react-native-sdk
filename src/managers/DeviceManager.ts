@@ -1342,19 +1342,21 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       // Step 1: deliver grant blob to CHAR_DEVICE_COMMAND
       await this.writeGrant(device, grantBlob);
 
-      // P10 streaming pacing: the three BLE ops below (grant write above,
-      // result-char subscribe, control-opcode write) compete with active
-      // streaming-data notifications on the same BLE link. When recording
-      // streams encrypted chunks, firmware-side diagnostics confirmed every
-      // chunk was handed to the controller with ret=0, but at least one
-      // chunk per stop-recording sequence was lost between controller and
-      // host — consistent with iOS CoreBluetooth dropping a queued NOTIFY
-      // while servicing a burst of host writes in one connection event.
-      // Inserting a ~50ms gap (≥ one BLE connection interval at the typical
-      // 30ms negotiation) gives the controller time to drain pending data
-      // notifications before the next write blocks them. Adds ~100ms to
-      // stop-recording latency, invisible to user, eliminates the dropped
-      // chunk in repro testing.
+      // P10 streaming pacing: the three BLE ops in this handshake (grant
+      // write above, result-char subscribe CCC, control-opcode write below)
+      // compete with active streaming-data notifications on the same
+      // connection. iOS CoreBluetooth's connection-event TX-slot scheduler
+      // can drop a queued NOTIFY while servicing a host write burst —
+      // firmware reports ret=0 on the send but the host SDK's native
+      // callback never sees the packet. Fixed 50ms gap = ~1-2 BLE
+      // connection events at the typical 30ms negotiation, giving the
+      // controller time to drain pending notifications before the next
+      // write blocks them. Adds ~100ms to stop-recording, invisible to
+      // user. NOT a notification-quiescence wait — that was tried and
+      // regressed: during active streaming, notifications arrive every
+      // ~20-30ms so quiescence never triggers, the wait hits its max-cap
+      // (500ms), then fires the write into an even more saturated queue.
+      // See AGENT_DEBUG_HEURISTICS.md §5 for the original failure case.
       await this.delay(50);
 
       // Step 2: subscribe for result, then send opcode to CHAR_RECORDING_CONTROL

@@ -738,9 +738,26 @@ export class StreamingSession extends EventEmitter<StreamingSessionEvents> {
   // Prepended only to chunk 0's POST body; chunks 1..N reuse it server-side
   // (persisted on the recording row at chunk 0).
   private e2eSessionHeader?: { ephemeralPk: Buffer; salt: Buffer };
-  // Tracks how many encrypted chunks have been successfully POSTed. Drives
-  // total_chunks in the finalize POST.
+  // Tracks how many encrypted chunks have been successfully POSTed. Used for
+  // progress display + a sanity check in finalize. NOT used as total_chunks
+  // because BLE notifications can be silently dropped — `e2eMaxSeq + 1` from
+  // the ProtocolHandler return value is the firmware's intended chunk count
+  // and is what the backend stitcher looks for in S3.
   private e2eChunksPosted = 0;
+  // Seqs whose POST to /upload-relay/chunk/{seq} failed (non-OK response or
+  // network error). Chunk 0 failure is still fatal — without it the session
+  // header isn't persisted on the recording row and no other chunk can be
+  // decrypted. Chunks 1..N are tolerated as gaps; backend stitcher skips
+  // them so a transient hiccup surfaces as a brief audio dropout instead of
+  // killing the whole recording.
+  private e2eChunksFailedSeqs: number[] = [];
+  // DEBUG counters: count how many times the onE2eChunk callback fires
+  // (i.e. how many encrypted_data packets the ProtocolHandler dispatched
+  // to this session) and how many times the resulting chain-entry actually
+  // executes. A gap between these and `e2eChunksPosted` + `e2eMaxSeq + 1`
+  // localizes where chunks are leaking. Logged in the finalize WARN.
+  private e2eCallbackCount = 0;
+  private e2eChainRunCount = 0;
   private _recordingId?: string;
   private _isAborted = false;
   private _startedAt = 0;
@@ -870,7 +887,26 @@ export class StreamingSession extends EventEmitter<StreamingSessionEvents> {
             this._bytesReceived += ciphertextWithTag.length - 16;
             this.emitProgress();
 
+            // DEBUG: log every callback entry so we can compare against
+            // (a) firmware's emitted `chunks=N`, (b) the ProtocolHandler's
+            // 'E2E chunk dispatch' count, and (c) the chain-execution log
+            // below. A gap between (a) and this counter = wire/bridge loss.
+            // A gap between this and (c) = the chain skipped an entry.
+            this.e2eCallbackCount += 1;
+            log.debug('E2E chunk callback', {
+              seq,
+              callbackCount: this.e2eCallbackCount,
+              ctLen: ciphertextWithTag.length,
+            });
+
             this.uploadChain = this.uploadChain.then(async () => {
+              this.e2eChainRunCount += 1;
+              log.debug('E2E chunk chain enter', {
+                seq,
+                chainRunCount: this.e2eChainRunCount,
+                aborted: this._isAborted,
+                hasRelay: !!this.relay,
+              });
               if (this._isAborted) return;
               if (!this.relay) {
                 throw new Error(
@@ -890,21 +926,46 @@ export class StreamingSession extends EventEmitter<StreamingSessionEvents> {
               } else {
                 body = ciphertextWithTag;
               }
-              const response = await fetch(this.relay.chunkUrl(seq), {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/octet-stream',
-                  'Content-Length': body.length.toString(),
-                  Authorization: `Bearer ${this.relay.bearerToken}`,
-                },
-                body,
-              });
-              if (!response.ok) {
-                throw new Error(
-                  `E2E streaming chunk ${seq} upload failed: ${response.status} ${response.statusText}`,
-                );
+              // Chunk 0 carries the session header (eph_pk + salt) the backend
+              // persists for decrypting every subsequent chunk. If it fails,
+              // no later chunk is decryptable — fail loud so the app falls
+              // back to batch sync. Chunks 1..N are individually recoverable
+              // as gaps, so we catch + skip them instead of cascading.
+              let response: Awaited<ReturnType<typeof fetch>>;
+              try {
+                response = await fetch(this.relay.chunkUrl(seq), {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/octet-stream',
+                    'Content-Length': body.length.toString(),
+                    Authorization: `Bearer ${this.relay.bearerToken}`,
+                  },
+                  body,
+                });
+              } catch (err) {
+                if (seq === 0) {
+                  throw new Error(
+                    `E2E streaming chunk 0 (session header) upload threw: ${(err as Error).message}`,
+                  );
+                }
+                log.warn('E2E chunk POST threw — recording as gap', { seq, err });
+                this.e2eChunksFailedSeqs.push(seq);
+                return;
               }
-              this.e2eChunksPosted = seq + 1;
+              if (!response.ok) {
+                if (seq === 0) {
+                  throw new Error(
+                    `E2E streaming chunk 0 (session header) upload failed: ${response.status} ${response.statusText}`,
+                  );
+                }
+                log.warn('E2E chunk POST non-OK — recording as gap', {
+                  seq,
+                  status: response.status,
+                });
+                this.e2eChunksFailedSeqs.push(seq);
+                return;
+              }
+              this.e2eChunksPosted += 1;
               this._chunksUploaded = this.e2eChunksPosted;
               this.emitProgress();
               log.debug('E2E chunk uploaded', { seq, bytes: body.length });
@@ -937,11 +998,36 @@ export class StreamingSession extends EventEmitter<StreamingSessionEvents> {
         // Wait for all per-chunk POSTs to land at the backend before finalize.
         await this.uploadChain;
 
-        const expectedChunks = result.e2eChunkCount ?? this.e2eChunksPosted;
-        if (this.e2eChunksPosted !== expectedChunks) {
-          throw new Error(
-            `E2E streaming chunk count mismatch: posted ${this.e2eChunksPosted}, expected ${expectedChunks}`,
-          );
+        // `total_chunks` is the firmware's intended count — every seq from 0
+        // to e2eMaxSeq SHOULD have a chunk in S3. `e2eMaxSeq + 1` is correct
+        // even if some POSTs failed (dropped notifications + transient 5xx);
+        // the backend stitcher treats missing chunks as gaps. Older firmware
+        // (no e2eMaxSeq surfaced) falls back to e2eChunkCount, which assumes
+        // no drops — same behavior as before the gap-tolerant fix.
+        const expectedChunks = (result.e2eMaxSeq !== undefined)
+          ? result.e2eMaxSeq + 1
+          : (result.e2eChunkCount ?? this.e2eChunksPosted);
+        const gapCount = expectedChunks - this.e2eChunksPosted;
+        // Always log the per-stage counters so we can localize where chunks
+        // were lost (wire vs SDK dispatch vs chain vs POST). Compare against
+        // firmware EOF print `chunks=N`:
+        //   - expectedChunks (= e2eMaxSeq + 1)  == N  ⇒ SDK saw every seq
+        //   - protocolHandlerChunks (from PH log) == N  ⇒ ProtocolHandler saw every packet
+        //   - callbackCount        < N  ⇒ leak between PH and RM callback
+        //   - chainRunCount        < callbackCount  ⇒ chain skipped entries
+        //   - posted               < chainRunCount  ⇒ POSTs failed silently
+        const counterReport = {
+          expectedChunks,
+          posted: this.e2eChunksPosted,
+          callbackCount: this.e2eCallbackCount,
+          chainRunCount: this.e2eChainRunCount,
+          gapCount,
+          failedSeqs: this.e2eChunksFailedSeqs,
+        };
+        if (gapCount > 0) {
+          log.warn('E2E streaming finalizing with gaps', counterReport);
+        } else {
+          log.info('E2E streaming counter report (no gaps)', counterReport);
         }
 
         this._state = 'completing';

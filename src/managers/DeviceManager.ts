@@ -1342,8 +1342,25 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       // Step 1: deliver grant blob to CHAR_DEVICE_COMMAND
       await this.writeGrant(device, grantBlob);
 
+      // P10 streaming pacing: the three BLE ops below (grant write above,
+      // result-char subscribe, control-opcode write) compete with active
+      // streaming-data notifications on the same BLE link. When recording
+      // streams encrypted chunks, firmware-side diagnostics confirmed every
+      // chunk was handed to the controller with ret=0, but at least one
+      // chunk per stop-recording sequence was lost between controller and
+      // host — consistent with iOS CoreBluetooth dropping a queued NOTIFY
+      // while servicing a burst of host writes in one connection event.
+      // Inserting a ~50ms gap (≥ one BLE connection interval at the typical
+      // 30ms negotiation) gives the controller time to drain pending data
+      // notifications before the next write blocks them. Adds ~100ms to
+      // stop-recording latency, invisible to user, eliminates the dropped
+      // chunk in repro testing.
+      await this.delay(50);
+
       // Step 2: subscribe for result, then send opcode to CHAR_RECORDING_CONTROL
       const resultPromise = this.waitForRecordingResult(device.id);
+
+      await this.delay(50);
 
       await this.bleManager.writeCharacteristic(
         device.id,
@@ -1361,6 +1378,10 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       log.error('Failed to stop recording', error as Error, { deviceId: device.id });
       throw error;
     }
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**
@@ -1467,14 +1488,36 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       throw DeviceError.notConnected(device.id);
     }
 
-    // CHAR_RECORDING_STATUS is notify-only — the device only sends it as a notification
-    // on state change (not readable via Bluetooth read).
-    // Check pending FIRST: if a recording command is in-flight its result supersedes stale cache.
+    // Pending takes precedence — a start/stop command is in-flight and its
+    // result will supersede whatever the device currently reports.
     const pending = this.recordingStatePending.get(device.id);
     if (pending) return pending;
-    const cached = this.recordingStateCache.get(device.id);
-    if (cached) return cached;
-    return { active: false, initiatedBy: 'local' };
+
+    // Read fresh from BLE. Firmware exposes CHAR_RECORDING_STATUS as
+    // READ | NOTIFY (see le_trans_data.c ATT_CHARACTERISTIC_B07A0002_0003
+    // read handler), so we can ask the device for the current state directly.
+    //
+    // The previous notify-only assumption left the cache empty for physical-
+    // button-started recordings — nothing in the SDK/app subscribes to this
+    // characteristic outside of explicit start/stop command flows. Result:
+    // useBleStreamingSync bailed at "device not recording or UUID unavailable"
+    // and the streaming placeholder recording row was never created.
+    try {
+      const data = await this.bleManager.readCharacteristic(
+        device.id,
+        SERVICE_BOTA_CONTROL,
+        CHAR_RECORDING_STATUS
+      );
+      const state = this.parseRecordingState(data);
+      this.recordingStateCache.set(device.id, state);
+      return state;
+    } catch (err) {
+      log.debug('getRecordingState read failed, using cache', {
+        reason: err instanceof Error ? err.message : 'Unknown',
+      });
+      const cached = this.recordingStateCache.get(device.id);
+      return cached ?? { active: false, initiatedBy: 'local' };
+    }
   }
 
   /**

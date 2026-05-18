@@ -670,8 +670,15 @@ export class ProtocolHandler {
     sha256?: string;
     /** P10: true when device delivered the stream as e2e-encrypted chunks. */
     e2eEncrypted?: boolean;
-    /** P10: number of encrypted chunks emitted (0..totalChunks-1 sequence). */
+    /** P10: number of encrypted_data packets the SDK actually received. */
     e2eChunkCount?: number;
+    /** P10: highest packet.sequenceNumber observed (= firmware's last
+     *  `g_transfer.e2e_chunk_seq`). Equals `e2eChunkCount - 1` when every
+     *  notification arrived in order; less when a notification was silently
+     *  dropped between firmware queue + host receive. Use `(e2eMaxSeq + 1)`
+     *  as the finalize `total_chunks` — that's the firmware's intended count
+     *  the backend stitcher should look for in S3. */
+    e2eMaxSeq?: number;
   }> {
     if (!this.bleManager.isConnected(deviceId)) {
       throw DeviceError.notConnected(deviceId);
@@ -721,6 +728,13 @@ export class ProtocolHandler {
       // relay — chunks are pushed to backend the moment they arrive, not
       // accumulated and POSTed at EOF).
       let e2eChunkCount = 0;
+      // Highest packet.sequenceNumber observed. Backend's AEAD nonce uses this
+      // value (it's the firmware's `g_transfer.e2e_chunk_seq` at encrypt time),
+      // so the chunk-URL seq MUST match it. A silent BLE notification drop
+      // leaves a gap rather than shifting every subsequent chunk's URL down
+      // by one — without that gap-tolerance the first post-drop chunk fails
+      // AEAD and the SDK's serial uploadChain cascades.
+      let e2eMaxSeq = -1;
 
       /** Streaming-transfer finalize — idempotent; called from SHA arrival or
        *  the grace-window timer. Sends ACK and resolves. */
@@ -762,6 +776,11 @@ export class ProtocolHandler {
             sha256Prefix: state.sha256Hex?.slice(0, 16) ?? null,
             e2eEncrypted: !!state.e2eEncrypted,
             e2eChunkCount: state.e2eEncrypted ? e2eChunkCount : null,
+            e2eMaxSeq: state.e2eEncrypted && e2eMaxSeq >= 0 ? e2eMaxSeq : null,
+            e2eDroppedNotifications:
+              state.e2eEncrypted && e2eMaxSeq >= 0
+                ? e2eMaxSeq + 1 - e2eChunkCount
+                : null,
           });
           resolve({
             totalBytes,
@@ -769,6 +788,8 @@ export class ProtocolHandler {
             sha256: state.sha256Hex,
             e2eEncrypted: !!state.e2eEncrypted,
             e2eChunkCount: state.e2eEncrypted ? e2eChunkCount : undefined,
+            e2eMaxSeq:
+              state.e2eEncrypted && e2eMaxSeq >= 0 ? e2eMaxSeq : undefined,
           });
         } catch (error) {
           cleanup();
@@ -874,13 +895,38 @@ export class ProtocolHandler {
                   const plainLen = ct.length - 16;  // last 16 bytes are AEAD tag
                   totalBytes += plainLen;
                   state.totalBytes = totalBytes;
+                  // DEBUG: log every encrypted_data dispatch with running count
+                  // so we can correlate with firmware EOF `chunks=N`. If
+                  // `count === N` we received them all; if not, the gap is on
+                  // the wire / native BLE bridge — not in this dispatch layer.
+                  log.debug('E2E chunk dispatch', {
+                    count: e2eChunkCount + 1,
+                    seq: packet.sequenceNumber,
+                    plainLen,
+                    cipherLen: ct.length,
+                  });
                   // Per-chunk relay: hand the ciphertext to the session
                   // immediately. The session POSTs each chunk independently
                   // to /upload-relay/chunk/{seq} so the backend can decrypt
                   // and stream to S3 / future ASR pipelines as bytes arrive.
                   // Plaintext never enters app memory.
-                  callbacks.onE2eChunk?.(e2eChunkCount, ct);
+                  //
+                  // Use `packet.sequenceNumber` (= firmware's `g_transfer.seq`,
+                  // bumped in lockstep with `g_transfer.e2e_chunk_seq` which
+                  // is the AEAD nonce) — NOT a local counter. If the BLE
+                  // controller silently drops a notification (firmware's
+                  // `app_send_user_data` returns 0 but iOS/Android never
+                  // surfaces the packet), a local counter falls behind the
+                  // firmware nonce by 1 and every chunk after the drop POSTs
+                  // its ciphertext under the wrong URL → backend decrypts
+                  // with the wrong nonce → AEAD tag mismatch on every
+                  // remaining chunk. Using the wire seq makes the URL ↔
+                  // ciphertext binding correct regardless of drops.
+                  callbacks.onE2eChunk?.(packet.sequenceNumber, ct);
                   e2eChunkCount += 1;
+                  if (packet.sequenceNumber > e2eMaxSeq) {
+                    e2eMaxSeq = packet.sequenceNumber;
+                  }
                 }
                 break;
 

@@ -1357,6 +1357,15 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       // ~20-30ms so quiescence never triggers, the wait hits its max-cap
       // (500ms), then fires the write into an even more saturated queue.
       // See AGENT_DEBUG_HEURISTICS.md §5 for the original failure case.
+      //
+      // The nonce-read transaction (inside fetchGrantWithNonce above) can
+      // ALSO cause a drop on its own, separate from these writes. Adding
+      // a 4th delay after the fetch resolves did NOT help — by then the
+      // drop already happened during the read. Pacing the read requires
+      // a delay BEFORE the read, not after. Not currently implemented
+      // because pacing is probabilistic anyway — single-digit-ms timing
+      // jitter in iOS BLE means even correctly-placed delays don't drive
+      // drops to zero.
       await this.delay(50);
 
       // Step 2: subscribe for result, then send opcode to CHAR_RECORDING_CONTROL

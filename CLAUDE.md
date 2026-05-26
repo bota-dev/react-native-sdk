@@ -161,41 +161,46 @@ npm run test         # Jest (currently passes with no tests)
 3. Create a GitHub release with tag `vX.Y.Z`
 4. CI automatically publishes to npm
 
-### Local Development with Demo App
+### Local Development (testing SDK changes in a consuming app)
 
-To test SDK changes locally against the demo app:
-
-```bash
-# 1. Build the SDK
-cd react-native-sdk
-npm run build
-
-# 2. Install locally in the demo app
-cd ../demo/app
-npm install ../../react-native-sdk
-
-# 3. Clear cache and start
-npx expo start --clear
-```
-
-After making further SDK changes, repeat steps 1-2 and reload the app. No native rebuild needed unless you changed native modules.
-
-**IMPORTANT:** You must delete the SDK's `node_modules` before testing locally. When the app symlinks to the SDK source, Metro follows the symlink and resolves dependencies from the SDK's `node_modules` instead of the app's. This causes native module errors (`TurboModuleRegistry`, `NativeModule: AsyncStorage is null`) because the SDK's copies aren't linked to native code.
+Applies to any consuming app — `demo/app` or `bota-one/app`. The SDK's
+`react-native` / `source` package fields point at `src/index.ts`, so **Metro
+transforms the SDK source directly — there is no build step for local
+testing.** Editing a `.ts` file under `src/` and reloading Metro is enough.
 
 ```bash
-# Delete SDK's node_modules (required for local testing)
+# 1. Delete the SDK's node_modules (REQUIRED). When the app symlinks to the
+#    SDK, Metro follows the symlink and resolves react-native-ble-plx /
+#    async-storage from the SDK's copy instead of the app's, which breaks
+#    native modules. The SDK has no node_modules in the local-dev steady state.
 rm -rf react-native-sdk/node_modules
 
-# Re-install when you need to build the SDK again
-cd react-native-sdk && npm install && npm run build
+# 2. Symlink the local SDK into the consuming app (replaces the published
+#    version). Path is the same for both apps:
+cd ../demo/app        # or: cd ../bota-one/app
+npm install ../../react-native-sdk
+
+# 3. Clear Metro's cache and start
+npx expo start --clear     # or the app's npm run start:clear
 ```
+
+After each SDK source change, just **reload Metro** (the symlinked source is
+re-read on `--clear`). Repeat step 2 only if the symlink got clobbered by a
+fresh `npm install` in the app. No native rebuild unless you changed native
+modules.
+
+> **Do NOT `npm run build` / `npm install` inside `react-native-sdk` while an
+> app is consuming it locally.** Building requires the SDK's node_modules, and
+> the moment they exist Metro resolves the app's native deps from there →
+> `TurboModule` / `PlatformConstants` crash. Building is only for publishing
+> (see Release), done in a separate checkout or after unlinking.
 
 **Troubleshooting:**
 - `TurboModuleRegistry.getEnforcing(...): 'PlatformConstants' could not be found` → SDK's `node_modules` still exists, delete it
 - `NativeModule: AsyncStorage is null` → same cause, delete SDK's `node_modules`
-- `Unable to resolve "eventemitter3"` → install SDK runtime deps in the app: `cd demo/app && npm install eventemitter3 buffer`
+- `Unable to resolve "eventemitter3"` → install SDK runtime deps in the app: `npm install eventemitter3 buffer`
 - If types don't update, delete `node_modules/.cache` in the app
-- If the app still uses the old SDK, stop Metro, run `npm install ../../react-native-sdk` again, and restart with `--clear`
+- If the app still uses the old (published) SDK, confirm `node_modules/@bota.dev/react-native-sdk` is a symlink to your local checkout; if not, re-run step 2 and restart with `--clear`
 
 ## Dependencies
 

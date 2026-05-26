@@ -504,11 +504,22 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       devices: discovered.map((d) => `${d.name}(${d.id})`).join(', '),
     });
 
-    // Match by: 1) stored Bluetooth name, 2) stored peripheral ID, 3) any Bota-prefix device
+    // Match priority — the stored peripheral ID is the only unique
+    // discriminator (all Bota Pins advertise the generic name "Bota Pin", so
+    // name/prefix matching grabs the wrong device when two are nearby — e.g.
+    // reconnect for SN-A connects to unprovisioned SN-B, then churns its
+    // connection slot and blocks the user from pairing SN-B):
+    //   1) exact stored peripheral ID (unique)
+    //   2) stored BLE name — only if exactly one device has it (unambiguous)
+    //   3) a Bota-prefix device — only if exactly one is present
+    // iOS can rotate peripheral UUIDs, so (2)/(3) remain as fallbacks for the
+    // single-device case, but never pick among multiple same-named devices.
+    const byName = storedName ? discovered.filter((d) => d.name === storedName) : [];
+    const botaDevices = discovered.filter((d) => d.name?.startsWith('Bota'));
     const target =
-      discovered.find((d) => storedName && d.name === storedName) ||
-      discovered.find((d) => storedId && d.id === storedId) ||
-      discovered.find((d) => d.name?.startsWith('Bota'));
+      (storedId ? discovered.find((d) => d.id === storedId) : undefined) ||
+      (byName.length === 1 ? byName[0] : undefined) ||
+      (botaDevices.length === 1 ? botaDevices[0] : undefined);
 
     // Stop scan before connecting — on iOS a running scan can cancel the connection
     try { this.stopScan(); } catch { /* ignore */ }

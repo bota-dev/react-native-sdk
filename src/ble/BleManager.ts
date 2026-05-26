@@ -18,6 +18,9 @@ import {
   MAX_MTU,
   CONNECTION_TIMEOUT,
   SCAN_TIMEOUT,
+  SERVICE_BOTA_CONTROL,
+  SERVICE_BOTA_PROVISIONING,
+  SERVICE_BOTA_STORAGE,
 } from './constants';
 import type {
   DiscoveredDevice,
@@ -233,6 +236,86 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
         this.emit('deviceDiscovered', discovered);
       }
     );
+
+    // iOS won't re-advertise a peripheral it has already auto-reconnected at
+    // the system level (a bonded device). `startDeviceScan` therefore never
+    // surfaces such a device, even though it's sitting right there connected
+    // to the phone. Pull those in explicitly via the system-connected list so
+    // the app can claim a device that's stuck "Connected" in iOS Settings.
+    // Fire-and-forget: must not block scan start, and failures are non-fatal.
+    void this.discoverSystemConnectedDevices(options);
+  }
+
+  /**
+   * Surface Bota peripherals already connected at the OS level (e.g. a bonded
+   * device iOS auto-reconnected). These never appear in `startDeviceScan`
+   * because a connected peripheral stops advertising. We query the system for
+   * peripherals exposing the Bota services and feed them through the same
+   * discovery pipeline as scanned devices.
+   *
+   * No RSSI / manufacturer data is available for system-connected peripherals
+   * (there's no live advertisement), so `minRssi` is intentionally not applied
+   * here and device-type / pairing-state fall back to name inference.
+   */
+  private async discoverSystemConnectedDevices(
+    options: ScanOptions
+  ): Promise<void> {
+    try {
+      const connected = await this.manager.connectedDevices([
+        SERVICE_BOTA_CONTROL,
+        SERVICE_BOTA_PROVISIONING,
+        SERVICE_BOTA_STORAGE,
+      ]);
+
+      // Always log — count=0 is the diagnostic signal that iOS isn't
+      // reporting the device as a system-connected Bota peripheral (either
+      // it's not connected, or iOS hasn't cached the Bota service UUIDs on
+      // the bonded link).
+      log.info('System-connected Bota query', {
+        count: connected.length,
+        devices: connected.map((d: Device) => ({ id: d.id, name: d.name })),
+      });
+      if (connected.length === 0) return;
+
+      const { deviceTypes, pairingState } = options;
+
+      for (const device of connected) {
+        // A scan callback may have already surfaced this device.
+        if (this.discoveredDevices.has(device.id)) continue;
+
+        // System-connected peripherals carry no advertisement, so
+        // parseDiscoveredDevice can fail (no localName/manufacturerData) and
+        // iOS may not have cached `name` yet. Surface them anyway with a
+        // fallback — the whole point is to let the app claim a device iOS is
+        // holding hostage; the app can connect by id regardless of name.
+        const discovered = this.parseDiscoveredDevice(device) ?? {
+          id: device.id,
+          name: device.name || 'Bota device',
+          deviceType: 'bota_pin' as DeviceType,
+          firmwareVersion: '0.0.0',
+          macAddress: null,
+          pairingState: 'unpaired' as PairingState,
+          rssi: device.rssi ?? -100,
+          manufacturerData: undefined,
+          discoveredAt: new Date(),
+        };
+
+        if (deviceTypes && !deviceTypes.includes(discovered.deviceType)) continue;
+        if (pairingState && discovered.pairingState !== pairingState) continue;
+
+        log.info('Surfacing system-connected device', {
+          id: discovered.id,
+          name: discovered.name,
+        });
+        this.discoveredDevices.set(device.id, discovered);
+        this.emit('deviceDiscovered', discovered);
+      }
+    } catch (e) {
+      // Non-fatal: scan still proceeds with advertising devices.
+      log.warn('Failed to query system-connected devices', {
+        error: describeBleError(e),
+      });
+    }
   }
 
   /**

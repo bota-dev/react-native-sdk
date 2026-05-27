@@ -275,6 +275,25 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   }
 
   /**
+   * Map of `serialNumber → last-known BLE peripheral id` from the reconnect
+   * registry (populated whenever a device connects). Lets callers classify a
+   * scanned device as already-known without reading its serial over GATT — the
+   * serial is never advertised, but the peripheral id is in every scan result.
+   *
+   * Caveat: iOS peripheral ids rotate occasionally and reset on app reinstall,
+   * so a stale/missing entry just means a known device is briefly seen as new.
+   * Pair this with a MAC-address match (stable across installs) for best
+   * coverage.
+   */
+  getKnownBleIds(): Record<string, string> {
+    const map: Record<string, string> = {};
+    for (const [serialNumber, info] of Object.entries(this.reconnectRegistry)) {
+      if (info?.bleId) map[serialNumber] = info.bleId;
+    }
+    return map;
+  }
+
+  /**
    * Connect to a discovered device
    */
   async connect(device: DiscoveredDevice): Promise<ConnectedDevice> {

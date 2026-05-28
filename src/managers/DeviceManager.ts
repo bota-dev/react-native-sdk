@@ -7,7 +7,7 @@ import { State, Subscription } from 'react-native-ble-plx';
 import EventEmitter from 'eventemitter3';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { getBleManager, BleManager } from '../ble/BleManager';
+import { getBleManager, BleManager, type RadioPriority } from '../ble/BleManager';
 import {
   SERVICE_DEVICE_INFO,
   SERVICE_BOTA_PROVISIONING,
@@ -150,6 +150,15 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   // Cache of P6 session nonce per device (received via notify on connect, cleared on disconnect)
   private nonceCache: Map<string, string> = new Map();
   private reconnectRegistry: Record<string, ReconnectInfo> = {};
+  // Serializes reconnect attempts. Multiple SNs can be reconnecting at once
+  // (auto-reconnect loop + app-driven calls); without this they all scan and
+  // probe the single in-range "Bota Pin" concurrently, share one BLE connection,
+  // and a mismatched probe's disconnect tears it down for the other flow.
+  private reconnectChain: Promise<unknown> = Promise.resolve();
+  // Dedup concurrent reconnect() calls for the same SN (e.g. the 3s auto-reconnect
+  // loop firing again before the previous attempt settles) so they don't stack
+  // up behind the serialize lock.
+  private reconnectInFlight: Map<string, Promise<ConnectedDevice>> = new Map();
   // Cache of last known recording state per device (populated from status notifications)
   private recordingStateCache: Map<string, RecordingState> = new Map();
   // Pending promise set while a recording command is in-flight — bridges the race where
@@ -294,9 +303,15 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   }
 
   /**
-   * Connect to a discovered device
+   * Connect to a discovered device.
+   *
+   * @param priority `user` (default) for pairing/manual connect; `background`
+   *   when called from the reconnect path so it yields to user operations.
    */
-  async connect(device: DiscoveredDevice): Promise<ConnectedDevice> {
+  async connect(
+    device: DiscoveredDevice,
+    priority: RadioPriority = 'user'
+  ): Promise<ConnectedDevice> {
     log.info('Connecting to device', { deviceId: device.id, name: device.name });
 
     // Check if already connected
@@ -311,7 +326,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
     try {
       // Connect via Bluetooth manager
-      await this.bleManager.connect(device.id);
+      await this.bleManager.connect(device.id, priority);
 
       // Read device information
       const serialNumber = await this.readSerialNumber(device.id);
@@ -451,6 +466,14 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         return; // Wait for next tick
       }
 
+      // Yield to user-initiated radio work (pairing / manual connect). A
+      // background reconnect scan+probe here would race the user op on the
+      // single adapter and tear down the user's connection mid-handshake.
+      if (this.bleManager.isUserOpInFlight()) {
+        log.debug('Auto-reconnect: yielding to user-initiated radio op');
+        return; // Retry next tick once the user op settles
+      }
+
       if (this.autoReconnectAttempting) return;
       this.autoReconnectAttempting = true;
 
@@ -494,11 +517,47 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     serialNumber: string,
     options?: ReconnectOptions
   ): Promise<ConnectedDevice> {
+    // Fast path: already connected — return immediately without taking the lock.
+    for (const device of this.connectedDevices.values()) {
+      if (device.serialNumber === serialNumber && device.connectionState === 'connected') {
+        log.debug('Device already connected', { serialNumber });
+        return device;
+      }
+    }
+
+    // Dedup: an attempt for this SN is already queued/running — share it.
+    const existing = this.reconnectInFlight.get(serialNumber);
+    if (existing) {
+      log.debug('Reconnect already in flight, sharing', { serialNumber });
+      return existing;
+    }
+
+    // Serialize: chain after any in-flight reconnect so concurrent calls for
+    // different SNs don't scan/probe/disconnect over each other on the single
+    // shared BLE connection slot.
+    const run = this.reconnectChain
+      .catch(() => undefined)
+      .then(() => this.doReconnect(serialNumber, options));
+    this.reconnectChain = run.catch(() => undefined);
+    this.reconnectInFlight.set(serialNumber, run);
+    run.finally(() => {
+      if (this.reconnectInFlight.get(serialNumber) === run) {
+        this.reconnectInFlight.delete(serialNumber);
+      }
+    }).catch(() => undefined);
+    return run;
+  }
+
+  private async doReconnect(
+    serialNumber: string,
+    options?: ReconnectOptions
+  ): Promise<ConnectedDevice> {
     const scanTimeout = options?.scanTimeout ?? DEFAULT_RECONNECT_SCAN_TIMEOUT;
 
     log.info('Reconnecting to device', { serialNumber });
 
-    // Check if already connected by serial number
+    // Re-check after acquiring the lock — a prior queued reconnect may have
+    // already connected this SN.
     for (const device of this.connectedDevices.values()) {
       if (device.serialNumber === serialNumber && device.connectionState === 'connected') {
         log.debug('Device already connected', { serialNumber });
@@ -523,33 +582,61 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       devices: discovered.map((d) => `${d.name}(${d.id})`).join(', '),
     });
 
-    // Match priority — the stored peripheral ID is the only unique
-    // discriminator (all Bota Pins advertise the generic name "Bota Pin", so
-    // name/prefix matching grabs the wrong device when two are nearby — e.g.
-    // reconnect for SN-A connects to unprovisioned SN-B, then churns its
-    // connection slot and blocks the user from pairing SN-B):
-    //   1) exact stored peripheral ID (unique)
-    //   2) stored BLE name — only if exactly one device has it (unambiguous)
-    //   3) a Bota-prefix device — only if exactly one is present
-    // iOS can rotate peripheral UUIDs, so (2)/(3) remain as fallbacks for the
-    // single-device case, but never pick among multiple same-named devices.
-    const byName = storedName ? discovered.filter((d) => d.name === storedName) : [];
-    const botaDevices = discovered.filter((d) => d.name?.startsWith('Bota'));
-    const target =
-      (storedId ? discovered.find((d) => d.id === storedId) : undefined) ||
-      (byName.length === 1 ? byName[0] : undefined) ||
-      (botaDevices.length === 1 ? botaDevices[0] : undefined);
-
     // Stop scan before connecting — on iOS a running scan can cancel the connection
     try { this.stopScan(); } catch { /* ignore */ }
 
-    if (!target) {
-      log.warn('No matching device found for reconnection', { serialNumber });
-      throw DeviceError.notFound(serialNumber);
+    // Match priority:
+    //   1) exact stored peripheral ID — fast path, valid until iOS/macOS rotates it.
+    //   2) serial-number probe — all Bota Pins advertise the generic name
+    //      "Bota Pin" and the peripheral ID rotates, so neither name nor ID is a
+    //      reliable discriminator when several units are nearby. The serial number
+    //      is the only stable unique key, but it isn't advertised — it lives on
+    //      GATT 0x2A25. So we connect to each active same-named candidate, read its
+    //      SN, and keep the one that matches; non-matching probes are released.
+    const byId = storedId ? discovered.find((d) => d.id === storedId) : undefined;
+    if (byId) {
+      log.info('Matched device by stored peripheral ID', { serialNumber, id: byId.id });
+      return this.connect(byId, 'background');
     }
 
-    log.info('Matched device for reconnection', { serialNumber, name: target.name, id: target.id });
-    return this.connect(target);
+    // Candidates: stored name first, then any Bota-prefix device; deduped by id,
+    // strongest signal first so the nearest (most likely) unit is tried first.
+    const seen = new Set<string>();
+    const candidates = [
+      ...(storedName ? discovered.filter((d) => d.name === storedName) : []),
+      ...discovered.filter((d) => d.name?.startsWith('Bota')),
+    ].filter((d) => {
+      if (seen.has(d.id)) return false;
+      seen.add(d.id);
+      return true;
+    }).sort((a, b) => b.rssi - a.rssi);
+
+    log.debug('Reconnect: probing candidates by serial number', {
+      serialNumber,
+      count: candidates.length,
+    });
+
+    for (const cand of candidates) {
+      const sn = await this.probeSerialNumber(cand.id);
+      if (sn === serialNumber) {
+        log.info('Matched device by serial number', { serialNumber, id: cand.id });
+        // Already linked from the probe — connect() reuses it and finalizes.
+        return this.connect(cand, 'background');
+      }
+      if (sn !== null && !this.connectedDevices.has(cand.id)) {
+        // Wrong physical device, and not an established connection — drop the
+        // probe link so we don't hold its slot. The connectedDevices guard
+        // prevents a probe from tearing down a device some other flow has
+        // already fully connected.
+        log.debug('Reconnect: candidate SN mismatch, releasing', {
+          wanted: serialNumber, got: sn, id: cand.id,
+        });
+        try { await this.bleManager.disconnect(cand.id, 'background'); } catch { /* ignore */ }
+      }
+    }
+
+    log.warn('No matching device found for reconnection', { serialNumber });
+    throw DeviceError.notFound(serialNumber);
   }
 
   /**
@@ -996,6 +1083,29 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       CHAR_SERIAL_NUMBER
     );
     return data.toString('utf8').replace(/\0/g, '');
+  }
+
+  /**
+   * Identify a reconnect candidate by connecting at the BLE layer and reading
+   * its serial number (0x2A25) — used to disambiguate multiple same-named
+   * "Bota Pin" units when the stored peripheral ID has rotated. Returns the SN,
+   * or null if the candidate could not be connected/read (the link is dropped
+   * on failure). On success the link is left open so a matching candidate can be
+   * finalized by connect() without a second connect round-trip.
+   */
+  private async probeSerialNumber(deviceId: string): Promise<string | null> {
+    const wasConnected = this.connectedDevices.has(deviceId);
+    try {
+      await this.bleManager.connect(deviceId, 'background');
+      return await this.readSerialNumber(deviceId);
+    } catch {
+      log.debug('Reconnect: SN probe failed', { deviceId });
+      // Only drop links this probe opened — never an established connection.
+      if (!wasConnected && !this.connectedDevices.has(deviceId)) {
+        try { await this.bleManager.disconnect(deviceId, 'background'); } catch { /* ignore */ }
+      }
+      return null;
+    }
   }
 
   private async readFirmwareVersion(deviceId: string): Promise<string> {

@@ -38,6 +38,14 @@ import {
 
 const log = logger.tag('BleManager');
 
+/**
+ * Priority of a radio operation.
+ * - `user`: initiated by an explicit user action (pairing, manual connect).
+ *   Stops any in-flight scan and is never starved behind background work.
+ * - `background`: auto-reconnect probes/connects. Yields to user operations.
+ */
+export type RadioPriority = 'user' | 'background';
+
 /** Extract a human-readable message from a BleError (message is often null) */
 function describeBleError(err: BleError | Error | null | undefined): string {
   if (!err) return 'Unknown error';
@@ -73,6 +81,16 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
   private pendingConnects: Map<string, Promise<Device>> = new Map();
   private isScanning = false;
   private cachedState: State = State.Unknown;
+  // Radio arbiter: the BLE adapter is a single shared resource. connect and
+  // disconnect run exclusively through this FIFO chain so two never race on the
+  // adapter at once — covering both the pairing path and the auto-reconnect
+  // path, which would otherwise collide (concurrent connectToDevice on one slot
+  // tears the connection down — the 2A26-read disconnect during pairing).
+  private radioChain: Promise<unknown> = Promise.resolve();
+  // True while a `user`-priority radio op is queued or running. The
+  // auto-reconnect loop reads this to yield, so pairing/manual connect preempts
+  // background reconnection rather than racing it.
+  private userOpInFlight = false;
 
   constructor() {
     super();
@@ -409,11 +427,36 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
   }
 
   /**
+   * Run a radio-exclusive operation through the arbiter chain so it never
+   * overlaps another connect/disconnect on the single BLE adapter. A `user` op
+   * marks {@link isUserOpInFlight} so background work yields until it settles.
+   */
+  private runExclusive<T>(priority: RadioPriority, fn: () => Promise<T>): Promise<T> {
+    if (priority === 'user') this.userOpInFlight = true;
+    const run = this.radioChain.catch(() => undefined).then(fn);
+    // Keep the chain alive regardless of this op's outcome.
+    this.radioChain = run.catch(() => undefined);
+    if (priority === 'user') {
+      run.finally(() => { this.userOpInFlight = false; }).catch(() => undefined);
+    }
+    return run;
+  }
+
+  /** True while a user-initiated connect/disconnect is queued or running. */
+  isUserOpInFlight(): boolean {
+    return this.userOpInFlight;
+  }
+
+  /**
    * Connect to a device.
    * Deduplicates concurrent calls — if a connect is already in progress
-   * for this device, callers share the same promise.
+   * for this device, callers share the same promise. Runs through the radio
+   * arbiter so it never races another connect/disconnect on the adapter.
+   *
+   * @param priority `user` (default) for pairing/manual connect; `background`
+   *   for auto-reconnect probes, which yield to user operations.
    */
-  async connect(deviceId: string): Promise<Device> {
+  async connect(deviceId: string, priority: RadioPriority = 'user'): Promise<Device> {
     // Check if already connected
     if (this.connectedDevices.has(deviceId)) {
       log.debug('Device already connected', { deviceId });
@@ -427,7 +470,7 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
       return pending;
     }
 
-    const connectPromise = this.doConnect(deviceId);
+    const connectPromise = this.runExclusive(priority, () => this.doConnect(deviceId));
     this.pendingConnects.set(deviceId, connectPromise);
 
     try {
@@ -439,6 +482,11 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
 
   private async doConnect(deviceId: string): Promise<Device> {
     log.info('Connecting to device', { deviceId });
+
+    // Stop any in-flight scan before connecting. On iOS a running scan can
+    // cancel an outgoing connection, so a connect always claims the radio from
+    // any background reconnect scan first (no-ops if not scanning).
+    this.stopScan();
 
     try {
       // Cancel any stale connection first (iOS may cache disconnected state
@@ -487,9 +535,17 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
   }
 
   /**
-   * Disconnect from a device
+   * Disconnect from a device. Runs through the radio arbiter so it serializes
+   * against connects rather than tearing down a slot another op is using.
+   *
+   * @param priority `background` for auto-reconnect probe releases; `user`
+   *   (default) for user-initiated disconnects.
    */
-  async disconnect(deviceId: string): Promise<void> {
+  async disconnect(deviceId: string, priority: RadioPriority = 'user'): Promise<void> {
+    return this.runExclusive(priority, () => this.doDisconnect(deviceId));
+  }
+
+  private async doDisconnect(deviceId: string): Promise<void> {
     log.info('Disconnecting from device', { deviceId });
 
     const device = this.connectedDevices.get(deviceId);

@@ -331,7 +331,7 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
     } catch (e) {
       // Non-fatal: scan still proceeds with advertising devices.
       log.warn('Failed to query system-connected devices', {
-        error: describeBleError(e),
+        error: describeBleError(e as BleError),
       });
     }
   }

@@ -661,12 +661,17 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
       throw DeviceError.notConnected(deviceId);
     }
 
+    // [STATUS-LATENCY] Mark BLE reads in flight so a delayed status notify can
+    // be correlated with concurrent on-link traffic (the suspected cause of the
+    // intermittent record-start latency). Temporary instrumentation.
+    log.debug('[STATUS-LATENCY] read start', { deviceId, characteristicUuid, t: Date.now() });
     try {
       const characteristic = await device.readCharacteristicForService(
         serviceUuid,
         characteristicUuid
       );
 
+      log.debug('[STATUS-LATENCY] read end', { deviceId, characteristicUuid, t: Date.now() });
       if (!characteristic.value) {
         return Buffer.alloc(0);
       }
@@ -701,6 +706,10 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
 
     const base64Data = data.toString('base64');
 
+    // [STATUS-LATENCY] Mark BLE writes in flight — host write bursts are the
+    // prime suspect for stalling an inbound status notify (iOS write/notify
+    // arbitration). Correlate with '[STATUS-LATENCY] notify arrived'. Temporary.
+    log.debug('[STATUS-LATENCY] write start', { deviceId, characteristicUuid, withResponse, t: Date.now() });
     try {
       if (withResponse) {
         await device.writeCharacteristicWithResponseForService(
@@ -715,6 +724,7 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
           base64Data
         );
       }
+      log.debug('[STATUS-LATENCY] write end', { deviceId, characteristicUuid, t: Date.now() });
     } catch (error) {
       const msg = describeBleError(error as BleError);
       log.error('Write characteristic failed', new Error(msg), {

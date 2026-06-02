@@ -572,13 +572,28 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
     log.debug('Reconnect info', { serialNumber, storedName: storedName ?? '(none)', storedId: storedId ?? '(none)' });
 
-    // Scan for devices
+    // Scan for devices. The scan runs up to `scanTimeout`, but we poll
+    // `getDiscoveredDevices()` while it runs and return the moment the target
+    // peripheral (stored id, or a Bota-prefix candidate) appears — typical
+    // healthy reconnect lands in <1s, no need to wait the full 5s window.
     await this.startScan({ timeout: scanTimeout });
-    await new Promise((resolve) => setTimeout(resolve, scanTimeout));
 
-    const discovered = this.getDiscoveredDevices();
+    const POLL_INTERVAL_MS = 200;
+    const isTarget = (d: DiscoveredDevice): boolean =>
+      (!!storedId && d.id === storedId) ||
+      (!!storedName && d.name === storedName) ||
+      (d.name?.startsWith('Bota') ?? false);
+
+    const startedAt = Date.now();
+    let discovered = this.getDiscoveredDevices();
+    while (!discovered.some(isTarget) && Date.now() - startedAt < scanTimeout) {
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+      discovered = this.getDiscoveredDevices();
+    }
+
     log.debug('Reconnect scan done', {
       count: discovered.length,
+      elapsedMs: Date.now() - startedAt,
       devices: discovered.map((d) => `${d.name}(${d.id})`).join(', '),
     });
 
@@ -1001,6 +1016,16 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       (data) => {
         try {
           const status = parseDeviceStatus(data);
+          // [STATUS-LATENCY] Timestamped notify arrival — measure the gap from
+          // a physical device-button record start/stop to this notify firing.
+          // If this logs many seconds after the button press, the latency is
+          // firmware notify cadence (not BLE interval / app poll). Temporary.
+          log.debug('[STATUS-LATENCY] notify arrived', {
+            deviceId: device.id,
+            t: Date.now(),
+            state: status.state,
+            recording: status.state === 'recording',
+          });
           this.emit('deviceStatusUpdated', device.id, status);
           callback(status);
         } catch (error) {

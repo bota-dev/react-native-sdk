@@ -78,9 +78,43 @@ export interface SyncStatusInputs {
     lteAttempting: boolean;
     /** Streaming upload mode is enabled on the device. */
     streamingEnabled: boolean;
+    /**
+     * Device's upload-channel preference order (highest priority first), e.g.
+     * `['wifi', 'ble', 'cellular']`. When provided, the streaming channel is
+     * resolved by walking this list and picking the first channel that is both
+     * enabled (`enabledConnections`) and currently up — so a device whose LTE
+     * radio is connected but whose preference ranks BLE higher (or has cellular
+     * disabled) is correctly shown as streaming via Bluetooth, not 4G.
+     * Omit to fall back to the legacy "first connected radio wins" heuristic.
+     */
+    uploadPreference?: Array<'wifi' | 'ble' | 'cellular'>;
+    /** Which upload channels are enabled on the device. */
+    enabledConnections?: { wifi: boolean; cellular: boolean };
   };
   /** BLE link to the device is currently up. */
   bleConnected: boolean;
+}
+
+/**
+ * Resolve the channel a live stream is actually using. When the device's upload
+ * preference + enabled-connection flags are known, walk the preference order and
+ * pick the first channel that is enabled AND up (BLE is always available while
+ * the link is live) — this matches the firmware/app channel-selection rule. When
+ * those inputs are absent, fall back to "first connected radio wins".
+ */
+function resolveStreamingChannel(device: SyncStatusInputs['device']): SyncChannel {
+  const { wifiConnected, lteConnected, uploadPreference, enabledConnections } = device;
+
+  if (uploadPreference && enabledConnections) {
+    for (const channel of uploadPreference) {
+      if (channel === 'ble') return 'Bluetooth';
+      if (channel === 'wifi' && enabledConnections.wifi && wifiConnected) return 'WiFi';
+      if (channel === 'cellular' && enabledConnections.cellular && lteConnected) return '4G';
+    }
+    return 'Bluetooth';
+  }
+
+  return wifiConnected ? 'WiFi' : lteConnected ? '4G' : 'Bluetooth';
 }
 
 export interface SyncStatus {
@@ -128,11 +162,7 @@ export function deriveSyncStatus(inputs: SyncStatusInputs): SyncStatus {
   // 1. Live streaming wins — the user is recording right now and bytes are
   //    flowing as they're captured, not from queued files.
   if (device.isRecording && device.streamingEnabled) {
-    const channel: SyncChannel = device.wifiConnected
-      ? 'WiFi'
-      : device.lteConnected
-      ? '4G'
-      : 'Bluetooth';
+    const channel = resolveStreamingChannel(device);
     return {
       kind: 'streaming',
       channel,

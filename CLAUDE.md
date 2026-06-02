@@ -265,6 +265,11 @@ const status: SyncStatus = deriveSyncStatus({
     wifiAttempting: WIFI_ATTEMPTING.has(status.wifiStatus ?? ''),
     lteAttempting: LTE_ATTEMPTING.has(status.lteStatus ?? ''),
     streamingEnabled: connSettings.streaming_enabled ?? false,
+    // Optional: when provided, the streaming channel is resolved by upload
+    // preference + enabled connections (matches firmware channel selection),
+    // so a device with LTE up but BLE-preferred is shown as Bluetooth, not 4G.
+    uploadPreference: connSettings.upload_network_preference,   // e.g. ['wifi','ble','cellular']
+    enabledConnections: connSettings.enabled_connections,       // { wifi, cellular }
   },
   bleConnected: bleStatus === 'connected',
 });

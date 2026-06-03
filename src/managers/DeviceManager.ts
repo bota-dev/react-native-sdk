@@ -90,6 +90,7 @@ import type {
   DeviceConnectionSettings,
 } from '../models/Device';
 import type { DeviceManagerEvents } from '../models/Status';
+import { DeviceStateCache, type CachedDeviceState } from '../cache/DeviceStateCache';
 import {
   DeviceError,
   ProvisioningError,
@@ -161,6 +162,17 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   private reconnectInFlight: Map<string, Promise<ConnectedDevice>> = new Map();
   // Cache of last known recording state per device (populated from status notifications)
   private recordingStateCache: Map<string, RecordingState> = new Map();
+
+  /**
+   * Last-known-good device state keyed by serial number. Fed by every
+   * BLE-sourced read or subscribe-notify in this class. Consumers query it
+   * synchronously to render UI without waiting on a fresh BLE round-trip.
+   *
+   * See `cache/DeviceStateCache.ts` for the merge semantics. The SDK does
+   * NOT persist this — consumers serialize what they need themselves and
+   * rehydrate by calling `update()` on launch.
+   */
+  private stateCache: DeviceStateCache = new DeviceStateCache();
   // Pending promise set while a recording command is in-flight — bridges the race where
   // the Bluetooth heartbeat arrives before the recording status notification.
   private recordingStatePending: Map<string, Promise<RecordingState>> = new Map();
@@ -2001,6 +2013,8 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
       log.debug('WiFi status', { deviceId, status: status.status, ssid: status.ssid });
 
+      this.updateWifiCacheFromInfo(deviceId, status);
+
       return status;
     } catch (error) {
       log.debug('Failed to read WiFi status', { reason: error instanceof Error ? error.message : 'Unknown' });
@@ -2048,6 +2062,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       (data) => {
         try {
           const status = parseWiFiStatusInfo(data);
+          this.updateWifiCacheFromInfo(deviceId, status);
           callback(status);
         } catch (error) {
           log.error('Failed to parse WiFi status', error instanceof Error ? error : undefined);
@@ -2058,6 +2073,94 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         log.debug(`WiFi status subscription ended: ${error.message}`);
       }
     );
+  }
+
+  /**
+   * Resolve a peripheral id to its paired-device serial number, the stable
+   * identity the state cache is keyed by. Falls back to the reconnect
+   * registry for the (uncommon) case where a probe read landed before the
+   * full connect flow populated `connectedDevices`.
+   */
+  private resolveSerialNumber(deviceId: string): string | null {
+    const connected = this.connectedDevices.get(deviceId);
+    if (connected) return connected.serialNumber;
+    for (const [sn, info] of Object.entries(this.reconnectRegistry)) {
+      if (info.bleId === deviceId) return sn;
+    }
+    return null;
+  }
+
+  /**
+   * Translate a parsed WiFiStatusInfo into a cache patch. The parsed value
+   * uses `undefined` for "no information from the device on this field" — we
+   * pass that through to the cache, which preserves the prior value. Cleared
+   * networks (forget WiFi) come through as `status='disconnected'` with no
+   * SSID — we keep the prior SSID since the device may reconnect; callers
+   * who want an explicit wipe call `clearDeviceState(sn)` directly.
+   */
+  private updateWifiCacheFromInfo(deviceId: string, info: WiFiStatusInfo): void {
+    const sn = this.resolveSerialNumber(deviceId);
+    if (!sn) return;
+    this.stateCache.update(sn, { wifiStatus: info });
+  }
+
+  // ─── Device State Cache — public API ─────────────────────────────────────
+
+  /**
+   * Synchronously read the last-known-good device-state snapshot for a paired
+   * device, keyed by serial number. Returns `null` if nothing has been
+   * observed since the SDK was instantiated.
+   *
+   * Populated by every `getWiFiStatus()` call and every
+   * `subscribeToWiFiStatus()` notification. Survives BLE disconnects and
+   * screen unmounts; does NOT survive app restart unless the consumer
+   * rehydrates the snapshot (see `updateCachedDeviceState`).
+   */
+  getCachedDeviceState(serialNumber: string): CachedDeviceState | null {
+    return this.stateCache.get(serialNumber);
+  }
+
+  /** Convenience: WiFi-only sub-record. Most consumers want just this. */
+  getCachedWiFiStatus(serialNumber: string): WiFiStatusInfo | null {
+    return this.stateCache.getWifi(serialNumber);
+  }
+
+  /**
+   * Hydrate or patch the cache directly. Consumers use this to (a) restore a
+   * persisted snapshot on app launch, or (b) push a value the SDK can't
+   * observe BLE-side — e.g. the wifi-config screen knows the SSID the user
+   * just typed before the firmware echoes it back. Merge rules match the
+   * cache's own internal rules: `undefined` preserves prior, `null` clears.
+   */
+  updateCachedDeviceState(
+    serialNumber: string,
+    patch: { wifiStatus?: Partial<WiFiStatusInfo> | null }
+  ): void {
+    this.stateCache.update(serialNumber, patch);
+  }
+
+  /** Forget one device's cached state — call on unpair / factory-reset. */
+  clearCachedDeviceState(serialNumber: string): void {
+    this.stateCache.clear(serialNumber);
+  }
+
+  /** Forget every cached snapshot — call on logout, SDK destroy. */
+  clearAllCachedDeviceStates(): void {
+    this.stateCache.clearAll();
+  }
+
+  /** Subscribe to cache change events. Fires on every observable update. */
+  onCachedDeviceStateChanged(
+    listener: (
+      serialNumber: string,
+      patch: { wifiStatus?: Partial<WiFiStatusInfo> | null },
+      state: CachedDeviceState
+    ) => void
+  ): { remove: () => void } {
+    this.stateCache.on('stateChanged', listener);
+    return {
+      remove: () => this.stateCache.off('stateChanged', listener),
+    };
   }
 
   /**
@@ -2210,6 +2313,9 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       sub.remove();
     }
     this.statusSubscriptions.clear();
+
+    this.stateCache.clearAll();
+    this.stateCache.removeAllListeners();
 
     this.connectedDevices.clear();
     this.removeAllListeners();

@@ -123,6 +123,38 @@ The SDK supports app-driven firmware updates via Bluetooth:
 
 `DeviceManager.readPublicKey(device)` reads the device's secp256r1 public key (PK_D) from `SERVICE_BOTA_AUTH` char `CHAR_PK_D` (B07A0005-0001). Returns a 128-char lowercase hex string (64 bytes, raw x‖y), or `null` if the Auth service is absent (legacy firmware) or if the read returns the wrong length. Used during bind to register PK_D on the backend.
 
+### Device State Cache (in-memory, SN-keyed)
+
+`DeviceManager` holds a `DeviceStateCache` — the single in-memory snapshot of last-known-good BLE-sourced state per paired device, keyed by serial number. Fed automatically by `getWiFiStatus()` and `subscribeToWiFiStatus()`; consumers query it synchronously to render UI without waiting on a fresh BLE round-trip:
+
+```typescript
+const wifi = BotaClient.devices.getCachedWiFiStatus(serialNumber); // sync, may be null
+const all = BotaClient.devices.getCachedDeviceState(serialNumber); // sync, may be null
+
+// Push values the SDK can't observe BLE-side (e.g. SSID typed by the user
+// before the firmware echoes it back), or rehydrate persisted state on app launch:
+BotaClient.devices.updateCachedDeviceState(serialNumber, {
+  wifiStatus: { status: 'connected', ssid: 'Guest' },
+});
+
+// React to cache changes (push-based UI updates):
+const sub = BotaClient.devices.onCachedDeviceStateChanged((sn, patch, state) => { ... });
+
+// Clear on unpair / factory reset / logout:
+BotaClient.devices.clearCachedDeviceState(serialNumber);
+BotaClient.devices.clearAllCachedDeviceStates();
+```
+
+Merge semantics on `updateCachedDeviceState` (and internal cache writes):
+
+- `undefined` on a field = "no info" → preserve the prior cached value.
+- `null` on a top-level sub-record (e.g. `{ wifiStatus: null }`) = explicit clear.
+- A present value = overwrite.
+
+This contract is the one that bit every consumer who naively did `{ ...prev, ...patch }`: a partial BLE read with `ssid: undefined` would otherwise wipe a known-good SSID. The cache enforces the right merge once.
+
+**Not in scope:** persistence (the SDK is in-memory only — consumers serialize to SecureStore/AsyncStorage themselves and rehydrate via `updateCachedDeviceState` on launch), TTL (staleness is implicit — consumers who want strict freshness call `clearCachedDeviceState(sn)` on `deviceDisconnected`).
+
 ### Device Types
 
 - `Bota-Pin-*` - Basic Bluetooth-only wearable (Bluetooth Sync)

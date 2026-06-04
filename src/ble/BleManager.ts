@@ -500,15 +500,26 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
       }
 
       // Connect with timeout
+      const t0 = Date.now();
       const device = await this.manager.connectToDevice(deviceId, {
         timeout: CONNECTION_TIMEOUT,
         requestMTU: MAX_MTU,
       });
+      const tLinked = Date.now();
 
-      log.debug('Device connected, discovering services', { deviceId });
+      log.debug('Device connected, discovering services', {
+        deviceId,
+        linkMs: tLinked - t0,
+      });
 
       // Discover services and characteristics
       await device.discoverAllServicesAndCharacteristics();
+      const tDiscovered = Date.now();
+      log.debug('Services discovered', {
+        deviceId,
+        discoverMs: tDiscovered - tLinked,
+        totalMs: tDiscovered - t0,
+      });
 
       // Store connected device
       this.connectedDevices.set(deviceId, device);

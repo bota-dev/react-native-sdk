@@ -377,17 +377,28 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       let hasWifiService: boolean;
       let mtu: number;
 
-      if (cached?.serialNumber && cached.firmwareVersion !== undefined) {
-        // Reconnect fast-path: trust the registry, fetch MTU only.
-        mtu = await this.bleManager.getMtu(device.id);
+      if (cached?.serialNumber) {
+        // Reconnect fast-path: skip the GATT reads for fields that don't
+        // change between connects (serial, hardware revision, WiFi
+        // capability — all firmware-build-dependent or physical). Still
+        // read firmware version fresh: after an OTA, the device reboots
+        // with a new version and the cached value would be stale.
+        // pairingState comes from the advertisement (scan-time), already
+        // fresh, no GATT read needed. MTU is per-connection — fresh.
+        const [fv, m] = await Promise.all([
+          this.readFirmwareVersion(device.id),
+          this.bleManager.getMtu(device.id),
+        ]);
         serialNumber = cached.serialNumber;
-        firmwareVersion = cached.firmwareVersion;
+        firmwareVersion = fv;
         hardwareRevision = cached.hardwareRevision;
-        isProvisioned = cached.isProvisioned ?? (device.pairingState === 'paired');
+        isProvisioned = device.pairingState === 'paired';
         hasWifiService = cached.wifiUploadCapable ?? false;
+        mtu = m;
         log.info('Reconnect fast-path: using cached device info', {
           deviceId: device.id,
           serialNumber,
+          firmwareVersion,
         });
       } else {
         // First-ever connect (or pre-cache-schema entry): do the full 6 reads.

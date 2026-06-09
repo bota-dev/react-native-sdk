@@ -354,6 +354,17 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     // Emit connecting state
     this.emit('connectionStateChanged', device.id, 'connecting');
 
+    // For a user-initiated pair/manual connect, hold the "user op in flight"
+    // state across the WHOLE transaction (connect + the device-info reads
+    // below), not just the connect op. Otherwise the background auto-reconnect
+    // loop slips in between the connect and the first read, probes this very
+    // peripheral, and — on an SN mismatch against a stale reconnect target —
+    // disconnects the link mid-pair (observed as a 2A26/2A27-read disconnect).
+    // Background reconnect calls (priority 'background') must NOT take the span:
+    // they are the work that should yield.
+    const endUserTxn =
+      priority === 'user' ? this.bleManager.beginUserTransaction() : undefined;
+
     try {
       // Connect via Bluetooth manager
       await this.bleManager.connect(device.id, priority);
@@ -480,6 +491,8 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     } catch (error) {
       this.emit('connectionStateChanged', device.id, 'disconnected');
       throw error;
+    } finally {
+      endUserTxn?.();
     }
   }
 

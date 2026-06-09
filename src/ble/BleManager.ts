@@ -87,10 +87,17 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
   // path, which would otherwise collide (concurrent connectToDevice on one slot
   // tears the connection down — the 2A26-read disconnect during pairing).
   private radioChain: Promise<unknown> = Promise.resolve();
-  // True while a `user`-priority radio op is queued or running. The
-  // auto-reconnect loop reads this to yield, so pairing/manual connect preempts
-  // background reconnection rather than racing it.
-  private userOpInFlight = false;
+  // Refcount of in-flight user-initiated radio work. >0 means a pairing/manual
+  // connect transaction is active, so the auto-reconnect loop yields rather than
+  // racing it. Refcounted (not a boolean) because a user transaction spans more
+  // than one radio op: a pair is connect + several GATT reads, and the span must
+  // stay "in flight" across the *whole* transaction. A single `runExclusive`
+  // user op bumps it for its own duration; `beginUserTransaction()` lets a
+  // higher-level flow (DeviceManager.connect) hold it across the connect AND the
+  // follow-up reads. Without the wider span, the loop slipped in between the
+  // connect and the first read, probed the in-range device, and its SN-mismatch
+  // release disconnected the link the pair was mid-handshake on.
+  private userOpRefcount = 0;
 
   constructor() {
     super();
@@ -432,19 +439,38 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
    * marks {@link isUserOpInFlight} so background work yields until it settles.
    */
   private runExclusive<T>(priority: RadioPriority, fn: () => Promise<T>): Promise<T> {
-    if (priority === 'user') this.userOpInFlight = true;
+    if (priority === 'user') this.userOpRefcount++;
     const run = this.radioChain.catch(() => undefined).then(fn);
     // Keep the chain alive regardless of this op's outcome.
     this.radioChain = run.catch(() => undefined);
     if (priority === 'user') {
-      run.finally(() => { this.userOpInFlight = false; }).catch(() => undefined);
+      run.finally(() => { this.userOpRefcount--; }).catch(() => undefined);
     }
     return run;
   }
 
-  /** True while a user-initiated connect/disconnect is queued or running. */
+  /**
+   * Hold the "user op in flight" state across a multi-step user transaction
+   * (e.g. a pair: connect + several GATT reads), not just a single radio op.
+   * Returns a release function; call it (in a `finally`) when the transaction
+   * ends. Refcounted, so it composes with the per-op bump in `runExclusive` and
+   * with nested/concurrent user transactions. While the count is >0 the
+   * auto-reconnect loop yields, so a background reconnect can't probe-and-release
+   * (disconnect) the peripheral the user is mid-pair with.
+   */
+  beginUserTransaction(): () => void {
+    this.userOpRefcount++;
+    let released = false;
+    return () => {
+      if (released) return; // idempotent — double-release must not underflow
+      released = true;
+      this.userOpRefcount--;
+    };
+  }
+
+  /** True while any user-initiated radio op or transaction is in flight. */
   isUserOpInFlight(): boolean {
-    return this.userOpInFlight;
+    return this.userOpRefcount > 0;
   }
 
   /**

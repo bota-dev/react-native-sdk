@@ -769,19 +769,6 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       devices: discovered.map((d) => `${d.name}(${d.id})`).join(', '),
     });
 
-    // [RC-DIAG] post-OTA reconnect trace: compare stored MAC vs every discovered
-    // device's advertised MAC, so we can tell a MAC mismatch (device rebooted with
-    // a different MAC → MAC path throws) from a discoverability problem. Remove once
-    // the post-OTA reconnect is confirmed.
-    log.info('[RC-DIAG] scan result', {
-      serialNumber,
-      storedMac: storedMac ?? '(none)',
-      storedId: storedId ?? '(none)',
-      storedIdPresent: !!storedId && discovered.some((d) => d.id === storedId),
-      macMatchFound: !!storedMac && discovered.some((d) => normalizeMac(d.macAddress) === storedMac),
-      discovered: discovered.map((d) => `${d.name}/id=${d.id.slice(0, 8)}/mac=${normalizeMac(d.macAddress) ?? 'none'}`),
-    });
-
     // Stop scan before connecting — on iOS a running scan can cancel the connection
     try { this.stopScan(); } catch { /* ignore */ }
 
@@ -1229,16 +1216,6 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       (data) => {
         try {
           const status = parseDeviceStatus(data);
-          // [STATUS-LATENCY] Timestamped notify arrival — measure the gap from
-          // a physical device-button record start/stop to this notify firing.
-          // If this logs many seconds after the button press, the latency is
-          // firmware notify cadence (not BLE interval / app poll). Temporary.
-          log.debug('[STATUS-LATENCY] notify arrived', {
-            deviceId: device.id,
-            t: Date.now(),
-            state: status.state,
-            recording: status.state === 'recording',
-          });
           this.emit('deviceStatusUpdated', device.id, status);
           callback(status);
         } catch (error) {

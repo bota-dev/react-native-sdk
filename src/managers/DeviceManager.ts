@@ -242,6 +242,17 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
       this.emit('deviceDisconnected', deviceId, error);
 
+      // [OTA-RECONNECT] DIAG: capture disconnect timing + loop-arming state so we
+      // can confirm the reboot disconnect actually started the reconnect loop.
+      log.info('[OTA-RECONNECT] deviceDisconnected', {
+        deviceId,
+        autoReconnectEnabled: this.autoReconnectEnabled,
+        autoReconnectSerial: this.autoReconnectSerial,
+        userDisconnected: this.userDisconnected,
+        willStartLoop: this.autoReconnectEnabled && !this.userDisconnected,
+        error: error?.message,
+      });
+
       // Start auto-reconnect if enabled and not user-initiated
       if (this.autoReconnectEnabled && !this.userDisconnected) {
         this.startAutoReconnectLoop();
@@ -558,7 +569,14 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     this.emit('bluetoothReady'); // Signal apps that reconnection is starting
 
     const attempt = async () => {
+      // [OTA-RECONNECT] DIAG: trace which guard each loop tick hits and how long
+      // a reconnect attempt takes. Remove once the post-OTA wedge is root-caused.
       if (!this.autoReconnectEnabled || !this.autoReconnectSerial || this.userDisconnected) {
+        log.info('[OTA-RECONNECT] loop tick: disabled, stopping', {
+          enabled: this.autoReconnectEnabled,
+          serial: this.autoReconnectSerial,
+          userDisconnected: this.userDisconnected,
+        });
         this.stopAutoReconnectLoop();
         return;
       }
@@ -566,7 +584,9 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       // Already connected?
       for (const device of this.connectedDevices.values()) {
         if (device.serialNumber === this.autoReconnectSerial && device.connectionState === 'connected') {
-          log.debug('Auto-reconnect: already connected');
+          log.info('[OTA-RECONNECT] loop tick: already connected, stopping', {
+            serialNumber: this.autoReconnectSerial,
+          });
           this.stopAutoReconnectLoop();
           return;
         }
@@ -574,6 +594,9 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
       // Bluetooth available?
       if (this.bleManager.getCachedState() !== State.PoweredOn) {
+        log.info('[OTA-RECONNECT] loop tick: BT not powered on, waiting', {
+          state: this.bleManager.getCachedState(),
+        });
         return; // Wait for next tick
       }
 
@@ -581,21 +604,27 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       // background reconnect scan+probe here would race the user op on the
       // single adapter and tear down the user's connection mid-handshake.
       if (this.bleManager.isUserOpInFlight()) {
-        log.debug('Auto-reconnect: yielding to user-initiated radio op');
+        log.info('[OTA-RECONNECT] loop tick: yielding to user-initiated radio op');
         return; // Retry next tick once the user op settles
       }
 
-      if (this.autoReconnectAttempting) return;
+      if (this.autoReconnectAttempting) {
+        log.info('[OTA-RECONNECT] loop tick: prior attempt still in flight, skipping');
+        return;
+      }
       this.autoReconnectAttempting = true;
 
       const attemptStartedAt = Date.now();
       try {
-        log.debug('Auto-reconnect: attempting', { serialNumber: this.autoReconnectSerial });
+        log.info('[OTA-RECONNECT] loop tick: attempting reconnect', { serialNumber: this.autoReconnectSerial });
         await this.reconnect(this.autoReconnectSerial, { scanTimeout: 5000 });
-        log.info('Auto-reconnect: success', { totalMs: Date.now() - attemptStartedAt });
+        log.info('[OTA-RECONNECT] loop tick: reconnect SUCCESS', { totalMs: Date.now() - attemptStartedAt });
         this.stopAutoReconnectLoop();
-      } catch {
-        log.debug('Auto-reconnect: failed, will retry', { attemptMs: Date.now() - attemptStartedAt });
+      } catch (err) {
+        log.info('[OTA-RECONNECT] loop tick: reconnect failed, will retry', {
+          attemptMs: Date.now() - attemptStartedAt,
+          error: (err as Error)?.message,
+        });
       } finally {
         this.autoReconnectAttempting = false;
       }
@@ -707,6 +736,18 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       count: discovered.length,
       elapsedMs: Date.now() - startedAt,
       devices: discovered.map((d) => `${d.name}(${d.id})`).join(', '),
+    });
+
+    // [OTA-RECONNECT] DIAG: did the target appear, and does the stored peripheral
+    // ID still match (or did iOS rotate it post-flash)? Remove once root-caused.
+    log.info('[OTA-RECONNECT] reconnect scan result', {
+      serialNumber,
+      storedId: storedId ?? '(none)',
+      storedName: storedName ?? '(none)',
+      discoveredCount: discovered.length,
+      targetFound: discovered.some(isTarget),
+      storedIdStillPresent: !!storedId && discovered.some((d) => d.id === storedId),
+      botaCandidates: discovered.filter((d) => d.name?.startsWith('Bota')).map((d) => `${d.name}(${d.id})`),
     });
 
     // Stop scan before connecting — on iOS a running scan can cancel the connection
@@ -1241,11 +1282,21 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
    */
   private async probeSerialNumber(deviceId: string): Promise<string | null> {
     const wasConnected = this.connectedDevices.has(deviceId);
+    // [OTA-RECONNECT] DIAG: split connect-failure vs SN-read-failure so we can
+    // tell a half-open / GATT-not-ready reboot window from a clean miss.
+    let linked = false;
     try {
       await this.bleManager.connect(deviceId, 'background');
-      return await this.readSerialNumber(deviceId);
-    } catch {
-      log.debug('Reconnect: SN probe failed', { deviceId });
+      linked = true;
+      const sn = await this.readSerialNumber(deviceId);
+      log.info('[OTA-RECONNECT] SN probe ok', { deviceId, sn });
+      return sn;
+    } catch (err) {
+      log.info('[OTA-RECONNECT] SN probe failed', {
+        deviceId,
+        phase: linked ? 'sn-read' : 'connect',
+        error: (err as Error)?.message,
+      });
       // Only drop links this probe opened — never an established connection.
       if (!wasConnected && !this.connectedDevices.has(deviceId)) {
         try { await this.bleManager.disconnect(deviceId, 'background'); } catch { /* ignore */ }

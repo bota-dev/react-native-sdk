@@ -776,13 +776,24 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       return connected;
     }
 
-    // Candidates: stored name first, then any Bota-prefix device; deduped by id,
-    // strongest signal first so the nearest (most likely) unit is tried first.
+    // Candidates to probe by serial number, deduped by id, strongest signal first
+    // so the nearest (most likely) unit is tried first.
+    //
+    // When the target's advertised name is known (storedName, e.g. "Bota Pin"),
+    // probe ONLY devices advertising that exact name. Reconnect targets the one
+    // active device; it must not connect to a different MODEL to read its SN — e.g.
+    // probing a nearby "Bota Note" while reconnecting a "Bota Pin" connects to an
+    // unrelated device and wastes the single radio slot. Same-name probing is still
+    // required and kept: the peripheral UUID rotates on iOS (so the byId fast path
+    // above misses after a reboot) and the SN isn't advertised, so reading SN over a
+    // connection is the only way to re-identify the target — and multiple same-model
+    // units are disambiguated the same way. The bare "Bota" prefix is only a fallback
+    // for legacy reconnect entries that have no storedName.
     const seen = new Set<string>();
-    const candidates = [
-      ...(storedName ? discovered.filter((d) => d.name === storedName) : []),
-      ...discovered.filter((d) => d.name?.startsWith('Bota')),
-    ].filter((d) => {
+    const candidates = (storedName
+      ? discovered.filter((d) => d.name === storedName)
+      : discovered.filter((d) => d.name?.startsWith('Bota'))
+    ).filter((d) => {
       if (seen.has(d.id)) return false;
       seen.add(d.id);
       return true;

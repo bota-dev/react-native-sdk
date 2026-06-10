@@ -108,6 +108,12 @@ const DEFAULT_RECONNECT_SCAN_TIMEOUT = 10000; // 10 seconds
 interface ReconnectInfo {
   bleId: string;
   bleName: string;
+  /** Device BLE MAC from advertisement manufacturer data — the stable, unique,
+   *  scan-visible key. Used to identify the exact target during reconnect without
+   *  connecting to read its serial (the peripheral UUID rotates on iOS; the SN is
+   *  not advertised). Undefined for entries paired before this was stored, or on
+   *  firmware that doesn't advertise the MAC. */
+  mac?: string;
   deviceType: DeviceType;
   /** Cached from the previous successful connect — used to skip GATT info reads on reconnect. */
   serialNumber?: string;
@@ -115,6 +121,14 @@ interface ReconnectInfo {
   hardwareRevision?: string;
   isProvisioned?: boolean;
   wifiUploadCapable?: boolean;
+}
+
+/** Normalize a BLE MAC for stable comparison: lowercase, strip ':'/'-' separators.
+ *  Returns undefined for null/empty input so callers can treat "no MAC" uniformly. */
+function normalizeMac(mac: string | null | undefined): string | undefined {
+  if (!mac) return undefined;
+  const norm = mac.toLowerCase().replace(/[:-]/g, '');
+  return norm.length > 0 ? norm : undefined;
 }
 
 /**
@@ -241,17 +255,6 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       this.nonceSubscriptions.delete(deviceId);
 
       this.emit('deviceDisconnected', deviceId, error);
-
-      // [OTA-RECONNECT] DIAG: capture disconnect timing + loop-arming state so we
-      // can confirm the reboot disconnect actually started the reconnect loop.
-      log.info('[OTA-RECONNECT] deviceDisconnected', {
-        deviceId,
-        autoReconnectEnabled: this.autoReconnectEnabled,
-        autoReconnectSerial: this.autoReconnectSerial,
-        userDisconnected: this.userDisconnected,
-        willStartLoop: this.autoReconnectEnabled && !this.userDisconnected,
-        error: error?.message,
-      });
 
       // Start auto-reconnect if enabled and not user-initiated
       if (this.autoReconnectEnabled && !this.userDisconnected) {
@@ -477,6 +480,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       this.reconnectRegistry[serialNumber] = {
         bleId: device.id,
         bleName: device.name,
+        mac: normalizeMac(device.macAddress),
         deviceType: device.deviceType,
         serialNumber,
         firmwareVersion,
@@ -569,14 +573,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     this.emit('bluetoothReady'); // Signal apps that reconnection is starting
 
     const attempt = async () => {
-      // [OTA-RECONNECT] DIAG: trace which guard each loop tick hits and how long
-      // a reconnect attempt takes. Remove once the post-OTA wedge is root-caused.
       if (!this.autoReconnectEnabled || !this.autoReconnectSerial || this.userDisconnected) {
-        log.info('[OTA-RECONNECT] loop tick: disabled, stopping', {
-          enabled: this.autoReconnectEnabled,
-          serial: this.autoReconnectSerial,
-          userDisconnected: this.userDisconnected,
-        });
         this.stopAutoReconnectLoop();
         return;
       }
@@ -584,9 +581,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       // Already connected?
       for (const device of this.connectedDevices.values()) {
         if (device.serialNumber === this.autoReconnectSerial && device.connectionState === 'connected') {
-          log.info('[OTA-RECONNECT] loop tick: already connected, stopping', {
-            serialNumber: this.autoReconnectSerial,
-          });
+          log.debug('Auto-reconnect: already connected');
           this.stopAutoReconnectLoop();
           return;
         }
@@ -594,9 +589,6 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
       // Bluetooth available?
       if (this.bleManager.getCachedState() !== State.PoweredOn) {
-        log.info('[OTA-RECONNECT] loop tick: BT not powered on, waiting', {
-          state: this.bleManager.getCachedState(),
-        });
         return; // Wait for next tick
       }
 
@@ -604,27 +596,21 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       // background reconnect scan+probe here would race the user op on the
       // single adapter and tear down the user's connection mid-handshake.
       if (this.bleManager.isUserOpInFlight()) {
-        log.info('[OTA-RECONNECT] loop tick: yielding to user-initiated radio op');
+        log.debug('Auto-reconnect: yielding to user-initiated radio op');
         return; // Retry next tick once the user op settles
       }
 
-      if (this.autoReconnectAttempting) {
-        log.info('[OTA-RECONNECT] loop tick: prior attempt still in flight, skipping');
-        return;
-      }
+      if (this.autoReconnectAttempting) return;
       this.autoReconnectAttempting = true;
 
       const attemptStartedAt = Date.now();
       try {
-        log.info('[OTA-RECONNECT] loop tick: attempting reconnect', { serialNumber: this.autoReconnectSerial });
+        log.debug('Auto-reconnect: attempting', { serialNumber: this.autoReconnectSerial });
         await this.reconnect(this.autoReconnectSerial, { scanTimeout: 5000 });
-        log.info('[OTA-RECONNECT] loop tick: reconnect SUCCESS', { totalMs: Date.now() - attemptStartedAt });
+        log.info('Auto-reconnect: success', { totalMs: Date.now() - attemptStartedAt });
         this.stopAutoReconnectLoop();
-      } catch (err) {
-        log.info('[OTA-RECONNECT] loop tick: reconnect failed, will retry', {
-          attemptMs: Date.now() - attemptStartedAt,
-          error: (err as Error)?.message,
-        });
+      } catch {
+        log.debug('Auto-reconnect: failed, will retry', { attemptMs: Date.now() - attemptStartedAt });
       } finally {
         this.autoReconnectAttempting = false;
       }
@@ -710,24 +696,34 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     const info = this.reconnectRegistry[serialNumber];
     const storedName = info?.bleName;
     const storedId = info?.bleId;
+    const storedMac = info?.mac;
 
-    log.debug('Reconnect info', { serialNumber, storedName: storedName ?? '(none)', storedId: storedId ?? '(none)' });
+    log.debug('Reconnect info', {
+      serialNumber,
+      storedName: storedName ?? '(none)',
+      storedId: storedId ?? '(none)',
+      storedMac: storedMac ?? '(none)',
+    });
 
     // Scan for devices. The scan runs up to `scanTimeout`, but we poll
     // `getDiscoveredDevices()` while it runs and return the moment the target
-    // peripheral (stored id, or a Bota-prefix candidate) appears — typical
-    // healthy reconnect lands in <1s, no need to wait the full 5s window.
+    // peripheral appears — typical healthy reconnect lands in <1s, no need to
+    // wait the full 5s window.
     await this.startScan({ timeout: scanTimeout });
 
     const POLL_INTERVAL_MS = 200;
-    const isTarget = (d: DiscoveredDevice): boolean =>
-      (!!storedId && d.id === storedId) ||
-      (!!storedName && d.name === storedName) ||
-      (d.name?.startsWith('Bota') ?? false);
+    // A device is the target if its stored peripheral UUID matches, or — the
+    // stable, scan-visible identity — its advertised MAC matches our stored MAC.
+    // The name/prefix fallback only applies to legacy entries without a stored MAC.
+    const matchesTarget = (d: DiscoveredDevice): boolean => {
+      if (storedId && d.id === storedId) return true;
+      if (storedMac) return normalizeMac(d.macAddress) === storedMac;
+      return (!!storedName && d.name === storedName) || (d.name?.startsWith('Bota') ?? false);
+    };
 
     const startedAt = Date.now();
     let discovered = this.getDiscoveredDevices();
-    while (!discovered.some(isTarget) && Date.now() - startedAt < scanTimeout) {
+    while (!discovered.some(matchesTarget) && Date.now() - startedAt < scanTimeout) {
       await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
       discovered = this.getDiscoveredDevices();
     }
@@ -738,57 +734,40 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       devices: discovered.map((d) => `${d.name}(${d.id})`).join(', '),
     });
 
-    // [OTA-RECONNECT] DIAG: did the target appear, and does the stored peripheral
-    // ID still match (or did iOS rotate it post-flash)? Remove once root-caused.
-    log.info('[OTA-RECONNECT] reconnect scan result', {
-      serialNumber,
-      storedId: storedId ?? '(none)',
-      storedName: storedName ?? '(none)',
-      discoveredCount: discovered.length,
-      targetFound: discovered.some(isTarget),
-      storedIdStillPresent: !!storedId && discovered.some((d) => d.id === storedId),
-      botaCandidates: discovered.filter((d) => d.name?.startsWith('Bota')).map((d) => `${d.name}(${d.id})`),
-    });
-
     // Stop scan before connecting — on iOS a running scan can cancel the connection
     try { this.stopScan(); } catch { /* ignore */ }
 
     // Match priority:
-    //   1) exact stored peripheral ID — fast path, valid until iOS/macOS rotates it.
-    //   2) serial-number probe — all Bota Pins advertise the generic name
-    //      "Bota Pin" and the peripheral ID rotates, so neither name nor ID is a
-    //      reliable discriminator when several units are nearby. The serial number
-    //      is the only stable unique key, but it isn't advertised — it lives on
-    //      GATT 0x2A25. So we connect to each active same-named candidate, read its
-    //      SN, and keep the one that matches; non-matching probes are released.
+    //   1) stored peripheral UUID — fast path, valid until iOS/macOS rotates it.
+    //   2) advertised MAC — the stable, unique, scan-visible identity. Lets us pick
+    //      the exact target out of several same-model devices and connect to ONLY it,
+    //      without connecting to anyone to read a serial number.
+    //   3) serial-number probe — legacy fallback for entries paired before the MAC
+    //      was stored (or firmware that doesn't advertise it). The SN is the only
+    //      stable unique key but isn't advertised (GATT 0x2A25), so we connect to a
+    //      same-name candidate and read it. Restricted to the exact stored name so a
+    //      different model (e.g. a "Bota Note" while reconnecting a "Bota Pin") is
+    //      never connected to.
     const byId = storedId ? discovered.find((d) => d.id === storedId) : undefined;
     if (byId) {
       log.info('Matched device by stored peripheral ID', { serialNumber, id: byId.id });
-      // TEMP: time the connect+service-discovery phase so we can tell whether
-      // the "slow reconnect" complaint is in BLE scan (already timed via
-      // `Reconnect scan done elapsedMs=...` above) or in the connect itself.
-      const connectStartedAt = Date.now();
-      const connected = await this.connect(byId, 'background');
-      log.info('Reconnect connect phase done', {
-        serialNumber,
-        connectMs: Date.now() - connectStartedAt,
-      });
-      return connected;
+      return this.connect(byId, 'background');
     }
 
-    // Candidates to probe by serial number, deduped by id, strongest signal first
-    // so the nearest (most likely) unit is tried first.
-    //
-    // When the target's advertised name is known (storedName, e.g. "Bota Pin"),
-    // probe ONLY devices advertising that exact name. Reconnect targets the one
-    // active device; it must not connect to a different MODEL to read its SN — e.g.
-    // probing a nearby "Bota Note" while reconnecting a "Bota Pin" connects to an
-    // unrelated device and wastes the single radio slot. Same-name probing is still
-    // required and kept: the peripheral UUID rotates on iOS (so the byId fast path
-    // above misses after a reboot) and the SN isn't advertised, so reading SN over a
-    // connection is the only way to re-identify the target — and multiple same-model
-    // units are disambiguated the same way. The bare "Bota" prefix is only a fallback
-    // for legacy reconnect entries that have no storedName.
+    if (storedMac) {
+      const byMac = discovered.find((d) => normalizeMac(d.macAddress) === storedMac);
+      if (byMac) {
+        log.info('Matched device by advertised MAC', { serialNumber, id: byMac.id });
+        return this.connect(byMac, 'background');
+      }
+      // We know the target's MAC but it isn't advertising right now. Do NOT
+      // connect to any other device to disambiguate — the MAC is authoritative.
+      log.warn('No device with matching MAC found for reconnection', { serialNumber });
+      throw DeviceError.notFound(serialNumber);
+    }
+
+    // Legacy fallback (no stored MAC): SN-probe same-name candidates, deduped by
+    // id, strongest signal first so the nearest unit is tried first.
     const seen = new Set<string>();
     const candidates = (storedName
       ? discovered.filter((d) => d.name === storedName)
@@ -1293,21 +1272,11 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
    */
   private async probeSerialNumber(deviceId: string): Promise<string | null> {
     const wasConnected = this.connectedDevices.has(deviceId);
-    // [OTA-RECONNECT] DIAG: split connect-failure vs SN-read-failure so we can
-    // tell a half-open / GATT-not-ready reboot window from a clean miss.
-    let linked = false;
     try {
       await this.bleManager.connect(deviceId, 'background');
-      linked = true;
-      const sn = await this.readSerialNumber(deviceId);
-      log.info('[OTA-RECONNECT] SN probe ok', { deviceId, sn });
-      return sn;
-    } catch (err) {
-      log.info('[OTA-RECONNECT] SN probe failed', {
-        deviceId,
-        phase: linked ? 'sn-read' : 'connect',
-        error: (err as Error)?.message,
-      });
+      return await this.readSerialNumber(deviceId);
+    } catch {
+      log.debug('Reconnect: SN probe failed', { deviceId });
       // Only drop links this probe opened — never an established connection.
       if (!wasConnected && !this.connectedDevices.has(deviceId)) {
         try { await this.bleManager.disconnect(deviceId, 'background'); } catch { /* ignore */ }

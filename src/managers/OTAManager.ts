@@ -239,29 +239,13 @@ export class OTAManager extends EventEmitter<OTAManagerEvents> {
 
   private waitForReconnect(serialNumber: string, timeoutMs = 120000): Promise<void> {
     return new Promise((resolve, reject) => {
-      // [OTA-RECONNECT] DIAG: trace the post-reboot reconnect wait. Remove once
-      // the post-OTA reconnect wedge is root-caused.
-      const armedAt = Date.now();
-      log.info('[OTA-RECONNECT] wait armed', { serialNumber, timeoutMs });
-
       const timer = setTimeout(() => {
-        log.warn('[OTA-RECONNECT] wait TIMED OUT', {
-          serialNumber,
-          waitedMs: Date.now() - armedAt,
-        });
         cleanup();
         reject(new Error('Timed out waiting for device to restart'));
       }, timeoutMs);
 
       const onConnected = (connectedDevice: ConnectedDevice) => {
-        const match = connectedDevice.serialNumber === serialNumber;
-        log.info('[OTA-RECONNECT] saw deviceConnected', {
-          eventSn: connectedDevice.serialNumber,
-          wantSn: serialNumber,
-          match,
-          sinceArmedMs: Date.now() - armedAt,
-        });
-        if (match) {
+        if (connectedDevice.serialNumber === serialNumber) {
           cleanup();
           resolve();
         }

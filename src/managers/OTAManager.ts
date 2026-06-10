@@ -239,12 +239,25 @@ export class OTAManager extends EventEmitter<OTAManagerEvents> {
 
   private waitForReconnect(serialNumber: string, timeoutMs = 120000): Promise<void> {
     return new Promise((resolve, reject) => {
+      // [RC-DIAG] post-OTA: trace whether deviceConnected fires after reboot and
+      // whether its SN matches the wait. Distinguishes "loop never reconnected"
+      // from "reconnected but SN mismatch". Remove once post-OTA reconnect is fixed.
+      const armedAt = Date.now();
+      log.info('[RC-DIAG] OTA wait armed', { serialNumber, timeoutMs });
+
       const timer = setTimeout(() => {
+        log.warn('[RC-DIAG] OTA wait TIMED OUT', { serialNumber, waitedMs: Date.now() - armedAt });
         cleanup();
         reject(new Error('Timed out waiting for device to restart'));
       }, timeoutMs);
 
       const onConnected = (connectedDevice: ConnectedDevice) => {
+        log.info('[RC-DIAG] OTA wait saw deviceConnected', {
+          eventSn: connectedDevice.serialNumber,
+          wantSn: serialNumber,
+          match: connectedDevice.serialNumber === serialNumber,
+          sinceArmedMs: Date.now() - armedAt,
+        });
         if (connectedDevice.serialNumber === serialNumber) {
           cleanup();
           resolve();

@@ -131,6 +131,26 @@ function normalizeMac(mac: string | null | undefined): string | undefined {
   return norm.length > 0 ? norm : undefined;
 }
 
+/** Reject if `p` doesn't settle within `ms`. Used to bound the post-connect GATT
+ *  reads: right after a firmware-OTA reboot the device's link comes up but its
+ *  GATT server can still stall a characteristic read indefinitely (react-native-ble-plx
+ *  reads have no built-in timeout). Without this the whole connect() hangs and the
+ *  auto-reconnect loop never completes — the device shows connected at the link
+ *  layer but the SDK never emits `deviceConnected`. On timeout we throw so the
+ *  attempt fails fast and the loop retries when the GATT is ready. */
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); },
+    );
+  });
+}
+
+/** Timeout for the post-connect device-info GATT reads (see {@link withTimeout}). */
+const POST_CONNECT_READ_TIMEOUT_MS = 8000;
+
 /**
  * Async fetcher invoked by {@link DeviceManager.requestStartRecording} and
  * {@link DeviceManager.requestStopRecording} when called with the fetcher
@@ -410,10 +430,14 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         // with a new version and the cached value would be stale.
         // pairingState comes from the advertisement (scan-time), already
         // fresh, no GATT read needed. MTU is per-connection — fresh.
-        const [fv, m] = await Promise.all([
-          this.readFirmwareVersion(device.id),
-          this.bleManager.getMtu(device.id),
-        ]);
+        const [fv, m] = await withTimeout(
+          Promise.all([
+            this.readFirmwareVersion(device.id),
+            this.bleManager.getMtu(device.id),
+          ]),
+          POST_CONNECT_READ_TIMEOUT_MS,
+          'reconnect device-info reads',
+        );
         serialNumber = cached.serialNumber;
         firmwareVersion = fv;
         hardwareRevision = cached.hardwareRevision;
@@ -439,14 +463,18 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
           ps,
           m,
           hw,
-        ] = await Promise.all([
-          this.readSerialNumber(device.id),
-          this.readFirmwareVersion(device.id),
-          this.readHardwareRevision(device.id),
-          this.readPairingState(device.id),
-          this.bleManager.getMtu(device.id),
-          this.bleManager.hasService(device.id, SERVICE_BOTA_WIFI_CONFIG),
-        ]);
+        ] = await withTimeout(
+          Promise.all([
+            this.readSerialNumber(device.id),
+            this.readFirmwareVersion(device.id),
+            this.readHardwareRevision(device.id),
+            this.readPairingState(device.id),
+            this.bleManager.getMtu(device.id),
+            this.bleManager.hasService(device.id, SERVICE_BOTA_WIFI_CONFIG),
+          ]),
+          POST_CONNECT_READ_TIMEOUT_MS,
+          'reconnect device-info reads (full)',
+        );
         serialNumber = sn;
         firmwareVersion = fv;
         hardwareRevision = hr;
@@ -504,6 +532,11 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
       return connectedDevice;
     } catch (error) {
+      // The link may be up at the BLE layer but the post-connect GATT reads
+      // failed/timed out (common right after an OTA reboot). Tear the half-open
+      // link down so the next reconnect attempt does a fresh connect instead of
+      // reusing a stalled GATT session and hanging on the same read again.
+      try { await this.bleManager.disconnect(device.id, priority); } catch { /* ignore */ }
       this.emit('connectionStateChanged', device.id, 'disconnected');
       throw error;
     } finally {
@@ -712,12 +745,14 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     await this.startScan({ timeout: scanTimeout });
 
     const POLL_INTERVAL_MS = 200;
-    // A device is the target if its stored peripheral UUID matches, or — the
-    // stable, scan-visible identity — its advertised MAC matches our stored MAC.
-    // The name/prefix fallback only applies to legacy entries without a stored MAC.
+    // Exit the scan poll as soon as a plausible target appears: the stored
+    // peripheral UUID, the advertised MAC (stable, unique, scan-visible identity),
+    // or a same-name device. The same-name case lets the poll finish promptly even
+    // when the MAC isn't matched yet, so the match-priority block below (which tries
+    // UUID → MAC → same-name SN-probe) can run without waiting the full window.
     const matchesTarget = (d: DiscoveredDevice): boolean => {
       if (storedId && d.id === storedId) return true;
-      if (storedMac) return normalizeMac(d.macAddress) === storedMac;
+      if (storedMac && normalizeMac(d.macAddress) === storedMac) return true;
       return (!!storedName && d.name === storedName) || (d.name?.startsWith('Bota') ?? false);
     };
 
@@ -732,6 +767,19 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       count: discovered.length,
       elapsedMs: Date.now() - startedAt,
       devices: discovered.map((d) => `${d.name}(${d.id})`).join(', '),
+    });
+
+    // [RC-DIAG] post-OTA reconnect trace: compare stored MAC vs every discovered
+    // device's advertised MAC, so we can tell a MAC mismatch (device rebooted with
+    // a different MAC → MAC path throws) from a discoverability problem. Remove once
+    // the post-OTA reconnect is confirmed.
+    log.info('[RC-DIAG] scan result', {
+      serialNumber,
+      storedMac: storedMac ?? '(none)',
+      storedId: storedId ?? '(none)',
+      storedIdPresent: !!storedId && discovered.some((d) => d.id === storedId),
+      macMatchFound: !!storedMac && discovered.some((d) => normalizeMac(d.macAddress) === storedMac),
+      discovered: discovered.map((d) => `${d.name}/id=${d.id.slice(0, 8)}/mac=${normalizeMac(d.macAddress) ?? 'none'}`),
     });
 
     // Stop scan before connecting — on iOS a running scan can cancel the connection
@@ -760,14 +808,18 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         log.info('Matched device by advertised MAC', { serialNumber, id: byMac.id });
         return this.connect(byMac, 'background');
       }
-      // We know the target's MAC but it isn't advertising right now. Do NOT
-      // connect to any other device to disambiguate — the MAC is authoritative.
-      log.warn('No device with matching MAC found for reconnection', { serialNumber });
-      throw DeviceError.notFound(serialNumber);
+      // MAC is the authoritative scan-visible identity, but no advertised MAC
+      // matched. This can happen if the device's MAC isn't in the discovered
+      // advertising data yet, or it changed across a reboot/OTA. Rather than give
+      // up, fall through to the same-name SN-probe below as a last resort — that
+      // path is restricted to the exact stored model name, so it still never
+      // connects to a different model (e.g. a "Bota Note" for a "Bota Pin").
+      log.info('No advertised MAC match — falling back to same-name SN probe', { serialNumber });
     }
 
-    // Legacy fallback (no stored MAC): SN-probe same-name candidates, deduped by
-    // id, strongest signal first so the nearest unit is tried first.
+    // SN-probe fallback (no stored MAC, or MAC stored but not matched above):
+    // probe same-name candidates, deduped by id, strongest signal first so the
+    // nearest unit is tried first.
     const seen = new Set<string>();
     const candidates = (storedName
       ? discovered.filter((d) => d.name === storedName)
@@ -800,6 +852,15 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         });
         try { await this.bleManager.disconnect(cand.id, 'background'); } catch { /* ignore */ }
       }
+    }
+
+    // Target wasn't found this round. If we have its stored peripheral id, iOS may
+    // be holding a lingering half-connected state for it after a reset (OTA reboot)
+    // and suppressing its advertisements to this central — which is exactly why a
+    // running app can't reconnect but a fresh app (new central) can. Flush that
+    // state so the NEXT scan tick surfaces the peripheral again.
+    if (storedId) {
+      await this.bleManager.flushPeripheralConnection(storedId);
     }
 
     log.warn('No matching device found for reconnection', { serialNumber });

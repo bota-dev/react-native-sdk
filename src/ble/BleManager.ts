@@ -46,6 +46,23 @@ const log = logger.tag('BleManager');
  */
 export type RadioPriority = 'user' | 'background';
 
+/** Service/characteristic discovery has no built-in timeout in react-native-ble-plx.
+ *  Right after a firmware-OTA reboot the link comes up but the device's GATT server
+ *  can stall discovery indefinitely, hanging the whole connect. Bound it so a stalled
+ *  discovery fails fast and the reconnect loop retries when the GATT is ready. */
+const SERVICE_DISCOVERY_TIMEOUT_MS = 10000;
+
+/** Reject if `p` doesn't settle within `ms`. */
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); },
+    );
+  });
+}
+
 /** Extract a human-readable message from a BleError (message is often null) */
 function describeBleError(err: BleError | Error | null | undefined): string {
   if (!err) return 'Unknown error';
@@ -483,11 +500,35 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
    *   for auto-reconnect probes, which yield to user operations.
    */
   async connect(deviceId: string, priority: RadioPriority = 'user'): Promise<Device> {
-    // Check if already connected
-    if (this.connectedDevices.has(deviceId)) {
-      log.debug('Device already connected', { deviceId });
-      return this.connectedDevices.get(deviceId)!;
+    // Check if already connected — but verify against the BLE stack's source of
+    // truth, not just our cached map. When the device RESTARTS (OTA reboot or USB
+    // reflash) the link drops, but an abrupt reset may not deliver onDisconnected
+    // reliably, leaving a STALE Device handle in `connectedDevices`. Returning it
+    // here wedges every future connect (the app looks connected but all GATT ops
+    // fail/hang) until the app is killed. So when we hold a cached handle, confirm
+    // the link is actually live; if not, purge the stale state and fall through to
+    // a fresh connect.
+    const cached = this.connectedDevices.get(deviceId);
+    if (cached) {
+      let stillConnected = true;
+      try {
+        stillConnected = await this.manager.isDeviceConnected(deviceId);
+      } catch {
+        stillConnected = false;
+      }
+      if (stillConnected) {
+        log.debug('Device already connected', { deviceId });
+        return cached;
+      }
+      log.info('Cached device handle is stale (device restarted) — purging and reconnecting', { deviceId });
+      this.connectedDevices.delete(deviceId);
+      this.disconnectSubscriptions.get(deviceId)?.remove();
+      this.disconnectSubscriptions.delete(deviceId);
     }
+    // When we just purged a stale handle, iOS likely holds stale connection state
+    // too — force the cancel-stale flush in doConnect even on `background` priority
+    // (which normally skips it for speed), or the fresh connect can fail/hang.
+    const flushStale = cached != null;
 
     // Deduplicate: if a connect is already in progress, return the same promise
     const pending = this.pendingConnects.get(deviceId);
@@ -496,7 +537,7 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
       return pending;
     }
 
-    const connectPromise = this.runExclusive(priority, () => this.doConnect(deviceId, priority));
+    const connectPromise = this.runExclusive(priority, () => this.doConnect(deviceId, priority, flushStale));
     this.pendingConnects.set(deviceId, connectPromise);
 
     try {
@@ -506,7 +547,7 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
     }
   }
 
-  private async doConnect(deviceId: string, priority: RadioPriority): Promise<Device> {
+  private async doConnect(deviceId: string, priority: RadioPriority, flushStale = false): Promise<Device> {
     log.info('Connecting to device', { deviceId });
 
     // Stop any in-flight scan before connecting. On iOS a running scan can
@@ -516,12 +557,15 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
 
     try {
       // Cancel any stale connection first (iOS may cache disconnected state
-      // after supervision timeout, preventing a fresh connect). Skip on
-      // `background` priority (auto-reconnect): that path arrives via a clean
-      // device-side disconnect → re-advertise cycle, so there is no stale
-      // iOS state to flush, and the call itself burns 2-3s on iOS even when
-      // it's a no-op. Measured connect-phase savings: ~25%.
-      if (priority === 'user') {
+      // after supervision timeout, preventing a fresh connect). Normally skipped
+      // on `background` priority (auto-reconnect) — that path usually arrives via a
+      // clean device-side disconnect → re-advertise cycle, so there's no stale iOS
+      // state to flush and the call burns 2-3s on iOS even as a no-op (~25% of
+      // connect time). But `flushStale` forces it: the caller detected a stale
+      // cached handle (device restarted via OTA/USB reflash without a clean
+      // disconnect), so iOS likely DOES hold stale state that must be flushed or
+      // the fresh connect fails/hangs.
+      if (priority === 'user' || flushStale) {
         try { await this.manager.cancelDeviceConnection(deviceId); } catch { /* ignore */ }
       }
 
@@ -538,8 +582,16 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
         linkMs: tLinked - t0,
       });
 
-      // Discover services and characteristics
-      await device.discoverAllServicesAndCharacteristics();
+      // Discover services and characteristics. Bounded by a timeout: post-OTA the
+      // link is up but the device's GATT server may not be ready, and this call has
+      // no built-in timeout — without the bound it hangs forever and wedges the
+      // reconnect. On timeout we throw (caught below → link torn down) so the
+      // auto-reconnect loop retries once the GATT is ready.
+      await withTimeout(
+        device.discoverAllServicesAndCharacteristics(),
+        SERVICE_DISCOVERY_TIMEOUT_MS,
+        'service discovery',
+      );
       const tDiscovered = Date.now();
       log.debug('Services discovered', {
         deviceId,
@@ -573,6 +625,12 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
     } catch (error) {
       const msg = describeBleError(error as BleError);
       log.error('Connection failed', new Error(msg), { deviceId });
+      // The link may be up at the BLE layer even though connect/discovery failed
+      // (e.g. service discovery timed out post-OTA-reboot). Cancel it so the next
+      // reconnect attempt does a clean fresh connect instead of reusing a
+      // half-open, undiscovered link.
+      try { await this.manager.cancelDeviceConnection(deviceId); } catch { /* ignore */ }
+      this.connectedDevices.delete(deviceId);
       throw DeviceError.connectionFailed(deviceId, new Error(msg));
     }
   }
@@ -586,6 +644,24 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
    */
   async disconnect(deviceId: string, priority: RadioPriority = 'user'): Promise<void> {
     return this.runExclusive(priority, () => this.doDisconnect(deviceId));
+  }
+
+  /**
+   * Flush any lingering iOS/system connection state for a peripheral id, even if
+   * it isn't in our `connectedDevices` map. After a peripheral we were connected
+   * to resets (OTA reboot), iOS CoreBluetooth can keep the peripheral in a
+   * half-connected state and STOP surfacing its advertisements to this central
+   * instance — so a reconnect scan never sees it (only an app restart, which
+   * makes a fresh central, recovers). Calling cancelDeviceConnection clears that
+   * lingering state so the peripheral starts advertising-to-us again. No-op-safe.
+   */
+  async flushPeripheralConnection(deviceId: string): Promise<void> {
+    try {
+      await this.manager.cancelDeviceConnection(deviceId);
+      log.info('Flushed lingering peripheral connection state', { deviceId });
+    } catch {
+      // Expected when there's nothing to cancel — not an error.
+    }
   }
 
   private async doDisconnect(deviceId: string): Promise<void> {

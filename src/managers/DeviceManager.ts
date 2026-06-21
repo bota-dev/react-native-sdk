@@ -378,9 +378,12 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   ): Promise<ConnectedDevice> {
     log.info('Connecting to device', { deviceId: device.id, name: device.name });
 
-    // Check if already connected
+    // Background reconnect may reuse an existing connected entry. User
+    // pairing/manual connect must re-read identity from GATT even when the BLE
+    // link is already up, because the cached entry may belong to a stale iOS
+    // peripheral-id mapping.
     const existing = this.connectedDevices.get(device.id);
-    if (existing && existing.connectionState === 'connected') {
+    if (priority === 'background' && existing && existing.connectionState === 'connected') {
       log.debug('Device already connected', { deviceId: device.id });
       return existing;
     }
@@ -403,16 +406,12 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       // Connect via Bluetooth manager
       await this.bleManager.connect(device.id, priority);
 
-      // Look up cached info from the reconnect registry by bleId. If we've
-      // connected to this peripheral before, we already know its serial,
-      // firmware version, hardware revision, and WiFi capability — none of
-      // those change between connects (firmware version changes only after
-      // OTA, which goes through its own refresh path). Skipping the 6
-      // device-info GATT reads on reconnect drops perceived connect time by
-      // ~200-400ms. Pulled out of the critical path entirely; app calls
-      // `getFirmwareVersion()` / `getSerialNumber()` etc. lazily when it
-      // actually needs fresh values.
-      const cachedSN = this.findReconnectEntryByBleId(device.id);
+      // Background reconnects may use cached info for speed. User-initiated
+      // pairing/manual connects must refresh identity from GATT: iOS can
+      // surface system-connected peripherals without MAC/manufacturer data,
+      // and a stale BLE-id registry entry must not pair one device's serial
+      // with another device's public key.
+      const cachedSN = priority === 'background' ? this.findReconnectEntryByBleId(device.id) : undefined;
       const cached = cachedSN ? this.reconnectRegistry[cachedSN] : undefined;
 
       let serialNumber: string;
@@ -505,6 +504,12 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
       // Persist reconnect info for future reconnect() calls. Include the
       // cached fields so future reconnects can skip the device-info reads.
+      for (const [sn, info] of Object.entries(this.reconnectRegistry)) {
+        if (sn !== serialNumber && info?.bleId === device.id) {
+          delete this.reconnectRegistry[sn];
+        }
+      }
+
       this.reconnectRegistry[serialNumber] = {
         bleId: device.id,
         bleName: device.name,
@@ -742,7 +747,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     // `getDiscoveredDevices()` while it runs and return the moment the target
     // peripheral appears — typical healthy reconnect lands in <1s, no need to
     // wait the full 5s window.
-    await this.startScan({ timeout: scanTimeout });
+    await this.startScan({ timeout: scanTimeout, allowDuplicates: true });
 
     const POLL_INTERVAL_MS = 200;
     // Exit the scan poll as soon as a plausible target appears: the stored
@@ -753,6 +758,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     const matchesTarget = (d: DiscoveredDevice): boolean => {
       if (storedId && d.id === storedId) return true;
       if (storedMac && normalizeMac(d.macAddress) === storedMac) return true;
+      if (storedMac) return false;
       return (!!storedName && d.name === storedName) || (d.name?.startsWith('Bota') ?? false);
     };
 
@@ -1034,11 +1040,28 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       );
 
       if (data.length !== 64) {
+        log.warn('PK_D read returned unexpected length', {
+          deviceId: device.id,
+          serialNumber: device.serialNumber,
+          length: data.length,
+        });
         return null;
       }
 
-      return Buffer.from(data).toString('hex');
-    } catch {
+      const pkD = Buffer.from(data).toString('hex');
+      log.debug('PK_D read', {
+        deviceId: device.id,
+        serialNumber: device.serialNumber,
+        fingerprint: `${pkD.slice(0, 8)}...${pkD.slice(-8)}`,
+        length: pkD.length,
+      });
+      return pkD;
+    } catch (error) {
+      log.debug('PK_D read failed', {
+        deviceId: device.id,
+        serialNumber: device.serialNumber,
+        error: error instanceof Error ? error.message : String(error),
+      });
       // Auth service absent on legacy firmware — treat as no key
       return null;
     }
@@ -1312,9 +1335,16 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     const wasConnected = this.connectedDevices.has(deviceId);
     try {
       await this.bleManager.connect(deviceId, 'background');
-      return await this.readSerialNumber(deviceId);
-    } catch {
-      log.debug('Reconnect: SN probe failed', { deviceId });
+      return await withTimeout(
+        this.readSerialNumber(deviceId),
+        POST_CONNECT_READ_TIMEOUT_MS,
+        'reconnect serial-number probe',
+      );
+    } catch (error) {
+      log.debug('Reconnect: SN probe failed', {
+        deviceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       // Only drop links this probe opened — never an established connection.
       if (!wasConnected && !this.connectedDevices.has(deviceId)) {
         try { await this.bleManager.disconnect(deviceId, 'background'); } catch { /* ignore */ }

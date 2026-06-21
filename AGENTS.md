@@ -41,7 +41,7 @@ npm run build       # tsup → lib/ (CJS + ESM + .d.ts)
 ## Test
 
 ```bash
-npm test            # Vitest unit tests
+npm test            # Jest unit tests
 ```
 
 ## Verify Changes
@@ -88,7 +88,7 @@ npx expo start --clear
 | --- | --- |
 | `src/index.ts` | Public API exports |
 | `src/BotaClient.ts` | Main entry point (singleton) |
-| `src/ble/BLEManager.ts` | Low-level Bluetooth ops (CoreBluetooth/Android Bluetooth via react-native-ble-plx) |
+| `src/ble/BleManager.ts` | Low-level Bluetooth ops (CoreBluetooth/Android Bluetooth via react-native-ble-plx) |
 | `src/ble/constants.ts` | Bluetooth service + characteristic UUIDs (B07A prefix) |
 | `src/ble/parsers.ts` | Binary struct parsers (DeviceStatus, RecordingEntry, etc.) |
 | `src/ble/protocol.ts` | Protocol handler (Bluetooth packet assembly, ACK logic) |
@@ -97,6 +97,7 @@ npx expo start --clear
 | `src/upload/UploadQueue.ts` | Persistent SQLite upload queue with retry |
 | `src/storage/StorageManager.ts` | Local SQLite persistence (device registry, transfer state) |
 | `src/models/` | TypeScript types (Device, Recording, DeviceStatus, etc.) |
+| `jest.config.js` | Jest/Babel transform config for TypeScript unit tests |
 
 ## Design Docs
 

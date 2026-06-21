@@ -140,21 +140,28 @@ CONNECTED (unpaired)
 CONNECTED (paired)
   ↓ disconnected / app background
 DISCONNECTED
-  ↓ reconnect (stored peripheral ID; else serial-number probe of same-named units)
+  ↓ reconnect (stored peripheral ID; advertised MAC; else serial-number probe)
 ```
 
 **Reconnect matching (`DeviceManager.reconnect`).** All Bota Pins advertise the
 same generic name ("Bota Pin") and iOS/macOS rotate the BLE peripheral ID, so
 neither name nor stored ID reliably identifies a specific unit when several are
 nearby. Match order: (1) exact stored peripheral ID — fast path while still
-valid; (2) **serial-number probe** — connect to each active same-named candidate
-(nearest first), read the serial number from GATT `0x2A25`, keep the one that
-matches and release the rest. The SN is the only stable unique key but isn't
-advertised, so a brief connection to the wrong unit is the cost of finding the
-right one. Reconnect attempts are **serialized** (one BLE probe at a time) and
-**deduped per SN** — concurrent attempts for different SNs would otherwise share
-and then tear down the single connection slot; a mismatched probe never
-disconnects a device that is already an established connection.
+valid; (2) advertised MAC from manufacturer data — stable and scan-visible when
+firmware provides it; (3) **serial-number probe** — connect to each active
+same-named candidate (nearest first), read the serial number from GATT `0x2A25`,
+keep the one that matches and release the rest. The SN is the stable unique key
+when MAC data is unavailable but isn't advertised, so a brief connection to the
+wrong unit is the cost of finding the right one. When a stored MAC exists, the
+scan keeps duplicate advertisements enabled and waits for that MAC before falling
+back to same-name SN probes, because iOS can deliver name and manufacturer-data
+packets separately. Reconnect attempts are
+**serialized** (one BLE probe at a time) and **deduped per SN** — concurrent
+attempts for different SNs would otherwise share and then tear down the single
+connection slot; a mismatched probe never disconnects a device that is already
+an established connection. The SN probe read is timeout-bounded; if iOS reports
+the link up but the GATT read stalls, the probe releases its temporary link and
+the reconnect loop retries instead of leaving the app in `connecting`.
 
 **Radio arbitration (`BleManager`).** The reconnect-vs-reconnect serialisation
 above lives in `DeviceManager`, but the BLE adapter is also contended by the
@@ -171,6 +178,13 @@ pair on the single adapter (observed as a 2A26-read disconnect mid-handshake),
   by pairing and manual reconnect) sets `BleManager.isUserOpInFlight()`; the
   auto-reconnect loop checks it and skips its tick so background reconnection
   yields autonomously to user pairing instead of racing it.
+- User-priority connects re-read serial/device info from GATT even when the BLE
+  id is already present in `connectedDevices`; only background reconnect can
+  return the existing connected entry. This keeps pairing from combining a
+  stale connected serial with a fresh PK_D read from another physical device.
+- Background connection failures are expected during reconnect candidate probes,
+  so `BleManager` logs those at debug with the BLE reason. User-priority connect
+  failures remain error-level.
 
 See [internal-docs/device/Connection-Management.md §2.1.1](../internal-docs/device/Connection-Management.md#211-ble-radio-arbitration) for the cross-system specification.
 

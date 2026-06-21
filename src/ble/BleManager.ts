@@ -624,7 +624,11 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
       return device;
     } catch (error) {
       const msg = describeBleError(error as BleError);
-      log.error('Connection failed', new Error(msg), { deviceId });
+      if (priority === 'background') {
+        log.debug('Connection failed', { deviceId, priority, error: msg });
+      } else {
+        log.error('Connection failed', new Error(msg), { deviceId, priority });
+      }
       // The link may be up at the BLE layer even though connect/discovery failed
       // (e.g. service discovery timed out post-OTA-reboot). Cancel it so the next
       // reconnect attempt does a clean fresh connect instead of reusing a

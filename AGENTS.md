@@ -68,7 +68,7 @@ npx expo start --clear
 
 ## Code Conventions
 
-**Protocol fidelity** — the Bluetooth protocol is defined in [`../internal-docs/device/FIRMWARE_INTEGRATION_GUIDE.md`](../internal-docs/device/FIRMWARE_INTEGRATION_GUIDE.md) and [`../internal-docs/device/Device-App%20Protocol.md`](../internal-docs/device/Device-App%20Protocol.md). The SDK implements exactly what's specified there. Any deviation must be updated in the spec first.
+**Protocol fidelity** — the SDK-local Bluetooth protocol reference is [`FIRMWARE_PROTOCOL.md`](./FIRMWARE_PROTOCOL.md). Broader firmware design docs live in [`../internal-docs/device/`](../internal-docs/device/), but those docs may lag firmware or SDK implementation. When behavior differs, confirm against `src/protocol/ProtocolHandler.ts` and firmware `le_trans_data.c`, then update the SDK-local reference and any affected design docs.
 
 **Binary parsing** — device data is binary (packed C structs). Use the typed parsers in `src/ble/parsers.ts`. Never parse binary inline in handlers.
 
@@ -91,7 +91,7 @@ npx expo start --clear
 | `src/ble/BleManager.ts` | Low-level Bluetooth ops (CoreBluetooth/Android Bluetooth via react-native-ble-plx) |
 | `src/ble/constants.ts` | Bluetooth service + characteristic UUIDs (B07A prefix) |
 | `src/ble/parsers.ts` | Binary struct parsers (DeviceStatus, RecordingEntry, etc.) |
-| `src/ble/protocol.ts` | Protocol handler (Bluetooth packet assembly, ACK logic) |
+| `src/protocol/ProtocolHandler.ts` | Protocol handler (Bluetooth packet assembly, ACK logic) |
 | `src/managers/DeviceManager.ts` | Device discovery, connection, bonding, provisioning |
 | `src/managers/RecordingManager.ts` | Recording list, Bluetooth transfer, upload orchestration |
 | `src/upload/UploadQueue.ts` | Persistent SQLite upload queue with retry |
@@ -106,7 +106,8 @@ All design docs live in [`../internal-docs/`](../internal-docs/).
 | Doc | Covers | Status |
 | --- | --- | --- |
 | [Mobile SDK System Design](../internal-docs/Mobile%20SDK%20System%20Design.md) | Full SDK architecture, upload queue, windowed transfer | In progress |
-| [FIRMWARE_INTEGRATION_GUIDE](../internal-docs/device/FIRMWARE_INTEGRATION_GUIDE.md) | Bluetooth GATT service defs, recording transfer protocol, heartbeat | ✅ Complete (protocol reference) |
+| [FIRMWARE_PROTOCOL](./FIRMWARE_PROTOCOL.md) | SDK-local Bluetooth GATT service defs, recording transfer protocol, ACK/NACK behavior | SDK package reference |
+| [FIRMWARE_INTEGRATION_GUIDE](../internal-docs/device/FIRMWARE_INTEGRATION_GUIDE.md) | Broader firmware workflows, GATT service defs, heartbeat | Internal design reference |
 | [Device-App Protocol](../internal-docs/device/Device-App%20Protocol.md) | Bluetooth service definitions, OTA protocol | ✅ Complete |
 | [Bluetooth Reliable Transfer Design](../internal-docs/device/BLE%20Reliable%20Transfer%20Design.md) | v2 windowed transfer (sliding window, replaces stop-and-wait) | ⬜ Not implemented |
 | [Upload-Management](../internal-docs/device/Upload-Management.md) | Bluetooth sync, WiFi/4G direct upload, recovery, failover | ✅ Done |

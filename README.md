@@ -94,6 +94,13 @@ for await (const progress of BotaClient.recordings.syncRecording(
 // Note: WiFi/Cellular devices can upload directly without app involvement
 ```
 
+## Protocol Reference
+
+- [Firmware Protocol Reference](./FIRMWARE_PROTOCOL.md) documents the SDK-facing
+  BLE services, packet formats, and recording transfer ACK/NACK behavior.
+- The published mobile SDK in this package is React Native. Native Swift/iOS and
+  Kotlin/Android SDKs are not included in this repository today.
+
 ## API Reference
 
 ### BotaClient

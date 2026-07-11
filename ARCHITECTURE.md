@@ -55,7 +55,7 @@ src/
 
 ## Bluetooth Protocol
 
-Custom GATT service, UUID prefix `B07A`. See [`../internal-docs/device/FIRMWARE_INTEGRATION_GUIDE.md`](../internal-docs/device/FIRMWARE_INTEGRATION_GUIDE.md) for the authoritative spec.
+Custom GATT service, UUID prefix `B07A`. See [`FIRMWARE_PROTOCOL.md`](./FIRMWARE_PROTOCOL.md) for the SDK-local firmware protocol reference.
 
 | Service | UUID | SDK Component |
 | --- | --- | --- |
@@ -64,18 +64,19 @@ Custom GATT service, UUID prefix `B07A`. See [`../internal-docs/device/FIRMWARE_
 | STORAGE | B07A0004 | RecordingManager (list, transfer) |
 | WIFI_CONFIG | B07A0006 | DeviceManager (WiFi credential write) |
 
-### Device Status (14-byte binary, CONTROL B07A0201)
+### Device Status (15-byte binary, CONTROL B07A0201; 14-byte compatible)
 
 ```
 [0] battery_level (0-100)
-[1] reserved
+[1] LTE status
 [2] device_state  (0=idle, 1=recording, 2=syncing, 3=uploading, 4=charging, 5=low_bat, 6=full, 7=error)
 [3] pending_recordings
 [4-7] last_time_sync_ts (uint32LE)
 [8] flags (bit0=charging, bit1=low_bat, bit2=storage_full, bit3=wifi, bit4=lte, bit5=sync_active)
 [9-10] storage_total_mb (uint16LE)
 [11-12] storage_used_mb (uint16LE)
-[13] reserved
+[13] LTE signal quality (CSQ 0-31, 99=unknown)
+[14] WiFi radio status (optional on older firmware)
 ```
 
 ### Recording List (24-byte entries, STORAGE B07A0402)
@@ -87,20 +88,25 @@ Custom GATT service, UUID prefix `B07A`. See [`../internal-docs/device/FIRMWARE_
 [22-23] size_kb (uint16LE)
 ```
 
-### Recording Transfer (stop-and-wait, current; windowed planned)
+### Recording Transfer (streamed notifications, final ACK)
 
 ```
 SDK → Device: TRANSFER_CONTROL write 0x01           → list recordings
 Device → SDK: RECORDING_LIST notification            ← 24-byte entries
 SDK → Device: TRANSFER_CONTROL write 0x02 + file_id → start transfer
 Device → SDK: RECORDING_TRANSFER notify (DATA seq)  ← data packet
-SDK → Device: RECORDING_TRANSFER write (ACK seq)    → acknowledge
-  ...repeat for each packet...
+Device → SDK: RECORDING_TRANSFER notify (DATA seq)  ← next data packet
+  ...device continues while BLE transmit capacity is available...
 Device → SDK: RECORDING_TRANSFER notify (EOF + CRC32) ← transfer complete
+Device → SDK: RECORDING_TRANSFER notify (SHA256)      ← optional integrity hash
+SDK → Device: TRANSFER_CONTROL write (ACK/NACK)     → final CRC result
 SDK → Device: TRANSFER_CONTROL write 0x07 + file_id → confirm (device deletes file)
 ```
 
-**Planned v2:** Sliding window (size 4) with gap detection — see [Bluetooth Reliable Transfer Design](../internal-docs/device/BLE%20Reliable%20Transfer%20Design.md).
+The SDK does not ACK each DATA packet. It ACKs only after EOF, once the assembled
+payload passes CRC32 verification; it sends NACK on final CRC mismatch and Abort
+on cancellation. Firmware streams DATA packets back-to-back and keeps the
+transfer active until this final app result.
 
 ---
 
@@ -140,34 +146,27 @@ CONNECTED (unpaired)
 CONNECTED (paired)
   ↓ disconnected / app background
 DISCONNECTED
-  ↓ reconnect (stored peripheral ID; advertised MAC; else serial-number probe)
+  ↓ reconnect (stored peripheral ID or advertised MAC only)
 ```
 
 **Reconnect matching (`DeviceManager.reconnect`).** All Bota Pins advertise the
 same generic name ("Bota Pin") and iOS/macOS rotate the BLE peripheral ID, so
-neither name nor stored ID reliably identifies a specific unit when several are
-nearby. Match order: (1) exact stored peripheral ID — fast path while still
-valid; (2) advertised MAC from manufacturer data — stable and scan-visible when
-firmware provides it; (3) **serial-number probe** — connect to each active
-same-named candidate (nearest first), read the serial number from GATT `0x2A25`,
-keep the one that matches and release the rest. The SN is the stable unique key
-when MAC data is unavailable but isn't advertised, so a brief connection to the
-wrong unit is the cost of finding the right one. When a stored MAC exists, the
-scan keeps duplicate advertisements enabled and waits for that MAC before falling
-back to same-name SN probes, because iOS can deliver name and manufacturer-data
-packets separately. Reconnect attempts are
-**serialized** (one BLE probe at a time) and **deduped per SN** — concurrent
-attempts for different SNs would otherwise share and then tear down the single
-connection slot; a mismatched probe never disconnects a device that is already
-an established connection. The SN probe read is timeout-bounded; if iOS reports
-the link up but the GATT read stalls, the probe releases its temporary link and
-the reconnect loop retries instead of leaving the app in `connecting`.
+name is not a safe reconnect key when several are nearby. Match order: (1)
+exact stored peripheral ID — fast path while still valid; (2) advertised MAC
+from manufacturer data — stable and scan-visible when firmware provides it.
+Reconnect intentionally does **not** connect to same-name candidates to read
+GATT `0x2A25`; that can steal an unpaired manufacturing/pairing candidate and
+disconnect it on an SN mismatch. When neither stable identity matches, reconnect
+fails and the caller should let the user pair/select the device again. Reconnect
+attempts are **serialized** and **deduped per SN** so concurrent attempts for
+different SNs do not race over the single BLE adapter or each other's discovery
+results.
 
 **Radio arbitration (`BleManager`).** The reconnect-vs-reconnect serialisation
 above lives in `DeviceManager`, but the BLE adapter is also contended by the
 **pairing path** (`DeviceManager.connect`), which doesn't go through that chain.
-To prevent a stale device's auto-reconnect probe from racing a user-initiated
-pair on the single adapter (observed as a 2A26-read disconnect mid-handshake),
+To prevent stale auto-reconnect from racing a user-initiated pair on the single
+adapter (observed as a 2A26-read disconnect mid-handshake),
 `BleManager` owns a second arbiter:
 
 - All `connect`/`disconnect` calls run through a FIFO `radioChain` — no two

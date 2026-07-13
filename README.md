@@ -98,8 +98,15 @@ for await (const progress of BotaClient.recordings.syncRecording(
 
 - [Firmware Protocol Reference](./FIRMWARE_PROTOCOL.md) documents the SDK-facing
   BLE services, packet formats, and recording transfer ACK/NACK behavior.
-- The published mobile SDK in this package is React Native. Native Swift/iOS and
-  Kotlin/Android SDKs are not included in this repository today.
+
+## Related Mobile SDKs
+
+- React Native: this repository (`@bota.dev/react-native-sdk`)
+- Native iOS: [bota-mobile-sdk-ios](https://github.com/bota-dev/bota-mobile-sdk-ios)
+- Native Android: [bota-mobile-sdk-android](https://github.com/bota-dev/bota-mobile-sdk-android)
+
+The native SDKs are independent platform implementations of the same device
+protocol. They are not bundled with the React Native package.
 
 ## API Reference
 

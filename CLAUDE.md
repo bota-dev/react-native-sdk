@@ -12,6 +12,13 @@ This is the **Bota React Native SDK** (`@bota.dev/react-native-sdk`) - a React N
 
 Published on npm: https://www.npmjs.com/package/@bota.dev/react-native-sdk
 
+Native platform implementations are maintained independently in sibling repositories:
+
+- iOS: [`../bota-mobile-sdk-ios`](../bota-mobile-sdk-ios) (`BotaSDK`)
+- Android: [`../bota-mobile-sdk-android`](../bota-mobile-sdk-android) (`com.bota.sdk`)
+
+Future backend API SDKs use the separate `bota-api-sdk-*` naming family.
+
 ## Project Structure
 
 ```

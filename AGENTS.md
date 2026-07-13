@@ -2,6 +2,13 @@
 
 Public React Native SDK for communicating with Bota wearable devices via Bluetooth. Full context in [CLAUDE.md](CLAUDE.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
 
+## SDK Family
+
+- React Native: this repository (`@bota.dev/react-native-sdk`)
+- Native iOS: [`../bota-mobile-sdk-ios`](../bota-mobile-sdk-ios)
+- Native Android: [`../bota-mobile-sdk-android`](../bota-mobile-sdk-android)
+- Backend SDKs: separate future `bota-api-sdk-*` naming family
+
 ## Documentation Rule
 
 **Every code change must be accompanied by documentation updates.** After any change, check and update as needed:

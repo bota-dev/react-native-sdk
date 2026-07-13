@@ -11,8 +11,9 @@ against this file and the implementation in `src/`.
 ## Public SDK Availability
 
 - The published mobile SDK in this repository is `@bota.dev/react-native-sdk`.
-- There is no native Swift/iOS SDK or native Kotlin/Android SDK source in this
-  package today.
+- Native Swift/iOS and Kotlin/Android SDK sources live in sibling repositories:
+  [bota-mobile-sdk-ios](https://github.com/bota-dev/bota-mobile-sdk-ios) and
+  [bota-mobile-sdk-android](https://github.com/bota-dev/bota-mobile-sdk-android).
 - Firmware integration docs are internal to the Bota workspace unless explicitly
   published in the public docs site.
 

@@ -4,6 +4,20 @@ Public React Native SDK for Bluetooth communication with Bota wearable devices.
 
 ---
 
+## SDK Family Scope
+
+| Repository | Platform | Package/module |
+| --- | --- | --- |
+| `react-native-sdk` | React Native | `@bota.dev/react-native-sdk` |
+| [`bota-mobile-sdk-ios`](https://github.com/bota-dev/bota-mobile-sdk-ios) | Native iOS | `BotaSDK` |
+| [`bota-mobile-sdk-android`](https://github.com/bota-dev/bota-mobile-sdk-android) | Native Android | `com.bota.sdk` |
+
+Each mobile SDK implements the same device-facing behavior in its platform's
+native APIs. This repository owns only the React Native implementation; it does
+not contain or publish the native SDK sources.
+
+---
+
 ## Overview
 
 ```

@@ -372,7 +372,7 @@ export function parseAudioCodec(byte: number): AudioCodec {
 /**
  * Parse recording list from notification data
  * Each recording entry is 24 bytes:
- * - file_id:    bytes [0:4]   (4-byte file ID, bytes [4:16] zero-padded)
+ * - file_id:    bytes [0:4]   (4-byte file ID)
  * - flags:      byte  [4]     (bit 0 = encrypted at rest, P4)
  * - reserved:   bytes [5:16]
  * - timestamp:  bytes [16:20] (u32 LE, Unix seconds)
@@ -391,7 +391,9 @@ export function parseRecordingList(data: Buffer): DeviceRecording[] {
   }
 
   while (offset + entrySize <= data.length) {
-    const uuid = formatUuid(data.slice(offset, offset + 16));
+    const fileId = Buffer.alloc(16);
+    data.copy(fileId, 0, offset, offset + 4);
+    const uuid = formatUuid(fileId);
     const flags = data.readUInt8(offset + 4);
     const isEncrypted = (flags & 0x01) !== 0;
     const timestamp = data.readUInt32LE(offset + 16);

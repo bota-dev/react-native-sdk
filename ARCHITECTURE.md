@@ -96,11 +96,16 @@ Custom GATT service, UUID prefix `B07A`. See [`FIRMWARE_PROTOCOL.md`](./FIRMWARE
 ### Recording List (24-byte entries, STORAGE B07A0402)
 
 ```
-[0-15]  file_id (4 random bytes + 12 zero padding)
+[0-3]   file_id (4 random bytes)
+[4]     flags (bit0=encrypted_at_rest)
+[5-15]  reserved (currently zero)
 [16-19] started_at (uint32LE unix timestamp)
 [20-21] duration_sec (uint16LE)
 [22-23] size_kb (uint16LE)
 ```
+
+The SDK canonicalizes the 4-byte `file_id` to a UUID-shaped string by
+zero-padding the remaining 12 bytes; byte 4 is never part of the identifier.
 
 ### Recording Transfer (streamed notifications, final ACK)
 

@@ -61,10 +61,15 @@ with 24-byte entries.
 
 | Offset | Field | Encoding |
 | --- | --- | --- |
-| `0..15` | Recording UUID/file id | 16 bytes |
+| `0..3` | Recording file id | 4 bytes |
+| `4` | Flags | bit 0: encrypted at rest |
+| `5..15` | Reserved | 11 bytes, currently zero |
 | `16..19` | Started at | `uint32LE`, Unix seconds |
 | `20..21` | Duration | `uint16LE`, seconds |
 | `22..23` | Size | `uint16LE`, KiB |
+
+The SDK exposes the 4-byte file id as a UUID-shaped string by zero-padding the
+remaining 12 bytes. The flags byte is not part of that identifier.
 
 ## Recording Transfer
 

@@ -192,9 +192,8 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   private nonceCache: Map<string, string> = new Map();
   private reconnectRegistry: Record<string, ReconnectInfo> = {};
   // Serializes reconnect attempts. Multiple SNs can be reconnecting at once
-  // (auto-reconnect loop + app-driven calls); without this they all scan and
-  // probe the single in-range "Bota Pin" concurrently, share one BLE connection,
-  // and a mismatched probe's disconnect tears it down for the other flow.
+  // (auto-reconnect loop + app-driven calls); without this they all scan over
+  // the single shared BLE adapter concurrently and race each other's results.
   private reconnectChain: Promise<unknown> = Promise.resolve();
   // Dedup concurrent reconnect() calls for the same SN (e.g. the 3s auto-reconnect
   // loop firing again before the previous attempt settles) so they don't stack
@@ -669,9 +668,11 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   /**
    * Reconnect to a previously paired device by serial number.
    *
-   * The SDK stores the Bluetooth name and peripheral ID from the initial pairing.
-   * This method scans for nearby devices, matches by stored Bluetooth name,
-   * stored peripheral ID, or Bota-prefix fallback, then connects.
+   * The SDK stores the peripheral ID and advertised MAC from the initial pairing.
+   * This method scans for nearby devices, matches only those stable identities,
+   * then connects. It intentionally does not probe same-name devices by connecting
+   * to read their SN; all Pins share names, so that fallback can steal a nearby
+   * pairing candidate.
    *
    * @param serialNumber - Serial number of the device to reconnect to
    * @param options - Optional reconnection options
@@ -743,6 +744,14 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       storedMac: storedMac ?? '(none)',
     });
 
+    if (!storedId && !storedMac) {
+      log.info('Reconnect has no stored peripheral ID or advertised MAC; skipping scan', {
+        serialNumber,
+      });
+      log.warn('No matching device found for reconnection', { serialNumber });
+      throw DeviceError.notFound(serialNumber);
+    }
+
     // Scan for devices. The scan runs up to `scanTimeout`, but we poll
     // `getDiscoveredDevices()` while it runs and return the moment the target
     // peripheral appears — typical healthy reconnect lands in <1s, no need to
@@ -750,16 +759,14 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     await this.startScan({ timeout: scanTimeout, allowDuplicates: true });
 
     const POLL_INTERVAL_MS = 200;
-    // Exit the scan poll as soon as a plausible target appears: the stored
-    // peripheral UUID, the advertised MAC (stable, unique, scan-visible identity),
-    // or a same-name device. The same-name case lets the poll finish promptly even
-    // when the MAC isn't matched yet, so the match-priority block below (which tries
-    // UUID → MAC → same-name SN-probe) can run without waiting the full window.
+    // Exit the scan poll as soon as the target's scan-visible identity appears:
+    // either the stored peripheral UUID or the advertised MAC. We deliberately do
+    // not match by BLE name here because all units of the same model advertise the
+    // same name.
     const matchesTarget = (d: DiscoveredDevice): boolean => {
       if (storedId && d.id === storedId) return true;
       if (storedMac && normalizeMac(d.macAddress) === storedMac) return true;
-      if (storedMac) return false;
-      return (!!storedName && d.name === storedName) || (d.name?.startsWith('Bota') ?? false);
+      return false;
     };
 
     const startedAt = Date.now();
@@ -783,12 +790,6 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     //   2) advertised MAC — the stable, unique, scan-visible identity. Lets us pick
     //      the exact target out of several same-model devices and connect to ONLY it,
     //      without connecting to anyone to read a serial number.
-    //   3) serial-number probe — legacy fallback for entries paired before the MAC
-    //      was stored (or firmware that doesn't advertise it). The SN is the only
-    //      stable unique key but isn't advertised (GATT 0x2A25), so we connect to a
-    //      same-name candidate and read it. Restricted to the exact stored name so a
-    //      different model (e.g. a "Bota Note" while reconnecting a "Bota Pin") is
-    //      never connected to.
     const byId = storedId ? discovered.find((d) => d.id === storedId) : undefined;
     if (byId) {
       log.info('Matched device by stored peripheral ID', { serialNumber, id: byId.id });
@@ -801,50 +802,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         log.info('Matched device by advertised MAC', { serialNumber, id: byMac.id });
         return this.connect(byMac, 'background');
       }
-      // MAC is the authoritative scan-visible identity, but no advertised MAC
-      // matched. This can happen if the device's MAC isn't in the discovered
-      // advertising data yet, or it changed across a reboot/OTA. Rather than give
-      // up, fall through to the same-name SN-probe below as a last resort — that
-      // path is restricted to the exact stored model name, so it still never
-      // connects to a different model (e.g. a "Bota Note" for a "Bota Pin").
-      log.info('No advertised MAC match — falling back to same-name SN probe', { serialNumber });
-    }
-
-    // SN-probe fallback (no stored MAC, or MAC stored but not matched above):
-    // probe same-name candidates, deduped by id, strongest signal first so the
-    // nearest unit is tried first.
-    const seen = new Set<string>();
-    const candidates = (storedName
-      ? discovered.filter((d) => d.name === storedName)
-      : discovered.filter((d) => d.name?.startsWith('Bota'))
-    ).filter((d) => {
-      if (seen.has(d.id)) return false;
-      seen.add(d.id);
-      return true;
-    }).sort((a, b) => b.rssi - a.rssi);
-
-    log.debug('Reconnect: probing candidates by serial number', {
-      serialNumber,
-      count: candidates.length,
-    });
-
-    for (const cand of candidates) {
-      const sn = await this.probeSerialNumber(cand.id);
-      if (sn === serialNumber) {
-        log.info('Matched device by serial number', { serialNumber, id: cand.id });
-        // Already linked from the probe — connect() reuses it and finalizes.
-        return this.connect(cand, 'background');
-      }
-      if (sn !== null && !this.connectedDevices.has(cand.id)) {
-        // Wrong physical device, and not an established connection — drop the
-        // probe link so we don't hold its slot. The connectedDevices guard
-        // prevents a probe from tearing down a device some other flow has
-        // already fully connected.
-        log.debug('Reconnect: candidate SN mismatch, releasing', {
-          wanted: serialNumber, got: sn, id: cand.id,
-        });
-        try { await this.bleManager.disconnect(cand.id, 'background'); } catch { /* ignore */ }
-      }
+      log.info('No advertised MAC match; reconnect will not probe same-name devices', { serialNumber });
     }
 
     // Target wasn't found this round. If we have its stored peripheral id, iOS may
@@ -1321,36 +1279,6 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       CHAR_SERIAL_NUMBER
     );
     return data.toString('utf8').replace(/\0/g, '');
-  }
-
-  /**
-   * Identify a reconnect candidate by connecting at the BLE layer and reading
-   * its serial number (0x2A25) — used to disambiguate multiple same-named
-   * "Bota Pin" units when the stored peripheral ID has rotated. Returns the SN,
-   * or null if the candidate could not be connected/read (the link is dropped
-   * on failure). On success the link is left open so a matching candidate can be
-   * finalized by connect() without a second connect round-trip.
-   */
-  private async probeSerialNumber(deviceId: string): Promise<string | null> {
-    const wasConnected = this.connectedDevices.has(deviceId);
-    try {
-      await this.bleManager.connect(deviceId, 'background');
-      return await withTimeout(
-        this.readSerialNumber(deviceId),
-        POST_CONNECT_READ_TIMEOUT_MS,
-        'reconnect serial-number probe',
-      );
-    } catch (error) {
-      log.debug('Reconnect: SN probe failed', {
-        deviceId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      // Only drop links this probe opened — never an established connection.
-      if (!wasConnected && !this.connectedDevices.has(deviceId)) {
-        try { await this.bleManager.disconnect(deviceId, 'background'); } catch { /* ignore */ }
-      }
-      return null;
-    }
   }
 
   private async readFirmwareVersion(deviceId: string): Promise<string> {

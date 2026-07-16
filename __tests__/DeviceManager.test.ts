@@ -24,7 +24,7 @@ jest.mock(
 
 import { DeviceManager } from '../src/managers/DeviceManager';
 
-describe('DeviceManager reconnect SN probe', () => {
+describe('DeviceManager reconnect matching', () => {
   beforeEach(() => {
     jest.useFakeTimers();
   });
@@ -33,25 +33,7 @@ describe('DeviceManager reconnect SN probe', () => {
     jest.useRealTimers();
   });
 
-  it('times out a stalled serial-number read and releases the probe link', async () => {
-    const bleManager = {
-      connect: jest.fn().mockResolvedValue(undefined),
-      readCharacteristic: jest.fn(() => new Promise<Buffer>(() => {})),
-      disconnect: jest.fn().mockResolvedValue(undefined),
-    };
-    const manager = Object.create(DeviceManager.prototype) as any;
-    manager.bleManager = bleManager;
-    manager.connectedDevices = new Map();
-
-    const probe = manager.probeSerialNumber('candidate-id');
-
-    await jest.advanceTimersByTimeAsync(8001);
-
-    await expect(Promise.race([probe, Promise.resolve('still-pending')])).resolves.toBeNull();
-    expect(bleManager.disconnect).toHaveBeenCalledWith('candidate-id', 'background');
-  });
-
-  it('keeps scanning for an advertised MAC match before falling back to an SN probe', async () => {
+  it('keeps scanning for an advertised MAC match without probing same-name devices', async () => {
     const wanted = {
       id: 'new-id',
       name: 'Bota Pin',
@@ -77,7 +59,6 @@ describe('DeviceManager reconnect SN probe', () => {
     manager.startScan = jest.fn().mockResolvedValue(undefined);
     manager.stopScan = jest.fn();
     manager.connect = jest.fn().mockResolvedValue({ serialNumber: 'CKVYWO4LTS' });
-    manager.probeSerialNumber = jest.fn().mockResolvedValue('CKVYWO4LTS');
     manager.bleManager = { flushPeripheralConnection: jest.fn() };
 
     let reads = 0;
@@ -94,8 +75,67 @@ describe('DeviceManager reconnect SN probe', () => {
     await reconnect;
 
     expect(manager.startScan).toHaveBeenCalledWith({ timeout: 1000, allowDuplicates: true });
-    expect(manager.probeSerialNumber).not.toHaveBeenCalled();
     expect(manager.connect).toHaveBeenCalledWith(withMac, 'background');
+  });
+
+  it('does not reconnect by probing a same-name Bota device when no stable identity matches', async () => {
+    const sameNameCandidate = {
+      id: 'candidate-id',
+      name: 'Bota Pin',
+      deviceType: 'bota_pin',
+      firmwareVersion: '0.0.0',
+      pairingState: 'paired',
+      rssi: -45,
+      macAddress: null,
+      discoveredAt: new Date(),
+    };
+
+    const manager = Object.create(DeviceManager.prototype) as any;
+    manager.connectedDevices = new Map();
+    manager.reconnectRegistry = {
+      EVFXXW67KP: {
+        bleId: 'old-id',
+        bleName: 'Bota Pin',
+        deviceType: 'bota_pin',
+      },
+    };
+    manager.startScan = jest.fn().mockResolvedValue(undefined);
+    manager.stopScan = jest.fn();
+    manager.connect = jest.fn();
+    manager.bleManager = { flushPeripheralConnection: jest.fn().mockResolvedValue(undefined) };
+    manager.getDiscoveredDevices = jest.fn(() => [sameNameCandidate]);
+
+    const reconnect = manager.doReconnect('EVFXXW67KP', { scanTimeout: 1000 });
+    const assertion = expect(reconnect).rejects.toThrow('Device EVFXXW67KP not found');
+
+    await jest.advanceTimersByTimeAsync(1000);
+
+    await assertion;
+    expect(manager.connect).not.toHaveBeenCalled();
+    expect(manager.bleManager.flushPeripheralConnection).toHaveBeenCalledWith('old-id');
+  });
+
+  it('skips reconnect scan when there is no stored peripheral id or advertised MAC', async () => {
+    const manager = Object.create(DeviceManager.prototype) as any;
+    manager.connectedDevices = new Map();
+    manager.reconnectRegistry = {
+      DS5WMKQONI: {
+        bleName: 'Bota Pin',
+        deviceType: 'bota_pin',
+      },
+    };
+    manager.startScan = jest.fn();
+    manager.stopScan = jest.fn();
+    manager.connect = jest.fn();
+    manager.bleManager = { flushPeripheralConnection: jest.fn() };
+
+    await expect(manager.doReconnect('DS5WMKQONI', { scanTimeout: 1000 }))
+      .rejects.toThrow('Device DS5WMKQONI not found');
+
+    expect(manager.startScan).not.toHaveBeenCalled();
+    expect(manager.stopScan).not.toHaveBeenCalled();
+    expect(manager.connect).not.toHaveBeenCalled();
+    expect(manager.bleManager.flushPeripheralConnection).not.toHaveBeenCalled();
   });
 });
 

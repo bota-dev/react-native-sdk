@@ -42,7 +42,7 @@ const log = logger.tag('BleManager');
  * Priority of a radio operation.
  * - `user`: initiated by an explicit user action (pairing, manual connect).
  *   Stops any in-flight scan and is never starved behind background work.
- * - `background`: auto-reconnect probes/connects. Yields to user operations.
+ * - `background`: auto-reconnect connects. Yields to user operations.
  */
 export type RadioPriority = 'user' | 'background';
 
@@ -497,7 +497,7 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
    * arbiter so it never races another connect/disconnect on the adapter.
    *
    * @param priority `user` (default) for pairing/manual connect; `background`
-   *   for auto-reconnect probes, which yield to user operations.
+   *   for auto-reconnect connects, which yield to user operations.
    */
   async connect(deviceId: string, priority: RadioPriority = 'user'): Promise<Device> {
     // Check if already connected — but verify against the BLE stack's source of
@@ -643,7 +643,7 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
    * Disconnect from a device. Runs through the radio arbiter so it serializes
    * against connects rather than tearing down a slot another op is using.
    *
-   * @param priority `background` for auto-reconnect probe releases; `user`
+   * @param priority `background` for auto-reconnect cleanup; `user`
    *   (default) for user-initiated disconnects.
    */
   async disconnect(deviceId: string, priority: RadioPriority = 'user'): Promise<void> {

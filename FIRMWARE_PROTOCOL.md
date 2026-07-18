@@ -1,5 +1,7 @@
 # Firmware Protocol Reference — @bota.dev/react-native-sdk
 
+DEVICE_SETTINGS v0x02 byte 9 is `heartbeat_enabled_mask`: bit 7 marks an explicit value, bit 1 enables cellular direct heartbeat, and bit 0 enables WiFi direct heartbeat. Values without bit 7 retain the legacy both-enabled default.
+
 This document is the SDK-local reference for the Bluetooth protocol implemented by
 `@bota.dev/react-native-sdk`. It intentionally covers only the app-facing surface
 needed by React Native apps and SDK maintainers.

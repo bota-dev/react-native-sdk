@@ -1,5 +1,7 @@
 # Architecture — @bota.dev/react-native-sdk
 
+> Connection settings preserve the 12-byte v0x02 layout and use byte 9 for legacy-safe heartbeat channel control.
+
 Public React Native SDK for Bluetooth communication with Bota wearable devices.
 
 ---

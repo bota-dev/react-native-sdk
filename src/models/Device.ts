@@ -353,6 +353,10 @@ export interface DeviceConnectionSettings {
     wifi: boolean;
     cellular: boolean;
   };
+  heartbeat_enabled_connections?: {
+    wifi: boolean;
+    cellular: boolean;
+  };
   upload_network_preference: ConnectionType[];
   power_management?: {
     wifi_idle_timeout_seconds: number;      // 0=always-on, 10-2540=custom, default 180

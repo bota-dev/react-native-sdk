@@ -121,4 +121,5 @@ All design docs live in [`../internal-docs/`](../internal-docs/).
 | [Device-Provisioning](../internal-docs/device/Device-Provisioning.md) | Bluetooth pairing, token write, QR claim flow | ✅ Done |
 | [WiFi-Configuration](../internal-docs/device/WiFi-Configuration.md) | WiFi credential provisioning via Bluetooth WIFI_CONFIG service | MVP done |
 | [Connection-Management](../internal-docs/device/Connection-Management.md) | Connection lifecycles, Bluetooth reconnect strategy | ✅ Done |
+| [Heartbeat-Channel-Control](../internal-docs/device/Heartbeat-Channel-Control.md) | Legacy-safe DEVICE_SETTINGS byte-9 heartbeat channel mask | ✅ Done |
 | [Device–App–Backend Security](../internal-docs/device/Device%E2%80%93App%E2%80%93Backend%20Security%20%26%20Communication%20Design.md) | Auth model, Grant tokens (v1), MVP limitations | MVP done |

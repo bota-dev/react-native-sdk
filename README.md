@@ -1,5 +1,7 @@
 # @bota.dev/react-native-sdk
 
+`DeviceConnectionSettings` optionally accepts `heartbeat_enabled_connections`; serialization writes the explicit DEVICE_SETTINGS byte-9 mask and parsing resolves legacy payloads to both channels enabled.
+
 Official React Native SDK for Bota wearable devices.
 
 ## Installation

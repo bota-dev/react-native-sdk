@@ -1,5 +1,7 @@
 # CLAUDE.md - Bota React Native SDK
 
+> **Updated 2026-07:** DEVICE_SETTINGS byte 9 carries the explicit direct-heartbeat mask; legacy payloads parse as WiFi and cellular enabled.
+
 See [AGENTS.md](AGENTS.md) for build commands and conventions. See [ARCHITECTURE.md](ARCHITECTURE.md) for module map and protocol details.
 
 **Documentation rule:** Every public API change must include documentation updates — `CLAUDE.md`, `ARCHITECTURE.md`, `AGENTS.md`, `README.md`, public docs (`../docs/`) as needed, and `../internal-docs/` if the change implements or invalidates a design doc. See [`../internal-docs/CLAUDE.md`](../internal-docs/CLAUDE.md) for the downstream impact matrix.

@@ -859,7 +859,8 @@ function idToConnectionType(id: number): ConnectionType | null {
  * Byte 6: power_cfg_wifi — 0=default(180s), 1-254=value×10s, 255=always-on
  * Byte 7: streaming_enabled (0x00=off, 0x01=on)
  * Byte 8: chunk_flush_interval_s (0=disabled, 1-128=seconds, default 60)
- * Bytes 9-11: reserved (0x00)
+ * Byte 9: heartbeat_enabled_mask — bit 7: explicit, bit 1: 4G, bit 0: WiFi
+ * Bytes 10-11: reserved (0x00)
  */
 export function serializeConnectionSettings(settings: DeviceConnectionSettings): Buffer {
   const buf = Buffer.alloc(12);
@@ -892,6 +893,12 @@ export function serializeConnectionSettings(settings: DeviceConnectionSettings):
   const flush = settings.streaming_flush_interval_seconds ?? 60;
   buf.writeUInt8(Math.max(0, Math.min(128, flush)), 8);
 
+  const heartbeat = settings.heartbeat_enabled_connections ?? { wifi: true, cellular: true };
+  let heartbeatMask = 0x80;
+  if (heartbeat.wifi) heartbeatMask |= 0x01;
+  if (heartbeat.cellular) heartbeatMask |= 0x02;
+  buf.writeUInt8(heartbeatMask, 9);
+
   return buf;
 }
 
@@ -905,6 +912,7 @@ export function parseConnectionSettings(data: Buffer): DeviceConnectionSettings 
     // Unknown version or empty — return defaults
     return {
       enabled_connections: { wifi: true, cellular: true },
+      heartbeat_enabled_connections: { wifi: true, cellular: true },
       upload_network_preference: ['wifi', 'ble', 'cellular'],
     };
   }
@@ -935,5 +943,13 @@ export function parseConnectionSettings(data: Buffer): DeviceConnectionSettings 
   const streaming_flush_interval_seconds =
     version === 0x02 && data.length >= 9 ? data.readUInt8(8) : 60;
 
-  return { enabled_connections, upload_network_preference, power_management, streaming_enabled, streaming_flush_interval_seconds };
+  const heartbeatMask = version === 0x02 && data.length >= 10 ? data.readUInt8(9) : 0;
+  const heartbeat_enabled_connections = (heartbeatMask & 0x80) === 0
+    ? { wifi: true, cellular: true }
+    : {
+      wifi: (heartbeatMask & 0x01) !== 0,
+      cellular: (heartbeatMask & 0x02) !== 0,
+    };
+
+  return { enabled_connections, heartbeat_enabled_connections, upload_network_preference, power_management, streaming_enabled, streaming_flush_interval_seconds };
 }

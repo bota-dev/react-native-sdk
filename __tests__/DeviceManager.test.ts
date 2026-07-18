@@ -78,7 +78,7 @@ describe('DeviceManager reconnect matching', () => {
     expect(manager.connect).toHaveBeenCalledWith(withMac, 'background');
   });
 
-  it('does not reconnect by probing a same-name Bota device when no stable identity matches', async () => {
+  it('does not reconnect by probing a same-name Bota device while user work is in flight', async () => {
     const sameNameCandidate = {
       id: 'candidate-id',
       name: 'Bota Pin',
@@ -102,7 +102,10 @@ describe('DeviceManager reconnect matching', () => {
     manager.startScan = jest.fn().mockResolvedValue(undefined);
     manager.stopScan = jest.fn();
     manager.connect = jest.fn();
-    manager.bleManager = { flushPeripheralConnection: jest.fn().mockResolvedValue(undefined) };
+    manager.bleManager = {
+      flushPeripheralConnection: jest.fn().mockResolvedValue(undefined),
+      isUserOpInFlight: jest.fn(() => true),
+    };
     manager.getDiscoveredDevices = jest.fn(() => [sameNameCandidate]);
 
     const reconnect = manager.doReconnect('EVFXXW67KP', { scanTimeout: 1000 });
@@ -115,26 +118,80 @@ describe('DeviceManager reconnect matching', () => {
     expect(manager.bleManager.flushPeripheralConnection).toHaveBeenCalledWith('old-id');
   });
 
-  it('skips reconnect scan when there is no stored peripheral id or advertised MAC', async () => {
+  it('reconnects legacy entries by serial probe when the iOS peripheral id rotated', async () => {
+    const rotatedIdCandidate = {
+      id: 'rotated-id',
+      name: 'Bota Pin',
+      deviceType: 'bota_pin',
+      firmwareVersion: '0.0.0',
+      pairingState: 'paired',
+      rssi: -45,
+      macAddress: null,
+      discoveredAt: new Date(),
+    };
+
     const manager = Object.create(DeviceManager.prototype) as any;
     manager.connectedDevices = new Map();
     manager.reconnectRegistry = {
-      DS5WMKQONI: {
+      C8SU2XXWHI: {
+        bleId: 'old-ios-id',
         bleName: 'Bota Pin',
         deviceType: 'bota_pin',
       },
     };
-    manager.startScan = jest.fn();
+    manager.startScan = jest.fn().mockResolvedValue(undefined);
     manager.stopScan = jest.fn();
-    manager.connect = jest.fn();
-    manager.bleManager = { flushPeripheralConnection: jest.fn() };
+    manager.connect = jest.fn().mockResolvedValue({ serialNumber: 'C8SU2XXWHI' });
+    manager.probeSerialNumber = jest.fn().mockResolvedValue('C8SU2XXWHI');
+    manager.bleManager = {
+      flushPeripheralConnection: jest.fn(),
+      isUserOpInFlight: jest.fn(() => false),
+    };
+    manager.getDiscoveredDevices = jest.fn(() => [rotatedIdCandidate]);
 
-    await expect(manager.doReconnect('DS5WMKQONI', { scanTimeout: 1000 }))
-      .rejects.toThrow('Device DS5WMKQONI not found');
+    const reconnect = manager.doReconnect('C8SU2XXWHI', { scanTimeout: 1000 });
 
-    expect(manager.startScan).not.toHaveBeenCalled();
-    expect(manager.stopScan).not.toHaveBeenCalled();
-    expect(manager.connect).not.toHaveBeenCalled();
+    await jest.advanceTimersByTimeAsync(1000);
+
+    await reconnect;
+    expect(manager.probeSerialNumber).toHaveBeenCalledWith('rotated-id');
+    expect(manager.connect).toHaveBeenCalledWith(rotatedIdCandidate, 'background');
+    expect(manager.bleManager.flushPeripheralConnection).not.toHaveBeenCalled();
+  });
+
+  it('recovers after app reinstall by probing Bota candidates for the known serial number', async () => {
+    const candidate = {
+      id: 'new-ios-id',
+      name: 'Bota Pin',
+      deviceType: 'bota_pin',
+      firmwareVersion: '0.0.0',
+      pairingState: 'paired',
+      rssi: -45,
+      macAddress: null,
+      discoveredAt: new Date(),
+    };
+
+    const manager = Object.create(DeviceManager.prototype) as any;
+    manager.connectedDevices = new Map();
+    manager.reconnectRegistry = {};
+    manager.startScan = jest.fn().mockResolvedValue(undefined);
+    manager.stopScan = jest.fn();
+    manager.connect = jest.fn().mockResolvedValue({ serialNumber: 'EVFXXW67KP' });
+    manager.probeSerialNumber = jest.fn().mockResolvedValue('EVFXXW67KP');
+    manager.bleManager = {
+      flushPeripheralConnection: jest.fn(),
+      isUserOpInFlight: jest.fn(() => false),
+    };
+    manager.getDiscoveredDevices = jest.fn(() => [candidate]);
+
+    const reconnect = manager.doReconnect('EVFXXW67KP', { scanTimeout: 1000 });
+
+    await jest.advanceTimersByTimeAsync(1000);
+
+    await reconnect;
+    expect(manager.startScan).toHaveBeenCalledWith({ timeout: 1000, allowDuplicates: true });
+    expect(manager.probeSerialNumber).toHaveBeenCalledWith('new-ios-id');
+    expect(manager.connect).toHaveBeenCalledWith(candidate, 'background');
     expect(manager.bleManager.flushPeripheralConnection).not.toHaveBeenCalled();
   });
 });

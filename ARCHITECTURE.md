@@ -165,21 +165,22 @@ CONNECTED (unpaired)
 CONNECTED (paired)
   ↓ disconnected / app background
 DISCONNECTED
-  ↓ reconnect (stored peripheral ID or advertised MAC only)
+  ↓ reconnect (stored peripheral ID / advertised MAC / guarded SN probe after registry loss or ID rotation)
 ```
 
 **Reconnect matching (`DeviceManager.reconnect`).** All Bota Pins advertise the
 same generic name ("Bota Pin") and iOS/macOS rotate the BLE peripheral ID, so
 name is not a safe reconnect key when several are nearby. Match order: (1)
 exact stored peripheral ID — fast path while still valid; (2) advertised MAC
-from manufacturer data — stable and scan-visible when firmware provides it.
-Reconnect intentionally does **not** connect to same-name candidates to read
-GATT `0x2A25`; that can steal an unpaired manufacturing/pairing candidate and
-disconnect it on an SN mismatch. When neither stable identity matches, reconnect
-fails and the caller should let the user pair/select the device again. Reconnect
-attempts are **serialized** and **deduped per SN** so concurrent attempts for
-different SNs do not race over the single BLE adapter or each other's discovery
-results.
+from manufacturer data — stable and scan-visible when firmware provides it; (3)
+a guarded serial-number probe when no stored MAC exists and either the peripheral
+ID rotated or the local registry was lost after an app reinstall. The probe runs
+only while no user radio work is in flight, connects to likely Bota candidates,
+and reads GATT `0x2A25`. This preserves reconnect without reintroducing pairing
+races. When none of those match, reconnect fails and the caller should let the
+user pair/select the device again. Reconnect attempts are **serialized**
+and **deduped per SN** so concurrent attempts for different SNs do not race over
+the single BLE adapter or each other's discovery results.
 
 **Radio arbitration (`BleManager`).** The reconnect-vs-reconnect serialisation
 above lives in `DeviceManager`, but the BLE adapter is also contended by the

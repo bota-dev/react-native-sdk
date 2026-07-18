@@ -192,8 +192,9 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   private nonceCache: Map<string, string> = new Map();
   private reconnectRegistry: Record<string, ReconnectInfo> = {};
   // Serializes reconnect attempts. Multiple SNs can be reconnecting at once
-  // (auto-reconnect loop + app-driven calls); without this they all scan over
-  // the single shared BLE adapter concurrently and race each other's results.
+  // (auto-reconnect loop + app-driven calls); without this they all scan and
+  // probe the single shared BLE adapter concurrently and race each other's
+  // results.
   private reconnectChain: Promise<unknown> = Promise.resolve();
   // Dedup concurrent reconnect() calls for the same SN (e.g. the 3s auto-reconnect
   // loop firing again before the previous attempt settles) so they don't stack
@@ -668,11 +669,10 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   /**
    * Reconnect to a previously paired device by serial number.
    *
-   * The SDK stores the peripheral ID and advertised MAC from the initial pairing.
-   * This method scans for nearby devices, matches only those stable identities,
-   * then connects. It intentionally does not probe same-name devices by connecting
-   * to read their SN; all Pins share names, so that fallback can steal a nearby
-   * pairing candidate.
+   * The SDK stores the peripheral ID and advertised MAC from the initial pairing
+   * when available. This method first matches those scan-visible identities. If
+   * there is no stored MAC and the iOS peripheral ID rotated or the local registry
+   * was lost, reconnect uses a guarded Bota-candidate serial-number probe.
    *
    * @param serialNumber - Serial number of the device to reconnect to
    * @param options - Optional reconnection options
@@ -744,14 +744,6 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       storedMac: storedMac ?? '(none)',
     });
 
-    if (!storedId && !storedMac) {
-      log.info('Reconnect has no stored peripheral ID or advertised MAC; skipping scan', {
-        serialNumber,
-      });
-      log.warn('No matching device found for reconnection', { serialNumber });
-      throw DeviceError.notFound(serialNumber);
-    }
-
     // Scan for devices. The scan runs up to `scanTimeout`, but we poll
     // `getDiscoveredDevices()` while it runs and return the moment the target
     // peripheral appears — typical healthy reconnect lands in <1s, no need to
@@ -803,6 +795,56 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         return this.connect(byMac, 'background');
       }
       log.info('No advertised MAC match; reconnect will not probe same-name devices', { serialNumber });
+    }
+
+    // If the iOS peripheral id rotates or the local registry is lost after an app
+    // reinstall, the serial number is the only remaining stable key, but it is only
+    // available through GATT. Keep this fallback guarded so it cannot steal the
+    // adapter during user pairing, and never use it when a stored MAC did not match.
+    if (!storedMac) {
+      if (this.bleManager.isUserOpInFlight()) {
+        log.debug('Reconnect: skipping serial-number probe because user radio work is in flight', {
+          serialNumber,
+        });
+      } else {
+        const seen = new Set<string>();
+        const candidates = discovered
+          .filter((d) => (storedName ? d.name === storedName : d.name?.startsWith('Bota')))
+          .filter((d) => {
+            if (seen.has(d.id)) return false;
+            seen.add(d.id);
+            return true;
+          })
+          .sort((a, b) => b.rssi - a.rssi);
+
+        log.debug('Reconnect: probing Bota candidates by serial number', {
+          serialNumber,
+          count: candidates.length,
+        });
+
+        for (const cand of candidates) {
+          if (this.bleManager.isUserOpInFlight()) {
+            log.debug('Reconnect: aborting serial-number probe because user radio work started', {
+              serialNumber,
+            });
+            break;
+          }
+
+          const sn = await this.probeSerialNumber(cand.id);
+          if (sn === serialNumber) {
+            log.info('Matched device by serial number', { serialNumber, id: cand.id });
+            return this.connect(cand, 'background');
+          }
+          if (sn !== null && !this.connectedDevices.has(cand.id)) {
+            log.debug('Reconnect: candidate SN mismatch, releasing', {
+              wanted: serialNumber,
+              got: sn,
+              id: cand.id,
+            });
+            try { await this.bleManager.disconnect(cand.id, 'background'); } catch { /* ignore */ }
+          }
+        }
+      }
     }
 
     // Target wasn't found this round. If we have its stored peripheral id, iOS may
@@ -1279,6 +1321,33 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       CHAR_SERIAL_NUMBER
     );
     return data.toString('utf8').replace(/\0/g, '');
+  }
+
+  /**
+   * Identify a reconnect candidate by connecting at the BLE layer and
+   * reading its serial number (0x2A25). Returns the SN, or null if the candidate
+   * could not be connected/read. On a successful read the link is left open so a
+   * matching candidate can be finalized by connect() without reconnecting.
+   */
+  private async probeSerialNumber(deviceId: string): Promise<string | null> {
+    const wasConnected = this.connectedDevices.has(deviceId);
+    try {
+      await this.bleManager.connect(deviceId, 'background');
+      return await withTimeout(
+        this.readSerialNumber(deviceId),
+        POST_CONNECT_READ_TIMEOUT_MS,
+        'reconnect serial-number probe',
+      );
+    } catch (error) {
+      log.debug('Reconnect: SN probe failed', {
+        deviceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      if (!wasConnected && !this.connectedDevices.has(deviceId)) {
+        try { await this.bleManager.disconnect(deviceId, 'background'); } catch { /* ignore */ }
+      }
+      return null;
+    }
   }
 
   private async readFirmwareVersion(deviceId: string): Promise<string> {

@@ -846,6 +846,25 @@ function idToConnectionType(id: number): ConnectionType | null {
   }
 }
 
+const DEFAULT_IDLE_TIMEOUT_SECONDS = 180;
+
+function encodeIdleTimeoutSeconds(seconds: number): number {
+  const valid = Number.isInteger(seconds)
+    && seconds >= -1
+    && seconds <= 2540
+    && (seconds <= 0 || seconds >= 10);
+  if (!valid) {
+    throw new RangeError('Idle timeout must be -1, 0, or an integer from 10 to 2540 seconds');
+  }
+  if (seconds === -1) return 0xFF;
+  if (seconds === 0) return 0x00;
+  return Math.floor(seconds / 10);
+}
+
+function decodeIdleTimeoutSeconds(raw: number): number {
+  return raw === 0xFF ? -1 : raw * 10;
+}
+
 /**
  * Serialize connection settings to 12-byte buffer for Bluetooth DEVICE_SETTINGS characteristic.
  *
@@ -855,8 +874,8 @@ function idToConnectionType(id: number): ConnectionType | null {
  * Byte 2: upload_network_preference[0] — 1=WiFi, 2=BLE, 3=4G, 0=end
  * Byte 3: upload_network_preference[1]
  * Byte 4: upload_network_preference[2]
- * Byte 5: power_cfg_4g — 0=default(180s), 1-254=value×10s, 255=always-on
- * Byte 6: power_cfg_wifi — 0=default(180s), 1-254=value×10s, 255=always-on
+ * Byte 5: power_cfg_4g — 0=immediate, 1-254=value×10s, 255=always-on
+ * Byte 6: power_cfg_wifi — 0=immediate, 1-254=value×10s, 255=always-on
  * Byte 7: streaming_enabled (0x00=off, 0x01=on)
  * Byte 8: chunk_flush_interval_s (0=disabled, 1-128=seconds, default 60)
  * Byte 9: heartbeat_enabled_mask — bit 7: explicit, bit 1: 4G, bit 0: WiFi
@@ -879,14 +898,12 @@ export function serializeConnectionSettings(settings: DeviceConnectionSettings):
     }
   }
 
-  const pm = settings.power_management;
-  if (pm) {
-    buf.writeUInt8(pm.cellular_idle_timeout_seconds === 0 ? 0xFF :
-      Math.round(pm.cellular_idle_timeout_seconds / 10), 5);
-    buf.writeUInt8(pm.wifi_idle_timeout_seconds === 0 ? 0xFF :
-      Math.round(pm.wifi_idle_timeout_seconds / 10), 6);
-  }
-  // else bytes 5-6 stay 0x00 (firmware default 180s)
+  const pm = settings.power_management ?? {
+    cellular_idle_timeout_seconds: DEFAULT_IDLE_TIMEOUT_SECONDS,
+    wifi_idle_timeout_seconds: DEFAULT_IDLE_TIMEOUT_SECONDS,
+  };
+  buf.writeUInt8(encodeIdleTimeoutSeconds(pm.cellular_idle_timeout_seconds), 5);
+  buf.writeUInt8(encodeIdleTimeoutSeconds(pm.wifi_idle_timeout_seconds), 6);
 
   buf.writeUInt8(settings.streaming_enabled === false ? 0x00 : 0x01, 7);
 
@@ -934,8 +951,8 @@ export function parseConnectionSettings(data: Buffer): DeviceConnectionSettings 
   const raw4g = data.readUInt8(5);
   const rawWifi = data.readUInt8(6);
   const power_management = {
-    cellular_idle_timeout_seconds: raw4g === 0xFF ? 0 : (raw4g === 0 ? 180 : raw4g * 10),
-    wifi_idle_timeout_seconds: rawWifi === 0xFF ? 0 : (rawWifi === 0 ? 180 : rawWifi * 10),
+    cellular_idle_timeout_seconds: decodeIdleTimeoutSeconds(raw4g),
+    wifi_idle_timeout_seconds: decodeIdleTimeoutSeconds(rawWifi),
   };
 
   const streaming_enabled = data.readUInt8(7) !== 0x00;

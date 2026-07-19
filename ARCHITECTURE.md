@@ -218,7 +218,7 @@ struct bota_device_settings {
   u8 version;           // 0x01
   u8 enabled_mask;      // bit0=WiFi, bit1=4G (Bluetooth always on)
   u8 upload_net_pref[3]; // 1=WiFi, 2=BLE, 3=4G, 0=end
-  u8 power_cfg_4g;      // idle timeout: 0=default(180s), 1-254=×10s, 255=always-on
+  u8 power_cfg_4g;      // idle timeout: 0=immediate, 1-254=×10s, 255=always-on
   u8 power_cfg_wifi;    // same encoding as power_cfg_4g
   u8 reserved;          // 0x00
 };

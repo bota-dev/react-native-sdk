@@ -78,6 +78,48 @@ describe('DeviceManager reconnect matching', () => {
     expect(manager.connect).toHaveBeenCalledWith(withMac, 'background');
   });
 
+  it('recovers by serial number when the stored advertised MAC is stale', async () => {
+    const candidate = {
+      id: 'rotated-ios-id',
+      name: 'Bota Pin',
+      deviceType: 'bota_pin',
+      firmwareVersion: '0.0.0',
+      pairingState: 'paired',
+      rssi: -45,
+      macAddress: '11:22:33:44:55:66',
+      discoveredAt: new Date(),
+    };
+
+    const manager = Object.create(DeviceManager.prototype) as any;
+    manager.connectedDevices = new Map();
+    manager.reconnectRegistry = {
+      E1285U6OMJ: {
+        bleId: 'stale-ios-id',
+        bleName: 'Bota Pin',
+        mac: 'bb95835172d9',
+        deviceType: 'bota_pin',
+      },
+    };
+    manager.startScan = jest.fn().mockResolvedValue(undefined);
+    manager.stopScan = jest.fn();
+    manager.connect = jest.fn().mockResolvedValue({ serialNumber: 'E1285U6OMJ' });
+    manager.probeSerialNumber = jest.fn().mockResolvedValue('E1285U6OMJ');
+    manager.bleManager = {
+      flushPeripheralConnection: jest.fn(),
+      isUserOpInFlight: jest.fn(() => false),
+    };
+    manager.getDiscoveredDevices = jest.fn(() => [candidate]);
+
+    const reconnect = manager.doReconnect('E1285U6OMJ', { scanTimeout: 1000 });
+
+    await jest.advanceTimersByTimeAsync(1000);
+
+    await reconnect;
+    expect(manager.probeSerialNumber).toHaveBeenCalledWith(candidate.id);
+    expect(manager.connect).toHaveBeenCalledWith(candidate, 'background');
+    expect(manager.bleManager.flushPeripheralConnection).not.toHaveBeenCalled();
+  });
+
   it('does not reconnect by probing a same-name Bota device while user work is in flight', async () => {
     const sameNameCandidate = {
       id: 'candidate-id',

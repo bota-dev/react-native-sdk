@@ -136,6 +136,31 @@ BotaClient.bluetoothState  // 'unknown' | 'poweredOn' | 'poweredOff' | ...
 BotaClient.isBluetoothReady
 ```
 
+### OTAManager
+
+Downloads and transfers firmware updates over Bluetooth. Download progress includes optional byte
+counts so apps can display both a percentage and transferred size.
+
+```typescript
+BotaClient.ota.on('progress', (deviceId, update) => {
+  console.log(deviceId, update.stage, update.progress);
+
+  if (update.bytesTransferred !== undefined && update.totalBytes !== undefined) {
+    console.log(`${update.bytesTransferred} / ${update.totalBytes} bytes`);
+  }
+});
+
+await BotaClient.ota.performUpdate(device, firmwareInfo, grantBlob);
+```
+
+`OtaProgress.progress` is normalized from `0` to `1`. During the `downloading` stage,
+`bytesTransferred` and `totalBytes` report the HTTPS firmware download. The fields remain optional
+for compatibility with stages that do not expose byte-level progress.
+
+Bluetooth transfer failures are terminal. A device-side SD/FAT write failure rejects with
+`FW_STORAGE_WRITE_FAILED`, and a missing flow-control acknowledgement rejects with
+`FW_UPLOAD_ACK_TIMEOUT`; the SDK does not continue advancing upload progress after either error.
+
 ### DeviceManager
 
 Handles device discovery, connection, and provisioning.
@@ -148,6 +173,7 @@ BotaClient.devices.getDiscoveredDevices();
 
 // Connection
 const device = await BotaClient.devices.connect(discoveredDevice);
+const reconnected = await BotaClient.devices.reconnect(serialNumber);
 await BotaClient.devices.disconnect(device);
 BotaClient.devices.isConnected(deviceId);
 
@@ -165,6 +191,10 @@ BotaClient.devices.on('deviceConnected', (device) => {});
 BotaClient.devices.on('deviceDisconnected', (deviceId, error) => {});
 BotaClient.devices.on('deviceStatusUpdated', (deviceId, status) => {});
 ```
+
+`reconnect(serialNumber)` first uses the cached peripheral ID or advertised MAC.
+If those identities changed, it performs a guarded GATT serial-number probe and
+accepts only the requested physical device.
 
 ### RecordingManager
 

@@ -671,8 +671,8 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
    *
    * The SDK stores the peripheral ID and advertised MAC from the initial pairing
    * when available. This method first matches those scan-visible identities. If
-   * there is no stored MAC and the iOS peripheral ID rotated or the local registry
-   * was lost, reconnect uses a guarded Bota-candidate serial-number probe.
+   * they no longer match because the peripheral identity changed, reconnect uses
+   * a guarded Bota-candidate serial-number probe.
    *
    * @param serialNumber - Serial number of the device to reconnect to
    * @param options - Optional reconnection options
@@ -794,55 +794,56 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         log.info('Matched device by advertised MAC', { serialNumber, id: byMac.id });
         return this.connect(byMac, 'background');
       }
-      log.info('No advertised MAC match; reconnect will not probe same-name devices', { serialNumber });
+      log.info('No advertised MAC match; falling back to guarded serial-number probe', {
+        serialNumber,
+      });
     }
 
     // If the iOS peripheral id rotates or the local registry is lost after an app
-    // reinstall, the serial number is the only remaining stable key, but it is only
-    // available through GATT. Keep this fallback guarded so it cannot steal the
-    // adapter during user pairing, and never use it when a stored MAC did not match.
-    if (!storedMac) {
-      if (this.bleManager.isUserOpInFlight()) {
-        log.debug('Reconnect: skipping serial-number probe because user radio work is in flight', {
-          serialNumber,
-        });
-      } else {
-        const seen = new Set<string>();
-        const candidates = discovered
-          .filter((d) => (storedName ? d.name === storedName : d.name?.startsWith('Bota')))
-          .filter((d) => {
-            if (seen.has(d.id)) return false;
-            seen.add(d.id);
-            return true;
-          })
-          .sort((a, b) => b.rssi - a.rssi);
+    // reinstall, or its advertised MAC changes after a firmware reset, the serial
+    // number is the only remaining stable key, but it is only available through
+    // GATT. Keep this fallback guarded so it cannot steal the adapter during user
+    // pairing or another foreground radio operation.
+    if (this.bleManager.isUserOpInFlight()) {
+      log.debug('Reconnect: skipping serial-number probe because user radio work is in flight', {
+        serialNumber,
+      });
+    } else {
+      const seen = new Set<string>();
+      const candidates = discovered
+        .filter((d) => (storedName ? d.name === storedName : d.name?.startsWith('Bota')))
+        .filter((d) => {
+          if (seen.has(d.id)) return false;
+          seen.add(d.id);
+          return true;
+        })
+        .sort((a, b) => b.rssi - a.rssi);
 
-        log.debug('Reconnect: probing Bota candidates by serial number', {
-          serialNumber,
-          count: candidates.length,
-        });
+      log.debug('Reconnect: probing Bota candidates by serial number', {
+        serialNumber,
+        count: candidates.length,
+      });
 
-        for (const cand of candidates) {
-          if (this.bleManager.isUserOpInFlight()) {
-            log.debug('Reconnect: aborting serial-number probe because user radio work started', {
-              serialNumber,
-            });
-            break;
-          }
+      for (const cand of candidates) {
+        if (this.bleManager.isUserOpInFlight()) {
+          log.debug('Reconnect: aborting serial-number probe because user radio work started', {
+            serialNumber,
+          });
+          break;
+        }
 
-          const sn = await this.probeSerialNumber(cand.id);
-          if (sn === serialNumber) {
-            log.info('Matched device by serial number', { serialNumber, id: cand.id });
-            return this.connect(cand, 'background');
-          }
-          if (sn !== null && !this.connectedDevices.has(cand.id)) {
-            log.debug('Reconnect: candidate SN mismatch, releasing', {
-              wanted: serialNumber,
-              got: sn,
-              id: cand.id,
-            });
-            try { await this.bleManager.disconnect(cand.id, 'background'); } catch { /* ignore */ }
-          }
+        const sn = await this.probeSerialNumber(cand.id);
+        if (sn === serialNumber) {
+          log.info('Matched device by serial number', { serialNumber, id: cand.id });
+          return this.connect(cand, 'background');
+        }
+        if (sn !== null && !this.connectedDevices.has(cand.id)) {
+          log.debug('Reconnect: candidate SN mismatch, releasing', {
+            wanted: serialNumber,
+            got: sn,
+            id: cand.id,
+          });
+          try { await this.bleManager.disconnect(cand.id, 'background'); } catch { /* ignore */ }
         }
       }
     }

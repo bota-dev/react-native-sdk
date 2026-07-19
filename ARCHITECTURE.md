@@ -52,7 +52,8 @@ src/
 │
 ├── managers/
 │   ├── DeviceManager.ts    # Scan → connect → bond → provision → connected state
-│   └── RecordingManager.ts # List → transfer → upload → confirm
+│   ├── RecordingManager.ts # List → transfer → upload → confirm
+│   └── OTAManager.ts       # Firmware download → BLE transfer → reboot recovery
 │
 ├── upload/
 │   └── UploadQueue.ts      # Persistent SQLite queue, retry (exponential backoff, 24h max)
@@ -150,6 +151,20 @@ UploadQueue handles retries:
 
 ---
 
+## Firmware Update Flow
+
+`OTAManager.performUpdate` downloads the `.ufw` image over HTTPS, transfers it to the device over
+Bluetooth, and waits for the device to reconnect after applying the update. The HTTPS download uses
+React Native's `XMLHttpRequest` progress events; `OtaProgress` exposes normalized progress plus
+optional transferred and total byte counts during the `downloading` stage.
+
+`ProtocolHandler.uploadFirmware` keeps one TRANSFER_STATUS subscription and records ACK sequences
+as notifications arrive, including before an 8-packet window begins waiting. A device storage-write
+result or a missing window ACK terminates the transfer immediately; continuing would only send data
+after firmware has stopped writing `update.ufw`.
+
+---
+
 ## Device Lifecycle
 
 ```
@@ -167,7 +182,7 @@ CONNECTED (unpaired)
 CONNECTED (paired)
   ↓ disconnected / app background
 DISCONNECTED
-  ↓ reconnect (stored peripheral ID / advertised MAC / guarded SN probe after registry loss or ID rotation)
+  ↓ reconnect (stored peripheral ID / advertised MAC / guarded SN probe after identity rotation)
 ```
 
 **Reconnect matching (`DeviceManager.reconnect`).** All Bota Pins advertise the
@@ -175,12 +190,13 @@ same generic name ("Bota Pin") and iOS/macOS rotate the BLE peripheral ID, so
 name is not a safe reconnect key when several are nearby. Match order: (1)
 exact stored peripheral ID — fast path while still valid; (2) advertised MAC
 from manufacturer data — stable and scan-visible when firmware provides it; (3)
-a guarded serial-number probe when no stored MAC exists and either the peripheral
-ID rotated or the local registry was lost after an app reinstall. The probe runs
-only while no user radio work is in flight, connects to likely Bota candidates,
-and reads GATT `0x2A25`. This preserves reconnect without reintroducing pairing
-races. When none of those match, reconnect fails and the caller should let the
-user pair/select the device again. Reconnect attempts are **serialized**
+a guarded serial-number probe after those exact identities fail, including when
+the local registry was lost or firmware flashing changed the advertised identity.
+The probe runs only while no user radio work is in flight, connects to likely
+Bota candidates, and reads GATT `0x2A25`; only an exact serial match is accepted.
+This preserves reconnect without reintroducing pairing races. When none of those
+match, reconnect fails and the caller should let the user pair/select the device
+again. Reconnect attempts are **serialized**
 and **deduped per SN** so concurrent attempts for different SNs do not race over
 the single BLE adapter or each other's discovery results.
 

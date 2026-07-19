@@ -7,6 +7,7 @@ export { RecordingManager, StreamingSession, type UploadInfoProvider } from './R
 export {
   OTAManager,
   type FirmwareInfo,
+  type FirmwareDownloadProgressCallback,
   type OtaStage,
   type OtaProgress,
 } from './OTAManager';

@@ -12,7 +12,13 @@ export type { BotaConfig, SdkState, BluetoothState } from './BotaClient';
 
 // Managers
 export { DeviceManager, RecordingManager, StreamingSession, OTAManager } from './managers';
-export type { UploadInfoProvider, FirmwareInfo, OtaStage, OtaProgress } from './managers';
+export type {
+  UploadInfoProvider,
+  FirmwareInfo,
+  FirmwareDownloadProgressCallback,
+  OtaStage,
+  OtaProgress,
+} from './managers';
 
 // Device-state cache (in-memory, SN-keyed; consumers persist if needed)
 export type {

@@ -47,8 +47,38 @@ export type OtaStage =
 export interface OtaProgress {
   stage: OtaStage;
   progress: number;
+  /** Bytes transferred during stages that expose byte-level progress. */
+  bytesTransferred?: number;
+  /** Total bytes expected during stages that expose byte-level progress. */
+  totalBytes?: number;
   error?: string;
 }
+
+/** Receives byte-level progress while a firmware package is downloaded. */
+export type FirmwareDownloadProgressCallback = (
+  bytesDownloaded: number,
+  totalBytes: number
+) => void;
+
+interface FirmwareDownloadProgressEvent {
+  loaded: number;
+  total: number;
+  lengthComputable: boolean;
+}
+
+interface FirmwareDownloadRequest {
+  status: number;
+  response: unknown;
+  responseType: string;
+  onprogress: ((event: FirmwareDownloadProgressEvent) => void) | null;
+  onload: (() => void) | null;
+  onerror: (() => void) | null;
+  onabort: (() => void) | null;
+  open(method: string, url: string): void;
+  send(): void;
+}
+
+type FirmwareDownloadRequestConstructor = new () => FirmwareDownloadRequest;
 
 /**
  * Events emitted by OTAManager
@@ -130,19 +160,52 @@ export class OTAManager extends EventEmitter<OTAManagerEvents> {
   /**
    * Download firmware package
    */
-  async downloadFirmware(firmware: FirmwareInfo): Promise<ArrayBuffer> {
+  async downloadFirmware(
+    firmware: FirmwareInfo,
+    onProgress?: FirmwareDownloadProgressCallback
+  ): Promise<ArrayBuffer> {
     log.info('Downloading firmware', {
       version: firmware.version,
       size: firmware.size,
     });
 
-    const response = await fetch(firmware.url);
+    const data = await new Promise<ArrayBuffer>((resolve, reject) => {
+      const Request = (globalThis as unknown as {
+        XMLHttpRequest?: FirmwareDownloadRequestConstructor;
+      }).XMLHttpRequest;
+      if (!Request) {
+        reject(new Error('Failed to download firmware: XMLHttpRequest is unavailable'));
+        return;
+      }
 
-    if (!response.ok) {
-      throw new Error(`Failed to download firmware: ${response.status}`);
-    }
+      const request = new Request();
+      request.open('GET', firmware.url);
+      request.responseType = 'arraybuffer';
 
-    const data = await response.arrayBuffer();
+      request.onprogress = (event) => {
+        const totalBytes = event.lengthComputable && event.total > 0
+          ? event.total
+          : firmware.size;
+        onProgress?.(event.loaded, totalBytes);
+      };
+
+      request.onload = () => {
+        if (request.status < 200 || request.status >= 300) {
+          reject(new Error(`Failed to download firmware: ${request.status}`));
+          return;
+        }
+
+        if (!(request.response instanceof ArrayBuffer)) {
+          reject(new Error('Failed to download firmware: empty response'));
+          return;
+        }
+
+        resolve(request.response);
+      };
+      request.onerror = () => reject(new Error('Failed to download firmware: network error'));
+      request.onabort = () => reject(new Error('Failed to download firmware: request aborted'));
+      request.send();
+    });
 
     // Verify checksum
     // Note: In production, implement proper checksum verification
@@ -173,10 +236,27 @@ export class OTAManager extends EventEmitter<OTAManagerEvents> {
 
     try {
       // 1. Download firmware
-      this.emit('progress', device.id, { stage: 'downloading', progress: 0 });
-      const arrayBuffer = await this.downloadFirmware(firmware);
+      this.emit('progress', device.id, {
+        stage: 'downloading',
+        progress: 0,
+        bytesTransferred: 0,
+        totalBytes: firmware.size,
+      });
+      const arrayBuffer = await this.downloadFirmware(firmware, (bytesDownloaded, totalBytes) => {
+        this.emit('progress', device.id, {
+          stage: 'downloading',
+          progress: totalBytes > 0 ? Math.min(bytesDownloaded / totalBytes, 1) : 0,
+          bytesTransferred: bytesDownloaded,
+          totalBytes,
+        });
+      });
       const firmwareBuffer = Buffer.from(arrayBuffer);
-      this.emit('progress', device.id, { stage: 'downloading', progress: 1 });
+      this.emit('progress', device.id, {
+        stage: 'downloading',
+        progress: 1,
+        bytesTransferred: arrayBuffer.byteLength,
+        totalBytes: arrayBuffer.byteLength,
+      });
 
       // 2. Prepare for Bluetooth transfer
       this.emit('progress', device.id, { stage: 'preparing', progress: 0 });

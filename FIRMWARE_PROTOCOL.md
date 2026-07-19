@@ -131,3 +131,34 @@ After the app has uploaded the recording and notified its backend, it writes
 
 Do not send confirm immediately after Bluetooth transfer; confirm means the cloud
 upload path has completed.
+
+## Firmware Upload
+
+Bluetooth OTA uses the STORAGE service with one status subscription for the full
+transfer:
+
+```text
+SDK -> Device: TRANSFER_CONTROL [0x08, file_size uint32LE]
+Device -> SDK: TRANSFER_STATUS  [0x08, result]
+SDK -> Device: RECORDING_TRANSFER [0x20, seq uint16LE, payload...]
+Device -> SDK: TRANSFER_STATUS  [0x10, seq uint16LE]
+SDK -> Device: TRANSFER_CONTROL [0x09, crc32 uint32LE]
+Device -> SDK: TRANSFER_STATUS  [0x09, result]
+```
+
+Start and transfer result values:
+
+| Packet | Meaning |
+| --- | --- |
+| `[0x08, 0x00]` | Device accepted the upload and opened `update.ufw` |
+| `[0x08, 0x01]` | Device rejected the upload, or legacy firmware aborted it |
+| `[0x08, 0x02]` | SD/FAT write failed; upload was aborted and the partial file removed |
+| `[0x09, 0x00]` | CRC32 matched; device will apply the update |
+| `[0x09, 0x01]` | Verification failed |
+
+The SDK sends 500-byte payloads and requires the ACK for each 8-packet window.
+ACK notifications are retained even if they arrive before the window wait begins.
+A nonzero `0x08` result after upload acceptance fails with
+`FW_STORAGE_WRITE_FAILED`; a missing window ACK fails with
+`FW_UPLOAD_ACK_TIMEOUT`. Neither condition is safe to ignore because the device
+may already have stopped writing data.

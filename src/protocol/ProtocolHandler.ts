@@ -1016,11 +1016,53 @@ export class ProtocolHandler {
 
     // 1. Keep a single persistent subscription for the entire upload
     let statusHandler: ((data: Buffer) => void) | null = null;
+    let statusReject: ((error: Error) => void) | null = null;
+    let statusTimer: number | undefined;
+    let uploadStarted = false;
+    let latestAckSeq: number | null = null;
+    let transferError: TransferError | null = null;
+
+    const clearStatusWait = () => {
+      if (statusTimer !== undefined) {
+        clearTimeout(statusTimer);
+        statusTimer = undefined;
+      }
+      statusHandler = null;
+      statusReject = null;
+    };
+
+    const failTransfer = (error: TransferError) => {
+      transferError = error;
+      const reject = statusReject;
+      clearStatusWait();
+      reject?.(error);
+    };
+
+    const throwIfTransferFailed = () => {
+      if (transferError) {
+        throw transferError;
+      }
+    };
+
     const subscription = this.bleManager.subscribeToCharacteristic(
       deviceId,
       SERVICE_BOTA_STORAGE,
       CHAR_TRANSFER_STATUS,
       (data: Buffer) => {
+        if (data.length >= 3 && data[0] === 0x10) {
+          latestAckSeq = data.readUInt16LE(1);
+        }
+
+        if (uploadStarted && data.length >= 2 && data[0] === 0x08 && data[1] !== 0x00) {
+          failTransfer(
+            new TransferError(
+              'Device storage write failed during firmware upload',
+              'FW_STORAGE_WRITE_FAILED'
+            )
+          );
+          return;
+        }
+
         statusHandler?.(data);
       },
       (error: Error) => {
@@ -1033,20 +1075,49 @@ export class ProtocolHandler {
       timeoutMs: number = 10000
     ): Promise<T> => {
       return new Promise<T>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          statusHandler = null;
+        if (transferError) {
+          reject(transferError);
+          return;
+        }
+
+        statusTimer = setTimeout(() => {
+          clearStatusWait();
           reject(new TransferError('Firmware upload status timeout', 'FW_UPLOAD_TIMEOUT'));
         }, timeoutMs);
+        statusReject = reject;
 
         statusHandler = (data: Buffer) => {
           const result = filter(data);
           if (result !== null) {
-            clearTimeout(timer);
-            statusHandler = null;
+            clearStatusWait();
             resolve(result);
           }
         };
       });
+    };
+
+    const waitForAck = async (expectedSeq: number): Promise<void> => {
+      throwIfTransferFailed();
+      if (latestAckSeq === expectedSeq) {
+        return;
+      }
+
+      try {
+        await waitForStatus<boolean>((data) => {
+          if (data.length >= 3 && data[0] === 0x10 && data.readUInt16LE(1) === expectedSeq) {
+            return true;
+          }
+          return null;
+        }, 5000);
+      } catch (error) {
+        if (error instanceof TransferError && error.code === 'FW_UPLOAD_TIMEOUT') {
+          throw new TransferError(
+            `Device did not acknowledge firmware packet ${expectedSeq}`,
+            'FW_UPLOAD_ACK_TIMEOUT'
+          );
+        }
+        throw error;
+      }
     };
 
     try {
@@ -1076,6 +1147,7 @@ export class ProtocolHandler {
       }
 
       log.info('Device ready for firmware upload');
+      uploadStarted = true;
 
       // 3. Send firmware data in chunks
       const CHUNK_SIZE = 500;
@@ -1101,6 +1173,8 @@ export class ProtocolHandler {
           false // writeWithoutResponse
         );
 
+        throwIfTransferFailed();
+
         bytesSent = chunkEnd;
         seq++;
 
@@ -1108,20 +1182,11 @@ export class ProtocolHandler {
 
         // Wait for ACK every 8 packets for flow control
         if (seq % 8 === 0) {
-          try {
-            await waitForStatus<boolean>((data) => {
-              if (data.length >= 3 && data[0] === 0x10) {
-                return true;
-              }
-              return null;
-            }, 5000);
-          } catch {
-            // ACK timeout — device may still be processing, continue
-            log.warn('ACK timeout at seq', { seq });
-          }
+          await waitForAck(seq - 1);
         }
       }
 
+      throwIfTransferFailed();
       log.info('Firmware data sent, verifying CRC32');
 
       // 4. Compute CRC32 and send verify command
@@ -1153,6 +1218,7 @@ export class ProtocolHandler {
       log.info('Firmware verified, device will reboot to apply update');
     } finally {
       // Always clean up the persistent subscription
+      clearStatusWait();
       subscription?.remove();
     }
   }

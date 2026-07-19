@@ -57,9 +57,11 @@ npm test            # Jest unit tests
 2. Run `npm run build` — must produce clean lib/ output (no type errors)
 3. **Test against physical device**: link into demo app (see Local Testing below) and run the affected flow:
    - **Bluetooth discovery changes** — scan for devices, verify Bota-* prefix filtering
+   - **Reconnect changes** — verify exact ID/MAC fast paths and guarded serial recovery after a flash changes the peripheral identity
    - **Recording transfer changes** — sync a recording end-to-end (list → transfer → confirm)
    - **Provisioning changes** — pair a fresh device, verify token write and pairing state
    - **Status changes** — verify DEVICE_STATUS notifications update correctly
+   - **Firmware update changes** — download an assigned release, verify byte progress advances before Bluetooth transfer; force a device-side write rejection and confirm the SDK fails immediately instead of advancing transfer progress
 4. Check no regressions in unrelated Bluetooth flows
 
 ### Local Testing in Demo App
@@ -81,6 +83,8 @@ npx expo start --clear
 
 **Event-driven async** — public APIs use async/await. Internal Bluetooth event handling uses EventEmitter. Never block the Bluetooth callback thread.
 
+**Bluetooth OTA flow control** — keep one TRANSFER_STATUS subscription for the full upload and retain ACK sequence state outside individual waits, because firmware notifications may arrive before the SDK reaches `waitForAck()`. A nonzero READY result after upload acceptance and a missing 8-packet window ACK are terminal; never continue sending after either condition.
+
 **Upload queue** — recordings are queued in `UploadQueue` (persistent SQLite). Never upload synchronously in the Bluetooth transfer callback.
 
 **No server calls** — the SDK communicates only with the Bota device (BLE) and S3 (presigned URLs provided by the customer backend). It never calls the Bota API directly. Auth tokens are passed in by the customer app.
@@ -101,6 +105,7 @@ npx expo start --clear
 | `src/protocol/ProtocolHandler.ts` | Protocol handler (Bluetooth packet assembly, ACK logic) |
 | `src/managers/DeviceManager.ts` | Device discovery, connection, bonding, provisioning |
 | `src/managers/RecordingManager.ts` | Recording list, Bluetooth transfer, upload orchestration |
+| `src/managers/OTAManager.ts` | Firmware download progress, Bluetooth OTA transfer, reboot recovery |
 | `src/upload/UploadQueue.ts` | Persistent SQLite upload queue with retry |
 | `src/storage/StorageManager.ts` | Local SQLite persistence (device registry, transfer state) |
 | `src/models/` | TypeScript types (Device, Recording, DeviceStatus, etc.) |

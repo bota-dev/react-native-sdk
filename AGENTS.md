@@ -77,7 +77,7 @@ npx expo start --clear
 
 **Protocol fidelity** — the SDK-local Bluetooth protocol reference is [`FIRMWARE_PROTOCOL.md`](./FIRMWARE_PROTOCOL.md). Broader firmware design docs live in [`../internal-docs/device/`](../internal-docs/device/), but those docs may lag firmware or SDK implementation. When behavior differs, confirm against `src/protocol/ProtocolHandler.ts` and firmware `le_trans_data.c`, then update the SDK-local reference and any affected design docs.
 
-**Binary parsing** — device data is binary (packed C structs). Use the typed parsers in `src/ble/parsers.ts`. Never parse binary inline in handlers.
+**Binary parsing** — device data is binary (packed C structs). Use the typed parsers in `src/ble/parsers.ts`. Never parse binary inline in handlers. DEVICE_SETTINGS serialization must default each missing/null idle-timeout field independently to 180 seconds because backend configuration objects may be partial. Accept legacy 1-9 second values without failing sync, but encode them as the minimum representable timeout of 10 seconds.
 
 **Event-driven async** — public APIs use async/await. Internal Bluetooth event handling uses EventEmitter. Never block the Bluetooth callback thread.
 

@@ -851,14 +851,13 @@ const DEFAULT_IDLE_TIMEOUT_SECONDS = 180;
 function encodeIdleTimeoutSeconds(seconds: number): number {
   const valid = Number.isInteger(seconds)
     && seconds >= -1
-    && seconds <= 2540
-    && (seconds <= 0 || seconds >= 10);
+    && seconds <= 2540;
   if (!valid) {
-    throw new RangeError('Idle timeout must be -1, 0, or an integer from 10 to 2540 seconds');
+    throw new RangeError('Idle timeout must be -1 or an integer from 0 to 2540 seconds');
   }
   if (seconds === -1) return 0xFF;
   if (seconds === 0) return 0x00;
-  return Math.floor(seconds / 10);
+  return Math.max(1, Math.floor(seconds / 10));
 }
 
 function decodeIdleTimeoutSeconds(raw: number): number {
@@ -898,12 +897,13 @@ export function serializeConnectionSettings(settings: DeviceConnectionSettings):
     }
   }
 
-  const pm = settings.power_management ?? {
-    cellular_idle_timeout_seconds: DEFAULT_IDLE_TIMEOUT_SECONDS,
-    wifi_idle_timeout_seconds: DEFAULT_IDLE_TIMEOUT_SECONDS,
-  };
-  buf.writeUInt8(encodeIdleTimeoutSeconds(pm.cellular_idle_timeout_seconds), 5);
-  buf.writeUInt8(encodeIdleTimeoutSeconds(pm.wifi_idle_timeout_seconds), 6);
+  const pm = settings.power_management;
+  buf.writeUInt8(encodeIdleTimeoutSeconds(
+    pm?.cellular_idle_timeout_seconds ?? DEFAULT_IDLE_TIMEOUT_SECONDS,
+  ), 5);
+  buf.writeUInt8(encodeIdleTimeoutSeconds(
+    pm?.wifi_idle_timeout_seconds ?? DEFAULT_IDLE_TIMEOUT_SECONDS,
+  ), 6);
 
   buf.writeUInt8(settings.streaming_enabled === false ? 0x00 : 0x01, 7);
 

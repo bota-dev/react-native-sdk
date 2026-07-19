@@ -1,6 +1,6 @@
 # CLAUDE.md - Bota React Native SDK
 
-> **Updated 2026-07:** DEVICE_SETTINGS byte 9 carries the explicit direct-heartbeat mask; legacy payloads parse as WiFi and cellular enabled.
+> **Updated 2026-07:** DEVICE_SETTINGS byte 9 carries the explicit direct-heartbeat mask; legacy payloads parse as WiFi and cellular enabled. Each missing/null radio idle timeout independently defaults to 180 seconds during serialization, and legacy 1-9 second values round up to the 10-second wire minimum.
 
 See [AGENTS.md](AGENTS.md) for build commands and conventions. See [ARCHITECTURE.md](ARCHITECTURE.md) for module map and protocol details.
 

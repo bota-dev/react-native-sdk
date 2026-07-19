@@ -94,7 +94,33 @@ describe('DEVICE_SETTINGS power management', () => {
     expect(payload[6]).toBe(18);
   });
 
-  it.each([-2, 1, 9, 2541])('rejects invalid timeout %i', (seconds) => {
+  it.each([
+    [{ wifi_idle_timeout_seconds: 300 }, [18, 30]],
+    [{ cellular_idle_timeout_seconds: 0, wifi_idle_timeout_seconds: null }, [0, 18]],
+  ])('defaults unavailable individual timeouts to 180 seconds', (power_management, expected) => {
+    const payload = serializeConnectionSettings({
+      ...baseSettings,
+      power_management,
+    });
+
+    expect(payload[5]).toBe(expected[0]);
+    expect(payload[6]).toBe(expected[1]);
+  });
+
+  it.each([1, 5, 9])('rounds legacy timeout %i up to the 10-second wire minimum', (seconds) => {
+    const payload = serializeConnectionSettings({
+      ...baseSettings,
+      power_management: {
+        wifi_idle_timeout_seconds: seconds,
+        cellular_idle_timeout_seconds: seconds,
+      },
+    });
+
+    expect(payload[5]).toBe(1);
+    expect(payload[6]).toBe(1);
+  });
+
+  it.each([-2, 10.5, 2541])('rejects invalid timeout %s', (seconds) => {
     expect(() => serializeConnectionSettings({
       ...baseSettings,
       power_management: {

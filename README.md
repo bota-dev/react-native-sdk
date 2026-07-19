@@ -1,6 +1,6 @@
 # @bota.dev/react-native-sdk
 
-`DeviceConnectionSettings` optionally accepts `heartbeat_enabled_connections`; serialization writes the explicit DEVICE_SETTINGS byte-9 mask and parsing resolves legacy payloads to both channels enabled.
+`DeviceConnectionSettings` optionally accepts `heartbeat_enabled_connections`; serialization writes the explicit DEVICE_SETTINGS byte-9 mask and parsing resolves legacy payloads to both channels enabled. Missing or `null` individual radio idle timeouts serialize as the 180-second default, while legacy 1-9 second values round up to the wire minimum of 10 seconds.
 
 Official React Native SDK for Bota wearable devices.
 

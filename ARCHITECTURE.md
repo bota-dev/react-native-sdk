@@ -211,20 +211,24 @@ See [internal-docs/device/Connection-Management.md §2.1.1](../internal-docs/dev
 
 ---
 
-## Device Settings (8-byte binary, PROVISIONING B07A0306)
+## Device Settings (12-byte v0x02 binary, PROVISIONING B07A0306)
 
 ```c
 struct bota_device_settings {
-  u8 version;           // 0x01
+  u8 version;           // 0x02; legacy 0x01 uses the first 8 bytes
   u8 enabled_mask;      // bit0=WiFi, bit1=4G (Bluetooth always on)
   u8 upload_net_pref[3]; // 1=WiFi, 2=BLE, 3=4G, 0=end
   u8 power_cfg_4g;      // idle timeout: 0=immediate, 1-254=×10s, 255=always-on
   u8 power_cfg_wifi;    // same encoding as power_cfg_4g
-  u8 reserved;          // 0x00
+  u8 streaming_enabled;
+  u8 chunk_flush_interval_s;
+  u8 heartbeat_enabled_mask; // bit7=explicit, bit1=4G, bit0=WiFi
+  u8 reserved[2];
 };
 ```
 
 Customer backend configures via `PATCH /devices/{id}` → app reads via API → SDK serializes + writes to device.
+Each missing or `null` individual API idle-timeout value defaults to byte `18` (180 seconds); a partial `power_management` object must not pass `undefined` into the binary encoder. Legacy SDK inputs from 1-9 seconds normalize to byte `1` (10 seconds), since the wire format cannot represent an exact positive timeout below 10 seconds.
 
 ---
 

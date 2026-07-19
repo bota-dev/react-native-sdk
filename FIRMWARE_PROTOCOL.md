@@ -2,6 +2,8 @@
 
 DEVICE_SETTINGS v0x02 byte 9 is `heartbeat_enabled_mask`: bit 7 marks an explicit value, bit 1 enables cellular direct heartbeat, and bit 0 enables WiFi direct heartbeat. Values without bit 7 retain the legacy both-enabled default.
 
+DEVICE_SETTINGS bytes 5 and 6 encode cellular and WiFi idle timeouts in 10-second units (`0` = immediate, `1-254` = 10-2540 seconds, `255` = always on). A missing or `null` individual API value serializes as byte `18` (180 seconds). For backward compatibility, an SDK input of 1-9 seconds serializes as byte `1` (10 seconds); exact sub-10-second values are not representable.
+
 This document is the SDK-local reference for the Bluetooth protocol implemented by
 `@bota.dev/react-native-sdk`. It intentionally covers only the app-facing surface
 needed by React Native apps and SDK maintainers.

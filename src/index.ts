@@ -40,6 +40,7 @@ export type {
   DiscoveredDevice,
   ConnectedDevice,
   DeviceStatus,
+  DeviceLogEvent,
   StorageInfo,
   ScanOptions,
   ReconnectOptions,
@@ -57,6 +58,8 @@ export type {
   ConnectionType,
   DeviceConnectionSettings,
 } from './models/Device';
+
+export { DeviceLogDecoder } from './ble/deviceLogs';
 
 // Models - Recording
 export type {

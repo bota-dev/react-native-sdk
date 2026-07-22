@@ -192,6 +192,13 @@ export interface DeviceStatus {
   modemInfo?: ModemInfo;
 }
 
+/** A decoded line from the device's debug BLE log stream. */
+export interface DeviceLogEvent {
+  level: 'debug' | 'warn';
+  message: string;
+  isBacklog: boolean;
+}
+
 /**
  * Storage information from device
  */

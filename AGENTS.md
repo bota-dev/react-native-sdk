@@ -66,13 +66,17 @@ npm test            # Jest unit tests
 
 ### Local Testing in Demo App
 
+Run the link commands from their repository roots. This updates the local Yarn link without changing demo manifests or lockfiles.
+
 ```bash
 # 1. In this repo
-rm -rf node_modules && npm install && npm run build
+yarn link
 
-# 2. In demo/app
-npm install ../react-native-sdk
-npx expo start --clear
+# 2. In the demo repo root
+yarn workspace @bota-demo/app link @bota.dev/react-native-sdk
+
+# 3. Start the demo app
+cd app && npx expo start --clear
 ```
 
 ## Code Conventions

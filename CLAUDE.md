@@ -218,24 +218,20 @@ transforms the SDK source directly — there is no build step for local
 testing.** Editing a `.ts` file under `src/` and reloading Metro is enough.
 
 ```bash
-# 1. Delete the SDK's node_modules (REQUIRED). When the app symlinks to the
-#    SDK, Metro follows the symlink and resolves react-native-ble-plx /
-#    async-storage from the SDK's copy instead of the app's, which breaks
-#    native modules. The SDK has no node_modules in the local-dev steady state.
-rm -rf react-native-sdk/node_modules
+# 1. From this SDK worktree, register the local package.
+yarn link
 
-# 2. Symlink the local SDK into the consuming app (replaces the published
-#    version). Path is the same for both apps:
-cd ../demo/app        # or: cd ../bota-one/app
-npm install ../../react-native-sdk
+# 2. From the demo repository root, link it into the app workspace.
+#    This does not change package manifests or lockfiles.
+yarn workspace @bota-demo/app link @bota.dev/react-native-sdk
 
-# 3. Clear Metro's cache and start
-npx expo start --clear     # or the app's npm run start:clear
+# 3. Start the demo app with a clear Metro cache.
+cd app && npx expo start --clear
 ```
 
 After each SDK source change, just **reload Metro** (the symlinked source is
-re-read on `--clear`). Repeat step 2 only if the symlink got clobbered by a
-fresh `npm install` in the app. No native rebuild unless you changed native
+re-read on `--clear`). Repeat the demo-root link command only if the link was
+replaced by a dependency install. No native rebuild unless you changed native
 modules.
 
 > **Do NOT `npm run build` / `npm install` inside `react-native-sdk` while an
@@ -249,7 +245,7 @@ modules.
 - `NativeModule: AsyncStorage is null` → same cause, delete SDK's `node_modules`
 - `Unable to resolve "eventemitter3"` → install SDK runtime deps in the app: `npm install eventemitter3 buffer`
 - If types don't update, delete `node_modules/.cache` in the app
-- If the app still uses the old (published) SDK, confirm `node_modules/@bota.dev/react-native-sdk` is a symlink to your local checkout; if not, re-run step 2 and restart with `--clear`
+- If the app still uses the old (published) SDK, run `require.resolve('@bota.dev/react-native-sdk/package.json')` from `demo/app`; it must point to this SDK worktree. If not, re-run the demo-root link command and restart with `--clear`.
 
 ## Dependencies
 

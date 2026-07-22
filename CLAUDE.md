@@ -31,6 +31,7 @@ react-native-sdk/
 │   ├── ble/
 │   │   ├── BleManager.ts     # Bluetooth connection management
 │   │   ├── constants.ts      # Bluetooth UUIDs, commands, timeouts
+│   │   ├── deviceLogs.ts     # B07A0007 diagnostic log packet decoder
 │   │   └── parsers.ts        # Binary protocol parsers
 │   ├── managers/
 │   │   ├── DeviceManager.ts  # Device discovery, pairing, provisioning
@@ -267,6 +268,7 @@ modules.
 ## Important Files
 
 - `src/ble/constants.ts` - All Bluetooth UUIDs and protocol constants
+- `src/ble/deviceLogs.ts` - Firmware diagnostic log packet decoder
 - `src/ble/parsers.ts` - Binary data parsing/encoding
 - `src/protocol/ProtocolHandler.ts` - Recording transfer protocol
 - `src/BotaClient.ts` - Main public API
@@ -286,6 +288,12 @@ BotaClient.devices.on('deviceDiscovered', (device) => { ... });
 // Connect and provision
 const connected = await BotaClient.devices.connect(device);
 await BotaClient.devices.provision(connected, deviceToken, 'production');
+
+// Firmware diagnostics (requires DEBUG=1 firmware)
+const unsubscribe = await BotaClient.devices.subscribeToDeviceLogs(connected, event => {
+  console.log(event.level, event.message, event.isBacklog);
+});
+unsubscribe();
 
 // Sync recordings
 const recordings = await BotaClient.recordings.listRecordings(connected);

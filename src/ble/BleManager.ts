@@ -862,7 +862,8 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
     serviceUuid: string,
     characteristicUuid: string,
     onData: (data: Buffer) => void,
-    onError?: (error: Error) => void
+    onError?: (error: Error) => void,
+    options: { logNotifications?: boolean } = {}
   ): Subscription {
     const device = this.connectedDevices.get(deviceId);
     if (!device) {
@@ -883,21 +884,24 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
           return;
         }
 
-        // Debug: log every callback invocation
-        log.debug('Notify cb', {
-          charShort,
-          hasChar: !!characteristic,
-          hasValue: !!characteristic?.value,
-          valueLen: characteristic?.value?.length ?? 0,
-        });
+        if (options.logNotifications !== false) {
+          log.debug('Notify cb', {
+            charShort,
+            hasChar: !!characteristic,
+            hasValue: !!characteristic?.value,
+            valueLen: characteristic?.value?.length ?? 0,
+          });
+        }
 
         if (characteristic?.value) {
           const data = Buffer.from(characteristic.value, 'base64');
-          log.debug('Notify data', {
-            charShort,
-            len: data.length,
-            first: data.length > 0 ? data[0].toString(16) : '-',
-          });
+          if (options.logNotifications !== false) {
+            log.debug('Notify data', {
+              charShort,
+              len: data.length,
+              first: data.length > 0 ? data[0].toString(16) : '-',
+            });
+          }
           onData(data);
         }
       }

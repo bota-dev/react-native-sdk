@@ -34,8 +34,40 @@ All custom UUIDs use the `B07A` prefix with the Bluetooth base UUID
 | STORAGE | `B07A0004` | Recording list, recording transfer, transfer control |
 | AUTH | `B07A0005` | Device public key, session nonce, backend public key, device cert |
 | WIFI_CONFIG | `B07A0006` | WiFi grants, credentials, status, scan |
+| DIAGNOSTICS | `B07A0007` | Opt-in firmware debug log stream |
 
 See `src/ble/constants.ts` for the characteristic UUID constants used by the SDK.
+
+## Device Diagnostics
+
+`SERVICE_BOTA_DIAGNOSTICS` (`B07A0007`) exposes an opt-in firmware debug log
+stream. It requires firmware built with `DEBUG=1`; the SDK reports a failed Start
+write as `DeviceError` code `FEATURE_UNAVAILABLE`.
+
+| Characteristic | UUID | Direction | Use |
+| --- | --- | --- | --- |
+| LOG_CONTROL | `B07A0007-0001` | App -> Device | Enable or disable log notifications |
+| LOG_DATA | `B07A0007-0002` | Device -> App | UTF-8 log chunks with sequence metadata |
+
+LOG_CONTROL writes:
+
+| Packet | Meaning |
+| --- | --- |
+| `[0x01]` | Start log notifications |
+| `[0x00]` | Stop log notifications |
+
+LOG_DATA notification packet:
+
+| Offset | Field | Encoding |
+| --- | --- | --- |
+| `0..1` | Sequence | `uint16LE`, increments for each notification |
+| `2` | Flags | bit 0: backlog line, bit 1: firmware dropped bytes |
+| `3..` | Log bytes | UTF-8 chunk; a line may span packets |
+
+`subscribeToDeviceLogs()` enables the LOG_DATA notification before writing Start,
+then decodes complete newline-delimited lines as `DeviceLogEvent` values. Its
+returned cleanup is idempotent and attempts Stop before removing the monitor. A
+disconnect or SDK destroy removes the native monitor without writing to a dead link.
 
 ## Device Status
 

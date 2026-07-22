@@ -53,6 +53,11 @@ import {
   CHAR_DEVICE_SETTINGS,
   CHAR_PK_D,
   CHAR_AUTH_NONCE,
+  CHAR_DEVICE_LOG_CONTROL,
+  CHAR_DEVICE_LOG_DATA,
+  SERVICE_BOTA_DIAGNOSTICS,
+  DEVICE_LOG_CMD_START,
+  DEVICE_LOG_CMD_STOP,
   WIFI_SCAN_TIMEOUT,
   DEVICE_CMD_BLE_DEPROVISION,
   DEVICE_CMD_BLE_FACTORY_RESET,
@@ -88,9 +93,11 @@ import type {
   WiFiStatusInfo,
   DeviceWiFiScanResult,
   DeviceConnectionSettings,
+  DeviceLogEvent,
 } from '../models/Device';
 import type { DeviceManagerEvents } from '../models/Status';
 import { DeviceStateCache, type CachedDeviceState } from '../cache/DeviceStateCache';
+import { DeviceLogDecoder } from '../ble/deviceLogs';
 import {
   DeviceError,
   ProvisioningError,
@@ -188,6 +195,8 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   private connectedDevices: Map<string, ConnectedDevice> = new Map();
   private statusSubscriptions: Map<string, Subscription> = new Map();
   private nonceSubscriptions: Map<string, Subscription> = new Map();
+  private deviceLogSubscriptions: Map<string, Subscription> = new Map();
+  private deviceLogDecoders: Map<string, DeviceLogDecoder> = new Map();
   // Cache of P6 session nonce per device (received via notify on connect, cleared on disconnect)
   private nonceCache: Map<string, string> = new Map();
   private reconnectRegistry: Record<string, ReconnectInfo> = {};
@@ -273,6 +282,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       this.statusSubscriptions.delete(deviceId);
       this.nonceSubscriptions.get(deviceId)?.remove();
       this.nonceSubscriptions.delete(deviceId);
+      this.removeDeviceLogSubscription(deviceId);
 
       this.emit('deviceDisconnected', deviceId, error);
 
@@ -566,6 +576,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     this.nonceSubscriptions.get(device.id)?.remove();
     this.nonceSubscriptions.delete(device.id);
     this.nonceCache.delete(device.id);
+    this.removeDeviceLogSubscription(device.id);
 
     await this.bleManager.disconnect(device.id);
     this.connectedDevices.delete(device.id);
@@ -1256,6 +1267,69 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     return () => {
       subscription.remove();
       this.statusSubscriptions.delete(device.id);
+    };
+  }
+
+  /**
+   * Subscribe to firmware debug log notifications.
+   */
+  async subscribeToDeviceLogs(
+    device: ConnectedDevice,
+    callback: (event: DeviceLogEvent) => void
+  ): Promise<() => void> {
+    if (!this.isConnected(device.id)) {
+      throw DeviceError.notConnected(device.id);
+    }
+
+    this.removeDeviceLogSubscription(device.id);
+    const decoder = new DeviceLogDecoder();
+    const subscription = this.bleManager.subscribeToCharacteristic(
+      device.id,
+      SERVICE_BOTA_DIAGNOSTICS,
+      CHAR_DEVICE_LOG_DATA,
+      (data) => {
+        for (const event of decoder.push(data)) {
+          callback(event);
+        }
+      },
+      (error) => {
+        log.debug(`Device log subscription ended: ${error?.message}`);
+      },
+      { logNotifications: false }
+    );
+
+    this.deviceLogSubscriptions.set(device.id, subscription);
+    this.deviceLogDecoders.set(device.id, decoder);
+
+    try {
+      await this.bleManager.writeCharacteristic(
+        device.id,
+        SERVICE_BOTA_DIAGNOSTICS,
+        CHAR_DEVICE_LOG_CONTROL,
+        Buffer.from([DEVICE_LOG_CMD_START])
+      );
+    } catch (error) {
+      this.removeDeviceLogSubscription(device.id, subscription);
+      throw new DeviceError(
+        'Device logging requires DEBUG=1 firmware',
+        'FEATURE_UNAVAILABLE',
+        device.id,
+        error as Error
+      );
+    }
+
+    return () => {
+      if (this.deviceLogSubscriptions.get(device.id) !== subscription) {
+        return;
+      }
+
+      void this.bleManager.writeCharacteristic(
+        device.id,
+        SERVICE_BOTA_DIAGNOSTICS,
+        CHAR_DEVICE_LOG_CONTROL,
+        Buffer.from([DEVICE_LOG_CMD_STOP])
+      ).catch(() => {});
+      this.removeDeviceLogSubscription(device.id, subscription);
     };
   }
 
@@ -2508,6 +2582,18 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     }
   }
 
+  private removeDeviceLogSubscription(deviceId: string, expected?: Subscription): void {
+    const subscription = this.deviceLogSubscriptions.get(deviceId);
+    if (!subscription || (expected && subscription !== expected)) {
+      return;
+    }
+
+    subscription.remove();
+    this.deviceLogSubscriptions.delete(deviceId);
+    this.deviceLogDecoders.get(deviceId)?.reset();
+    this.deviceLogDecoders.delete(deviceId);
+  }
+
   /**
    * Clean up resources
    */
@@ -2519,6 +2605,10 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       sub.remove();
     }
     this.statusSubscriptions.clear();
+
+    for (const deviceId of this.deviceLogSubscriptions.keys()) {
+      this.removeDeviceLogSubscription(deviceId);
+    }
 
     this.stateCache.clearAll();
     this.stateCache.removeAllListeners();

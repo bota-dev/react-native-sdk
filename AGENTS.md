@@ -101,9 +101,10 @@ npx expo start --clear
 | `src/BotaClient.ts` | Main entry point (singleton) |
 | `src/ble/BleManager.ts` | Low-level Bluetooth ops (CoreBluetooth/Android Bluetooth via react-native-ble-plx) |
 | `src/ble/constants.ts` | Bluetooth service + characteristic UUIDs (B07A prefix) |
+| `src/ble/deviceLogs.ts` | B07A0007 diagnostic log packet decoder |
 | `src/ble/parsers.ts` | Binary struct parsers (DeviceStatus, RecordingEntry, etc.) |
 | `src/protocol/ProtocolHandler.ts` | Protocol handler (Bluetooth packet assembly, ACK logic) |
-| `src/managers/DeviceManager.ts` | Device discovery, connection, bonding, provisioning |
+| `src/managers/DeviceManager.ts` | Device discovery, connection, bonding, provisioning, diagnostics subscriptions |
 | `src/managers/RecordingManager.ts` | Recording list, Bluetooth transfer, upload orchestration |
 | `src/managers/OTAManager.ts` | Firmware download progress, Bluetooth OTA transfer, reboot recovery |
 | `src/upload/UploadQueue.ts` | Persistent SQLite upload queue with retry |

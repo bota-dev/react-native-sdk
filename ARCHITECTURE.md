@@ -47,6 +47,7 @@ src/
 ├── ble/
 │   ├── BluetoothManager.ts       # react-native-ble-plx wrapper; scan, connect, read, write, notify
 │   ├── constants.ts        # UUIDs: B07A base service + all characteristics
+│   ├── deviceLogs.ts       # B07A0007 debug log packet decoder
 │   ├── parsers.ts          # Binary struct parsers (DeviceStatus 14B, RecordingEntry 24B, etc.)
 │   └── protocol.ts         # Packet assembly, sequence numbers, ACK handling
 │
@@ -80,6 +81,7 @@ Custom GATT service, UUID prefix `B07A`. See [`FIRMWARE_PROTOCOL.md`](./FIRMWARE
 | PROVISIONING | B07A0003 | DeviceManager (pairing, token write) |
 | STORAGE | B07A0004 | RecordingManager (list, transfer) |
 | WIFI_CONFIG | B07A0006 | DeviceManager (WiFi credential write) |
+| DIAGNOSTICS | B07A0007 | DeviceManager (opt-in debug log stream) |
 
 ### Device Status (15-byte binary, CONTROL B07A0201; 14-byte compatible)
 
@@ -95,6 +97,16 @@ Custom GATT service, UUID prefix `B07A`. See [`FIRMWARE_PROTOCOL.md`](./FIRMWARE
 [13] LTE signal quality (CSQ 0-31, 99=unknown)
 [14] WiFi radio status (optional on older firmware)
 ```
+
+### Device Debug Logs (DIAGNOSTICS B07A0007)
+
+`DeviceManager.subscribeToDeviceLogs(device, callback)` installs the LOG_DATA
+notification monitor (`B07A0007-0002`) before writing Start (`[0x01]`) to
+LOG_CONTROL (`B07A0007-0001`). `DeviceLogDecoder` turns packetized UTF-8 chunks
+into newline-delimited `DeviceLogEvent` values and detects sequence gaps or dropped
+firmware bytes. Explicit cleanup attempts Stop (`[0x00]`) before removing the
+monitor; user disconnect, unexpected disconnect, and SDK destroy remove monitors
+without writing to a closed BLE link.
 
 ### Recording List (24-byte entries, STORAGE B07A0402)
 

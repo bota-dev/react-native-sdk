@@ -185,6 +185,12 @@ await BotaClient.devices.isProvisioned(device);
 const status = await BotaClient.devices.getStatus(device);
 const unsubscribe = BotaClient.devices.subscribeToStatus(device, (status) => {});
 
+// Firmware debug logs (requires DEBUG=1 firmware)
+const unsubscribeDeviceLogs = await BotaClient.devices.subscribeToDeviceLogs(device, event => {
+  console.log(event.level, event.message, event.isBacklog);
+});
+unsubscribeDeviceLogs();
+
 // Events
 BotaClient.devices.on('deviceDiscovered', (device) => {});
 BotaClient.devices.on('deviceConnected', (device) => {});
@@ -195,6 +201,20 @@ BotaClient.devices.on('deviceStatusUpdated', (deviceId, status) => {});
 `reconnect(serialNumber)` first uses the cached peripheral ID or advertised MAC.
 If those identities changed, it performs a guarded GATT serial-number probe and
 accepts only the requested physical device.
+
+### Device Debug Logs
+
+Subscribe to the optional firmware diagnostic stream after connecting. Start is
+unsupported on firmware without `DEBUG=1` and rejects with `DeviceError` code
+`FEATURE_UNAVAILABLE`. The returned cleanup can be called more than once; device
+disconnect and SDK destruction remove the monitor automatically.
+
+```typescript
+const unsubscribe = await BotaClient.devices.subscribeToDeviceLogs(device, event => {
+  console.log(event.level, event.message, event.isBacklog);
+});
+unsubscribe();
+```
 
 ### RecordingManager
 

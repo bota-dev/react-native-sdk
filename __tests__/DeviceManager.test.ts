@@ -23,6 +23,130 @@ jest.mock(
 );
 
 import { DeviceManager } from '../src/managers/DeviceManager';
+import {
+  CHAR_DEVICE_LOG_CONTROL,
+  CHAR_DEVICE_LOG_DATA,
+  DEVICE_LOG_CMD_START,
+  DEVICE_LOG_CMD_STOP,
+  SERVICE_BOTA_DIAGNOSTICS,
+} from '../src/ble/constants';
+
+const connectedDevice = {
+  id: 'device-log-test',
+  serialNumber: 'BOTA123',
+  deviceType: 'bota_pin',
+  firmwareVersion: '1.0.0',
+  isProvisioned: true,
+  connectionState: 'connected',
+  mtu: 185,
+} as const;
+
+function createDeviceLogManager() {
+  const monitor = { remove: jest.fn() };
+  const bleManager = Object.assign(new (require('eventemitter3'))(), {
+    isConnected: jest.fn(() => true),
+    subscribeToCharacteristic: jest.fn(() => monitor),
+    writeCharacteristic: jest.fn().mockResolvedValue(undefined),
+    disconnect: jest.fn().mockResolvedValue(undefined),
+  });
+  const manager = Object.create(DeviceManager.prototype) as any;
+  manager.bleManager = bleManager;
+  manager.connectedDevices = new Map([[connectedDevice.id, connectedDevice]]);
+  manager.statusSubscriptions = new Map();
+  manager.nonceSubscriptions = new Map();
+  manager.nonceCache = new Map();
+  manager.deviceLogSubscriptions = new Map();
+  manager.deviceLogDecoders = new Map();
+  manager.recordingStateCache = new Map();
+  manager.stateCache = { clearAll: jest.fn(), removeAllListeners: jest.fn() };
+  manager.stopAutoReconnectLoop = jest.fn();
+  manager.emit = jest.fn();
+  manager.removeAllListeners = jest.fn();
+
+  return { manager, bleManager, monitor };
+}
+
+describe('DeviceManager device log subscriptions', () => {
+  it('subscribes before Start and cleanup sends Stop once', async () => {
+    const { manager, bleManager, monitor } = createDeviceLogManager();
+    const callback = jest.fn();
+
+    const unsubscribe = await manager.subscribeToDeviceLogs(connectedDevice, callback);
+
+    const subscribeInvocation = bleManager.subscribeToCharacteristic.mock.invocationCallOrder[0];
+    const startWriteInvocation = bleManager.writeCharacteristic.mock.invocationCallOrder[0];
+    const startWriteData = bleManager.writeCharacteristic.mock.calls[0][3];
+    expect(subscribeInvocation).toBeLessThan(startWriteInvocation);
+    expect(bleManager.subscribeToCharacteristic).toHaveBeenCalledWith(
+      connectedDevice.id,
+      SERVICE_BOTA_DIAGNOSTICS,
+      CHAR_DEVICE_LOG_DATA,
+      expect.any(Function),
+      expect.any(Function),
+      { logNotifications: false }
+    );
+    expect(startWriteData).toEqual(Buffer.from([DEVICE_LOG_CMD_START]));
+
+    const onData = bleManager.subscribeToCharacteristic.mock.calls[0][3];
+    onData(Buffer.from([0, 0, 0, ...Buffer.from('ready\n')]));
+    expect(callback).toHaveBeenCalledWith({ level: 'debug', message: 'ready', isBacklog: false });
+
+    unsubscribe();
+    unsubscribe();
+
+    const stopWriteData = bleManager.writeCharacteristic.mock.calls[1][3];
+    expect(monitor.remove).toHaveBeenCalledTimes(1);
+    expect(stopWriteData).toEqual(Buffer.from([DEVICE_LOG_CMD_STOP]));
+    expect(bleManager.writeCharacteristic).toHaveBeenCalledTimes(2);
+  });
+
+  it('removes the monitor and reports FEATURE_UNAVAILABLE when Start fails', async () => {
+    const { manager, bleManager, monitor } = createDeviceLogManager();
+    bleManager.writeCharacteristic.mockRejectedValueOnce(new Error('unsupported'));
+
+    await expect(manager.subscribeToDeviceLogs(connectedDevice, jest.fn())).rejects.toMatchObject({
+      code: 'FEATURE_UNAVAILABLE',
+      deviceId: connectedDevice.id,
+    });
+
+    expect(monitor.remove).toHaveBeenCalledTimes(1);
+    expect(manager.deviceLogSubscriptions.has(connectedDevice.id)).toBe(false);
+  });
+
+  it('removes an active log monitor on user disconnect without writing Stop', async () => {
+    const { manager, bleManager, monitor } = createDeviceLogManager();
+    await manager.subscribeToDeviceLogs(connectedDevice, jest.fn());
+    bleManager.writeCharacteristic.mockClear();
+
+    await manager.disconnect(connectedDevice);
+
+    expect(monitor.remove).toHaveBeenCalledTimes(1);
+    expect(bleManager.writeCharacteristic).not.toHaveBeenCalled();
+  });
+
+  it('removes an active log monitor after an unexpected disconnect without writing Stop', async () => {
+    const { manager, bleManager, monitor } = createDeviceLogManager();
+    manager.setupBleListeners();
+    await manager.subscribeToDeviceLogs(connectedDevice, jest.fn());
+    bleManager.writeCharacteristic.mockClear();
+
+    bleManager.emit('deviceDisconnected', connectedDevice.id);
+
+    expect(monitor.remove).toHaveBeenCalledTimes(1);
+    expect(bleManager.writeCharacteristic).not.toHaveBeenCalled();
+  });
+
+  it('removes active log monitors on destroy without writing Stop', async () => {
+    const { manager, bleManager, monitor } = createDeviceLogManager();
+    await manager.subscribeToDeviceLogs(connectedDevice, jest.fn());
+    bleManager.writeCharacteristic.mockClear();
+
+    manager.destroy();
+
+    expect(monitor.remove).toHaveBeenCalledTimes(1);
+    expect(bleManager.writeCharacteristic).not.toHaveBeenCalled();
+  });
+});
 
 describe('DeviceManager reconnect matching', () => {
   beforeEach(() => {

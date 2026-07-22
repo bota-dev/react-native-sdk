@@ -90,12 +90,11 @@ describe('DeviceLogDecoder', () => {
     ]);
   });
 
-  it('warns on a sequence gap, clears the partial line, and decodes the current packet', () => {
+  it('silently recovers from a sequence gap and decodes the current packet', () => {
     const decoder = new DeviceLogDecoder();
 
     expect(decoder.push(packet(10, 0, 'partial'))).toEqual([]);
     expect(decoder.push(packet(12, 0, 'recovered\n'))).toEqual([
-      expect.objectContaining({ level: 'warn', isBacklog: false }),
       { level: 'debug', message: 'recovered', isBacklog: false },
     ]);
     expect(decoder.push(packet(13, 0, 'after\n'))).toEqual([
@@ -103,12 +102,11 @@ describe('DeviceLogDecoder', () => {
     ]);
   });
 
-  it('warns when firmware reports dropped bytes and clears the partial line', () => {
+  it('silently recovers when firmware reports dropped bytes', () => {
     const decoder = new DeviceLogDecoder();
 
     expect(decoder.push(packet(0, 0, 'partial'))).toEqual([]);
     expect(decoder.push(packet(1, DEVICE_LOG_FLAG_DROPPED, 'recovered\n'))).toEqual([
-      expect.objectContaining({ level: 'warn', isBacklog: false }),
       { level: 'debug', message: 'recovered', isBacklog: false },
     ]);
   });

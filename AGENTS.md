@@ -99,6 +99,8 @@ cd app && npx expo start --clear
 
 **Device diagnostics ownership** — allow one device-log subscription per device, including while the Start write is pending. Reject overlaps without replacing the original monitor or cleanup.
 
+**Device diagnostics recovery** — sequence gaps and firmware dropped-byte flags must clear the decoder's partial UTF-8 line, but they are transport metadata and must not be emitted as synthetic `DeviceLogEvent` rows. Subscribers receive complete firmware lines only.
+
 **Public API surface** — everything exported from `src/index.ts` is public and semver-versioned. Be conservative about adding to it. Internal modules are not exported.
 
 ## Key Files

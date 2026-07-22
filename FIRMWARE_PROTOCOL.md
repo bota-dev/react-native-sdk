@@ -65,7 +65,9 @@ LOG_DATA notification packet:
 | `3..` | Log bytes | UTF-8 chunk; a line may span packets |
 
 `subscribeToDeviceLogs()` enables the LOG_DATA notification before writing Start,
-then decodes complete newline-delimited lines as `DeviceLogEvent` values. Its
+then decodes complete newline-delimited lines as `DeviceLogEvent` values. A sequence
+gap or dropped-byte flag clears any buffered partial line but does not emit a
+synthetic event. Its
 returned cleanup is idempotent and attempts Stop before removing the monitor. A
 disconnect or SDK destroy removes the native monitor without writing to a dead link.
 Only one subscription or pending Start may own a device; an overlapping call rejects

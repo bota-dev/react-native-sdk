@@ -103,8 +103,10 @@ Custom GATT service, UUID prefix `B07A`. See [`FIRMWARE_PROTOCOL.md`](./FIRMWARE
 `DeviceManager.subscribeToDeviceLogs(device, callback)` installs the LOG_DATA
 notification monitor (`B07A0007-0002`) before writing Start (`[0x01]`) to
 LOG_CONTROL (`B07A0007-0001`). `DeviceLogDecoder` turns packetized UTF-8 chunks
-into newline-delimited `DeviceLogEvent` values and detects sequence gaps or dropped
-firmware bytes. Before decoding, it normalizes React Native byte views with
+into newline-delimited `DeviceLogEvent` values. Sequence gaps and dropped-byte
+flags clear any partial line so unrelated packet fragments are never joined, but
+that transport metadata does not create synthetic callback events. Before decoding,
+it normalizes React Native byte views with
 `Buffer.from`; Hermes can otherwise expose a `Uint8Array` whose `toString()`
 renders decimal byte values. Explicit cleanup attempts Stop (`[0x00]`) before removing the
 monitor; user disconnect, unexpected disconnect, and SDK destroy remove monitors

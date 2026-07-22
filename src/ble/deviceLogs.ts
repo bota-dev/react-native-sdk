@@ -28,10 +28,6 @@ export class DeviceLogDecoder {
 
     if (hasSequenceGap || hasDroppedBytes) {
       this.lineBuffer = Buffer.alloc(0);
-      const warning = hasSequenceGap
-        ? `Device log sequence gap: expected ${this.expectedSequence}, received ${sequence}`
-        : 'Device log bytes dropped by firmware';
-      events.push({ level: 'warn', message: warning, isBacklog: false });
     }
 
     this.expectedSequence = (sequence + 1) & 0xffff;

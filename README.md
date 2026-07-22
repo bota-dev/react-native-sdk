@@ -211,7 +211,9 @@ disconnect and SDK destruction remove the monitor automatically.
 Only one subscription or pending Start is allowed per device. An overlapping call
 rejects with `DeviceError` code `ALREADY_SUBSCRIBED` without replacing the owner.
 Decoded `event.message` values are UTF-8 strings on both Hermes and JavaScriptCore;
-the SDK normalizes React Native byte views before conversion.
+the SDK normalizes React Native byte views before conversion. Sequence gaps and
+firmware dropped-byte flags clear any partial line internally but are not emitted
+as synthetic log events.
 
 ```typescript
 const unsubscribe = await BotaClient.devices.subscribeToDeviceLogs(device, event => {

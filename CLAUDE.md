@@ -300,6 +300,9 @@ const recordings = await BotaClient.recordings.listRecordings(connected);
 for await (const progress of BotaClient.recordings.syncRecording(...)) { ... }
 ```
 
+Device logs have one owner per connected device across both pending Start and active
+states. Overlapping calls reject with `DeviceError` code `ALREADY_SUBSCRIBED`.
+
 ## Sync Status (centralized derivation)
 
 `deriveSyncStatus(inputs)` is a pure function that returns the single canonical "what's happening with the recordings right now" status for any consumer screen — sync banners, pending-recordings rows, recording detail pages, list-item subtitles. Putting it in the SDK means every Bota-platform app (demo, bota-one, and any third-party app) gets identical precedence rules without each one re-deriving from raw flags.

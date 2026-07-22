@@ -1281,7 +1281,14 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       throw DeviceError.notConnected(device.id);
     }
 
-    this.removeDeviceLogSubscription(device.id);
+    if (this.deviceLogSubscriptions.has(device.id)) {
+      throw new DeviceError(
+        `Device logs are already subscribed for device ${device.id}`,
+        'ALREADY_SUBSCRIBED',
+        device.id
+      );
+    }
+
     const decoder = new DeviceLogDecoder();
     const subscription = this.bleManager.subscribeToCharacteristic(
       device.id,

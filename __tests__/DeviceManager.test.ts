@@ -67,6 +67,51 @@ function createDeviceLogManager() {
 }
 
 describe('DeviceManager device log subscriptions', () => {
+  it('rejects overlapping subscriptions without replacing the pending or active owner', async () => {
+    const { manager, bleManager, monitor } = createDeviceLogManager();
+    let resolveStart!: () => void;
+    const startWrite = new Promise<void>((resolve) => {
+      resolveStart = resolve;
+    });
+    bleManager.writeCharacteristic.mockImplementationOnce(() => startWrite);
+
+    const firstSubscription = manager.subscribeToDeviceLogs(connectedDevice, jest.fn());
+    const pendingOverlap = manager.subscribeToDeviceLogs(connectedDevice, jest.fn());
+    const pendingOverlapResult = pendingOverlap.then(
+      () => null,
+      (error: Error) => error
+    );
+
+    resolveStart();
+    const unsubscribe = await firstSubscription;
+    const pendingOverlapError = await pendingOverlapResult;
+    expect(pendingOverlapError).toMatchObject({
+      code: 'ALREADY_SUBSCRIBED',
+      deviceId: connectedDevice.id,
+      message: `Device logs are already subscribed for device ${connectedDevice.id}`,
+    });
+
+    expect(bleManager.subscribeToCharacteristic).toHaveBeenCalledTimes(1);
+    expect(bleManager.writeCharacteristic).toHaveBeenCalledTimes(1);
+    expect(monitor.remove).not.toHaveBeenCalled();
+
+    await expect(manager.subscribeToDeviceLogs(connectedDevice, jest.fn())).rejects.toMatchObject({
+      code: 'ALREADY_SUBSCRIBED',
+      deviceId: connectedDevice.id,
+    });
+    expect(bleManager.subscribeToCharacteristic).toHaveBeenCalledTimes(1);
+    expect(bleManager.writeCharacteristic).toHaveBeenCalledTimes(1);
+    expect(monitor.remove).not.toHaveBeenCalled();
+
+    unsubscribe();
+
+    expect(bleManager.writeCharacteristic).toHaveBeenCalledTimes(2);
+    expect(bleManager.writeCharacteristic.mock.calls[1][3]).toEqual(
+      Buffer.from([DEVICE_LOG_CMD_STOP])
+    );
+    expect(monitor.remove).toHaveBeenCalledTimes(1);
+  });
+
   it('subscribes before Start and cleanup sends Stop once', async () => {
     const { manager, bleManager, monitor } = createDeviceLogManager();
     const callback = jest.fn();

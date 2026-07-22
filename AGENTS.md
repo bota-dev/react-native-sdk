@@ -91,6 +91,8 @@ npx expo start --clear
 
 **Minimal permissions** — only request Bluetooth + background processing. Never request location or camera.
 
+**Device diagnostics ownership** — allow one device-log subscription per device, including while the Start write is pending. Reject overlaps without replacing the original monitor or cleanup.
+
 **Public API surface** — everything exported from `src/index.ts` is public and semver-versioned. Be conservative about adding to it. Internal modules are not exported.
 
 ## Key Files

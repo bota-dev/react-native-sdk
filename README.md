@@ -208,6 +208,8 @@ Subscribe to the optional firmware diagnostic stream after connecting. Start is
 unsupported on firmware without `DEBUG=1` and rejects with `DeviceError` code
 `FEATURE_UNAVAILABLE`. The returned cleanup can be called more than once; device
 disconnect and SDK destruction remove the monitor automatically.
+Only one subscription or pending Start is allowed per device. An overlapping call
+rejects with `DeviceError` code `ALREADY_SUBSCRIBED` without replacing the owner.
 
 ```typescript
 const unsubscribe = await BotaClient.devices.subscribeToDeviceLogs(device, event => {

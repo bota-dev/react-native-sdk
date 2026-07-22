@@ -106,7 +106,9 @@ LOG_CONTROL (`B07A0007-0001`). `DeviceLogDecoder` turns packetized UTF-8 chunks
 into newline-delimited `DeviceLogEvent` values and detects sequence gaps or dropped
 firmware bytes. Explicit cleanup attempts Stop (`[0x00]`) before removing the
 monitor; user disconnect, unexpected disconnect, and SDK destroy remove monitors
-without writing to a closed BLE link.
+without writing to a closed BLE link. The per-device monitor map owns both the Start
+attempt and active stream; overlapping calls reject with `ALREADY_SUBSCRIBED` and do
+not replace that owner.
 
 ### Recording List (24-byte entries, STORAGE B07A0402)
 

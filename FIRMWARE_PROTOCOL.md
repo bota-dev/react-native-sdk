@@ -68,6 +68,8 @@ LOG_DATA notification packet:
 then decodes complete newline-delimited lines as `DeviceLogEvent` values. Its
 returned cleanup is idempotent and attempts Stop before removing the monitor. A
 disconnect or SDK destroy removes the native monitor without writing to a dead link.
+Only one subscription or pending Start may own a device; an overlapping call rejects
+with `DeviceError` code `ALREADY_SUBSCRIBED` and leaves the original owner intact.
 
 ## Device Status
 

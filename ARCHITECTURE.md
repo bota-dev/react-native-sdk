@@ -104,7 +104,9 @@ Custom GATT service, UUID prefix `B07A`. See [`FIRMWARE_PROTOCOL.md`](./FIRMWARE
 notification monitor (`B07A0007-0002`) before writing Start (`[0x01]`) to
 LOG_CONTROL (`B07A0007-0001`). `DeviceLogDecoder` turns packetized UTF-8 chunks
 into newline-delimited `DeviceLogEvent` values and detects sequence gaps or dropped
-firmware bytes. Explicit cleanup attempts Stop (`[0x00]`) before removing the
+firmware bytes. Before decoding, it normalizes React Native byte views with
+`Buffer.from`; Hermes can otherwise expose a `Uint8Array` whose `toString()`
+renders decimal byte values. Explicit cleanup attempts Stop (`[0x00]`) before removing the
 monitor; user disconnect, unexpected disconnect, and SDK destroy remove monitors
 without writing to a closed BLE link. The per-device monitor map owns both the Start
 attempt and active stream; overlapping calls reject with `ALREADY_SUBSCRIBED` and do

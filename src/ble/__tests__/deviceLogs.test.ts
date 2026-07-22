@@ -58,6 +58,27 @@ describe('DeviceLogDecoder', () => {
     ]);
   });
 
+  it('decodes a React Native Uint8Array line as UTF-8 text', () => {
+    const decoder = new DeviceLogDecoder();
+    const input = packet(0, 0, '[00:08:45.513][BOTA] ready\n');
+    const originalConcat = Buffer.concat;
+    const concatSpy = jest.spyOn(Buffer, 'concat').mockImplementation((list, length) => (
+      Uint8Array.from(originalConcat(list, length)) as unknown as Buffer
+    ));
+
+    try {
+      expect(decoder.push(input)).toEqual([
+        {
+          level: 'debug',
+          message: '[00:08:45.513][BOTA] ready',
+          isBacklog: false,
+        },
+      ]);
+    } finally {
+      concatSpy.mockRestore();
+    }
+  });
+
   it('accepts sequence wrap from 0xffff to 0x0000', () => {
     const decoder = new DeviceLogDecoder();
 

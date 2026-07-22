@@ -264,7 +264,7 @@ modules.
 ## Important Files
 
 - `src/ble/constants.ts` - All Bluetooth UUIDs and protocol constants
-- `src/ble/deviceLogs.ts` - Firmware diagnostic log packet decoder
+- `src/ble/deviceLogs.ts` - Firmware diagnostic log packet decoder; normalizes Hermes `Uint8Array` views to `Buffer` before UTF-8 conversion
 - `src/ble/parsers.ts` - Binary data parsing/encoding
 - `src/protocol/ProtocolHandler.ts` - Recording transfer protocol
 - `src/BotaClient.ts` - Main public API

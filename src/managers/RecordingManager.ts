@@ -35,6 +35,13 @@ import {
   NETWORK_WARMUP_POLL_INTERVAL,
 } from '../ble/constants';
 import { parseDeviceStatus } from '../ble/parsers';
+import {
+  canFallbackToBleUpload,
+  classifyDeviceUploadFailure,
+  isDeviceUploadBusyResponse,
+  type DeviceUploadMonitorOutcome,
+  type DeviceUploadOwnership,
+} from '../sync/deviceUploadHandoff';
 
 const log = logger.tag('RecordingManager');
 
@@ -382,7 +389,10 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
   async *monitorDeviceUpload(
     device: ConnectedDevice,
     initialPendingCount: number,
-  ): AsyncGenerator<SyncProgress & { recordingIndex?: number; totalRecordings?: number }> {
+  ): AsyncGenerator<
+    SyncProgress & { recordingIndex?: number; totalRecordings?: number },
+    DeviceUploadMonitorOutcome
+  > {
     const startTime = Date.now();
     let lastPending = initialPendingCount;
 
@@ -398,7 +408,7 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
 
       if (!getBleManager().isConnected(device.id)) {
         yield { stage: 'failed', progress: 0, error: 'BLE disconnected during device upload' };
-        return;
+        return 'detached';
       }
 
       const status = await this.readDeviceStatus(device);
@@ -426,7 +436,7 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
           recordingIndex: initialPendingCount,
           totalRecordings: initialPendingCount,
         };
-        return;
+        return 'completed';
       }
 
       if (!status.flags.syncActive && pending > 0) {
@@ -438,11 +448,15 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
           recordingIndex: uploaded,
           totalRecordings: initialPendingCount,
         };
-        return;
+        return 'failed';
       }
     }
 
     yield { stage: 'failed', progress: 0, error: 'Device upload timeout' };
+    return classifyDeviceUploadFailure(
+      'Device upload timeout',
+      getBleManager().isConnected(device.id),
+    );
   }
 
   /**
@@ -479,20 +493,52 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
     // 3. If neither is up yet, wait briefly for the modem to register
     //    (cellular cold-boot takes 10–30s); fall back to Bluetooth on timeout.
     let status = await this.readDeviceStatus(device);
+    const ownershipFromStatus = (
+      currentStatus: Awaited<ReturnType<RecordingManager['readDeviceStatus']>>,
+    ): DeviceUploadOwnership => {
+      if (!currentStatus) return 'unavailable';
+      return currentStatus.flags.syncActive ? 'active' : 'inactive';
+    };
+    const preserveDeviceUpload = (): SyncProgress & {
+      recordingIndex: number;
+      totalRecordings: number;
+    } => ({
+      stage: 'device_uploading',
+      progress: 0,
+      recordingIndex: 0,
+      totalRecordings: recordings.length,
+    });
 
-    if (status?.flags.syncActive) {
-      log.info('Smart sync: device already uploading, monitoring');
-      yield* this.monitorDeviceUpload(device, recordings.length);
+    if (!status) {
+      log.warn('Smart sync: fresh status unavailable, preserving possible device upload');
+      yield preserveDeviceUpload();
       return;
     }
 
-    if (status && !status.flags.wifiConnected && !status.flags.lteConnected) {
+    let directUploadFailed = false;
+    if (status.flags.syncActive) {
+      log.info('Smart sync: device already uploading, monitoring');
+      const monitorOutcome = yield* this.monitorDeviceUpload(device, recordings.length);
+      if (monitorOutcome === 'completed') return;
+
+      const latestOwnership = ownershipFromStatus(await this.readDeviceStatus(device));
+      if (monitorOutcome === 'detached' || !canFallbackToBleUpload(latestOwnership)) {
+        log.info('Smart sync: direct upload ownership remains, skipping BLE fallback', {
+          monitorOutcome,
+          latestOwnership,
+        });
+        return;
+      }
+      directUploadFailed = true;
+    }
+
+    if (!directUploadFailed && status && !status.flags.wifiConnected && !status.flags.lteConnected) {
       log.info('Smart sync: no network up yet, waiting for warmup');
       const ready = await this.waitForNetwork(device);
       if (ready) status = ready;
     }
 
-    if (status && (status.flags.wifiConnected || status.flags.lteConnected)) {
+    if (!directUploadFailed && status && (status.flags.wifiConnected || status.flags.lteConnected)) {
       log.info('Smart sync: triggering device-side upload', {
         wifi: status.flags.wifiConnected,
         lte: status.flags.lteConnected,
@@ -502,17 +548,63 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
       try {
         const response = await this.protocolHandler.triggerDeviceUpload(device.id);
         if (response?.accepted) {
-          yield* this.monitorDeviceUpload(device, recordings.length);
+          const monitorOutcome = yield* this.monitorDeviceUpload(device, recordings.length);
+          if (monitorOutcome === 'completed') return;
+
+          const latestOwnership = ownershipFromStatus(await this.readDeviceStatus(device));
+          if (monitorOutcome === 'detached' || !canFallbackToBleUpload(latestOwnership)) {
+            log.info('Smart sync: direct upload ownership remains, skipping BLE fallback', {
+              monitorOutcome,
+              latestOwnership,
+            });
+            return;
+          }
+        } else if (isDeviceUploadBusyResponse(response)) {
+          log.info('Smart sync: device already busy, preserving direct upload', {
+            errorCode: response?.errorCode,
+          });
+          const busyStatus = await this.readDeviceStatus(device);
+          if (busyStatus?.flags.syncActive) {
+            const monitorOutcome = yield* this.monitorDeviceUpload(device, recordings.length);
+            if (monitorOutcome === 'completed') return;
+            const latestOwnership = ownershipFromStatus(await this.readDeviceStatus(device));
+            if (monitorOutcome === 'detached' || !canFallbackToBleUpload(latestOwnership)) {
+              return;
+            }
+          } else {
+            yield preserveDeviceUpload();
+            return;
+          }
+        } else {
+          const latestOwnership = ownershipFromStatus(await this.readDeviceStatus(device));
+          if (!canFallbackToBleUpload(latestOwnership)) {
+            log.info('Smart sync: trigger rejected but ownership is not cleared', {
+              errorCode: response?.errorCode,
+              latestOwnership,
+            });
+            yield preserveDeviceUpload();
+            return;
+          }
+          log.info('Smart sync: device rejected, falling back to BLE', {
+            errorCode: response?.errorCode,
+          });
+        }
+      } catch (err) {
+        const latestOwnership = ownershipFromStatus(await this.readDeviceStatus(device));
+        if (!canFallbackToBleUpload(latestOwnership)) {
+          log.warn('Smart sync: trigger failed without fresh inactive status', {
+            error: (err as Error).message,
+            latestOwnership,
+          });
+          yield preserveDeviceUpload();
           return;
         }
-        log.info('Smart sync: device rejected, falling back to BLE', {
-          errorCode: response?.errorCode,
-        });
-      } catch (err) {
-        log.warn('Smart sync: trigger failed, falling back to BLE', {
+        log.warn('Smart sync: trigger failed after ownership cleared, falling back to BLE', {
           error: (err as Error).message,
         });
       }
+    } else if (directUploadFailed) {
+      log.info('Smart sync: direct upload failed and ownership cleared, falling back to BLE');
     } else {
       log.info('Smart sync: no WiFi/4G after warmup, falling back to BLE');
     }

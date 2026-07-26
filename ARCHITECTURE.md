@@ -152,6 +152,12 @@ transfer active until this final app result.
 
 ## Upload Flow
 
+`RecordingManager.syncAllRecordings` checks fresh device status before selecting a
+channel. An active upload, trigger-busy response, BLE loss, or unreadable status
+preserves device-side ownership. It starts BLE fallback only after a fresh status
+reports `syncActive=false`; this prevents WiFi/cellular and BLE from racing the
+same recording while still allowing genuine direct-upload failures to recover.
+
 ```
 RecordingManager.syncRecording(device, fileId)
   1. customer app calls getUploadUrl(fileId) from their backend

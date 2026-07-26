@@ -265,6 +265,11 @@ BotaClient.recordings.on('syncFailed', (uuid, error) => {});
 BotaClient.recordings.on('uploadProgress', (taskId, progress) => {});
 ```
 
+`syncAllRecordings` preserves device-side ownership while a WiFi or cellular
+upload may still be active. A busy response, Bluetooth disconnect, or
+unavailable status will not start a competing Bluetooth transfer. Bluetooth
+fallback requires a fresh device status with `syncActive: false`.
+
 ### WiFi Scanning
 
 WiFi scanning is performed on the device itself via Bluetooth — no platform-specific WiFi libraries needed. Works identically on iOS and Android.

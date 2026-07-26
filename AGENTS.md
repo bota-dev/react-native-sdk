@@ -58,7 +58,7 @@ npm test            # Jest unit tests
 3. **Test against physical device**: link into demo app (see Local Testing below) and run the affected flow:
    - **Bluetooth discovery changes** — scan for devices, verify Bota-* prefix filtering
    - **Reconnect changes** — verify exact ID/MAC fast paths and guarded serial recovery after a flash changes the peripheral identity
-   - **Recording transfer changes** — sync a recording end-to-end (list → transfer → confirm)
+   - **Recording transfer changes** — sync a recording end-to-end (list → transfer → confirm); while WiFi upload is active, force trigger-busy and BLE loss and confirm no competing BLE transfer starts
    - **Provisioning changes** — pair a fresh device, verify token write and pairing state
    - **Factory-reset changes** — verify grant-gated opcode `0x06`, device success before disconnect, authenticated backend finalization retry, and complete local-recording removal per [`Device-Provisioning §3.1`](../internal-docs/device/Device-Provisioning.md#31-authenticated-factory-reset)
    - **Status changes** — verify DEVICE_STATUS notifications update correctly
@@ -94,6 +94,8 @@ cd app && npx expo start --clear
 
 **Upload queue** — recordings are queued in `UploadQueue` (persistent SQLite). Never upload synchronously in the Bluetooth transfer callback.
 
+**Direct-upload ownership** — `syncAllRecordings` may fall back from WiFi/cellular to BLE only after a fresh device status reports `syncActive=false`. Trigger-busy, BLE loss, and unreadable status preserve device ownership; a genuine monitor failure may use BLE only after that fresh inactive confirmation.
+
 **No server calls** — the SDK communicates only with the Bota device (BLE) and S3 (presigned URLs provided by the customer backend). It never calls the Bota API directly. Auth tokens are passed in by the customer app.
 
 **Minimal permissions** — only request Bluetooth + background processing. Never request location or camera.
@@ -117,6 +119,7 @@ cd app && npx expo start --clear
 | `src/protocol/ProtocolHandler.ts` | Protocol handler (Bluetooth packet assembly, ACK logic) |
 | `src/managers/DeviceManager.ts` | Device discovery, connection, bonding, provisioning, diagnostics subscriptions |
 | `src/managers/RecordingManager.ts` | Recording list, Bluetooth transfer, upload orchestration |
+| `src/sync/deviceUploadHandoff.ts` | Direct-upload ownership and safe BLE-fallback policy |
 | `src/managers/OTAManager.ts` | Firmware download progress, Bluetooth OTA transfer, reboot recovery |
 | `src/upload/UploadQueue.ts` | Persistent SQLite upload queue with retry |
 | `src/storage/StorageManager.ts` | Local SQLite persistence (device registry, transfer state) |

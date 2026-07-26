@@ -71,6 +71,7 @@ For WiFi/Cellular devices, the SDK supports:
 - WiFi network configuration and provisioning (`configureWiFi`, `getWiFiStatus`, `subscribeToWiFiStatus`)
 - Grant-based credential encryption (ChaCha20-Poly1305 via K_session)
 - Device capability detection (`CAP_WIFI_UPLOAD`, `CAP_LTE_UPLOAD`, `CAP_BLE_SYNC`)
+- Safe direct-upload handoff: trigger-busy, BLE loss, or unreadable status keeps WiFi/cellular ownership; BLE fallback requires a fresh `syncActive=false` status
 
 ### P2 Grant Auth (Recording Commands)
 

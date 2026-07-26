@@ -60,6 +60,7 @@ npm test            # Jest unit tests
    - **Reconnect changes** — verify exact ID/MAC fast paths and guarded serial recovery after a flash changes the peripheral identity
    - **Recording transfer changes** — sync a recording end-to-end (list → transfer → confirm)
    - **Provisioning changes** — pair a fresh device, verify token write and pairing state
+   - **Factory-reset changes** — verify grant-gated opcode `0x06`, device success before disconnect, authenticated backend finalization retry, and complete local-recording removal per [`Device-Provisioning §3.1`](../internal-docs/device/Device-Provisioning.md#31-authenticated-factory-reset)
    - **Status changes** — verify DEVICE_STATUS notifications update correctly
    - **Firmware update changes** — download an assigned release, verify byte progress advances before Bluetooth transfer; force a device-side write rejection and confirm the SDK fails immediately instead of advancing transfer progress
 4. Check no regressions in unrelated Bluetooth flows

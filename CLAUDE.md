@@ -86,10 +86,14 @@ BLE recording commands (start/stop) are gated by an HPKE-encrypted, ECDSA-signed
 Since P5, the firmware rejects unauthenticated factory-reset opcodes and **rejects token writes while paired** (security measure to prevent stolen-device hijacking). Cleanup requires a backend-signed deprovision grant (`GRANT_SCOPE_DEPROVISION = 0x08`):
 
 - `DeviceManager.deprovision(device, grantBlob)` — opcode `0x05` to `CHAR_DEVICE_COMMAND`. Clears token + pairing state. **No reboot** — connection stays up. Use for rebind flows.
-- `DeviceManager.bleFactoryReset(device, grantBlob)` — opcode `0x06`. Clears token + pairing + WiFi creds + conn_policy, then reboots. Use for full delete-device flows.
+- `DeviceManager.bleFactoryReset(device, grantBlob)` — sends opcode `0x06`, but the currently shipping firmware handler was reverted and this method must not be treated as an operational reset until the authenticated factory-reset close-loop is implemented. The approved behavior deletes all local recording artifacts, reports device success, finalizes the exact reset command through the authenticated app session, then clears credentials and reboots.
 - Grant blob comes from `POST /dashboard/projects/:projectId/devices/:deviceId/deprovision-grant` — same wire format as recording grant, scope = `0x08`. The endpoint enforces project-membership authorization; the grant is HPKE-encrypted to the device's `pk_d` and ECDSA-signed.
 
 **Auto-recovery on rebind:** `DeviceManager.provision(device, token, env, options)` accepts `options.fetchDeprovisionGrant: (nonce_d) => Promise<grant_blob>`. When supplied and the device returns `ALREADY_PAIRED`, the SDK reads the P6 session nonce, invokes the fetcher, performs an opcode-0x05 deprovision, and retries the token write — all on the same BLE connection, transparent to the caller. Without the fetcher, `provision()` throws `ProvisioningError [ALREADY_PAIRED]` so callers can drive recovery manually. See [internal-docs Device-Provisioning §3](../internal-docs/device/Device-Provisioning.md#3-device-rebinding-change-user) for the full sequence diagram.
+
+Factory reset is intentionally distinct from this rebind recovery. See
+[Device-Provisioning §3.1](../internal-docs/device/Device-Provisioning.md#31-authenticated-factory-reset)
+for the approved remote/BLE close-loop and current implementation status.
 
 ### BLE Radio Arbitration (`BleManager`)
 

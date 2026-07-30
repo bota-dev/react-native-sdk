@@ -46,6 +46,8 @@ export type {
   ReconnectOptions,
   Environment,
   ProvisioningResult,
+  BleFactoryResetResult,
+  BleFactoryResetResultPersister,
   DeviceCapabilities,
   WiFiSecurityType,
   WiFiStatus,

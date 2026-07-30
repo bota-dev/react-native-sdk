@@ -60,7 +60,7 @@ npm test            # Jest unit tests
    - **Reconnect changes** — verify exact ID/MAC fast paths and guarded serial recovery after a flash changes the peripheral identity
    - **Recording transfer changes** — sync a recording end-to-end (list → transfer → confirm); while WiFi upload is active, force trigger-busy and BLE loss and confirm no competing BLE transfer starts
    - **Provisioning changes** — pair a fresh device, verify token write and pairing state
-   - **Factory-reset changes** — verify grant-gated opcode `0x06`, device success before disconnect, authenticated backend finalization retry, and complete local-recording removal per [`Device-Provisioning §3.1`](../internal-docs/device/Device-Provisioning.md#31-authenticated-factory-reset)
+   - **Factory-reset changes** — verify grant-gated opcode `0x06`, persist the three-byte result before writing explicit receipt opcode `0x0A`, replay after disconnect-before-receipt, authenticated backend finalization retry, and complete local-recording removal per [`Device-Provisioning §3.1`](../internal-docs/device/Device-Provisioning.md#31-authenticated-factory-reset)
    - **Status changes** — verify DEVICE_STATUS notifications update correctly
    - **Firmware update changes** — download an assigned release, verify byte progress advances before Bluetooth transfer; force a device-side write rejection and confirm the SDK fails immediately instead of advancing transfer progress
 4. Check no regressions in unrelated Bluetooth flows
@@ -117,7 +117,7 @@ cd app && npx expo start --clear
 | `src/ble/deviceLogs.ts` | B07A0007 diagnostic log packet decoder |
 | `src/ble/parsers.ts` | Binary struct parsers (DeviceStatus, RecordingEntry, etc.) |
 | `src/protocol/ProtocolHandler.ts` | Protocol handler (Bluetooth packet assembly, ACK logic) |
-| `src/managers/DeviceManager.ts` | Device discovery, connection, bonding, provisioning, diagnostics subscriptions |
+| `src/managers/DeviceManager.ts` | Device discovery, connection, bonding, provisioning, authenticated factory-reset receipt/replay, diagnostics subscriptions |
 | `src/managers/RecordingManager.ts` | Recording list, Bluetooth transfer, upload orchestration |
 | `src/sync/deviceUploadHandoff.ts` | Direct-upload ownership and safe BLE-fallback policy |
 | `src/managers/OTAManager.ts` | Firmware download progress, Bluetooth OTA transfer, reboot recovery |

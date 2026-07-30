@@ -1,6 +1,6 @@
 {
   "name": "@bota.dev/react-native-sdk",
-  "version": "0.0.63",
+  "version": "0.0.64",
   "description": "Bota React Native SDK for Bluetooth device communication",
   "main": "lib/commonjs/index.js",
   "module": "lib/module/index.js",

@@ -61,6 +61,7 @@ import {
   WIFI_SCAN_TIMEOUT,
   DEVICE_CMD_BLE_DEPROVISION,
   DEVICE_CMD_BLE_FACTORY_RESET,
+  DEVICE_CMD_BLE_FACTORY_RESET_RESULT_ACK,
 } from '../ble/constants';
 import {
   parsePairingState,
@@ -83,6 +84,8 @@ import type {
   ReconnectOptions,
   Environment,
   ProvisioningResult,
+  BleFactoryResetResult,
+  BleFactoryResetResultPersister,
   RecordingState,
   // RecordingCommand, // TODO: Re-enable when used
   StartRecordingOptions,
@@ -1621,51 +1624,101 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     }
   }
 
-  private waitForProvisioningResult(deviceId: string): Promise<ProvisioningResult> {
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        subscription.remove();
-        reject(ProvisioningError.timeout(deviceId));
+  private waitForProvisioningResult(
+    deviceId: string,
+    requireFactoryResetPayload = false
+  ): Promise<ProvisioningResult> {
+    return this.createProvisioningResultWait(
+      deviceId,
+      requireFactoryResetPayload
+    ).promise;
+  }
+
+  private createProvisioningResultWait(
+    deviceId: string,
+    requireFactoryResetPayload = false
+  ): {
+    promise: Promise<ProvisioningResult>;
+    cancel: (reason: unknown) => void;
+  } {
+    let subscription: Subscription | undefined;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
+    let rejectPromise: (reason: unknown) => void = () => {};
+
+    const cleanup = () => {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      subscription?.remove();
+    };
+
+    const promise = new Promise<ProvisioningResult>((resolve, reject) => {
+      rejectPromise = reject;
+
+      const resolveOnce = (result: ProvisioningResult) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(result);
+      };
+      const rejectOnce = (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      };
+
+      timeout = setTimeout(() => {
+        rejectOnce(ProvisioningError.timeout(deviceId));
       }, OPERATION_TIMEOUT);
 
-      const subscription = this.bleManager.subscribeToCharacteristic(
+      subscription = this.bleManager.subscribeToCharacteristic(
         deviceId,
         SERVICE_BOTA_PROVISIONING,
         CHAR_PROVISIONING_RESULT,
         (data) => {
-          clearTimeout(timeout);
-          subscription.remove();
-
           if (data.length < 1) {
-            resolve({ success: false, error: 'unknown' });
+            resolveOnce({ success: false, error: 'unknown' });
             return;
           }
 
           const resultCode = data[0];
           switch (resultCode) {
             case PROVISIONING_SUCCESS:
-              resolve({ success: true });
+              if (requireFactoryResetPayload && data.length !== 3) {
+                rejectOnce(new ProvisioningError(
+                  `Factory reset result must be exactly 3 bytes, received ${data.length}`,
+                  'INVALID_FACTORY_RESET_RESULT',
+                  deviceId
+                ));
+                break;
+              }
+              resolveOnce({
+                success: true,
+                ...(data.length >= 3
+                  ? { localRecordingsDeleted: data.readUInt16LE(1) }
+                  : {}),
+              });
               break;
             case PROVISIONING_INVALID_TOKEN:
-              resolve({ success: false, error: 'invalid_token' });
+              resolveOnce({ success: false, error: 'invalid_token' });
               break;
             case PROVISIONING_STORAGE_ERROR:
-              resolve({ success: false, error: 'storage_error' });
+              resolveOnce({ success: false, error: 'storage_error' });
               break;
             case PROVISIONING_CHUNK_ERROR:
-              resolve({ success: false, error: 'chunk_error' });
+              resolveOnce({ success: false, error: 'chunk_error' });
               break;
             case PROVISIONING_ALREADY_PAIRED:
-              resolve({ success: false, error: 'already_paired' });
+              resolveOnce({ success: false, error: 'already_paired' });
               break;
             default:
-              resolve({ success: false, error: 'unknown' });
+              resolveOnce({ success: false, error: 'unknown' });
           }
         },
         (error) => {
-          clearTimeout(timeout);
-          subscription.remove();
-          reject(new ProvisioningError(
+          rejectOnce(new ProvisioningError(
             `Provisioning notification error: ${error.message}`,
             'NOTIFICATION_ERROR',
             deviceId,
@@ -1673,7 +1726,21 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
           ));
         }
       );
+
+      if (settled) {
+        subscription.remove();
+      }
     });
+
+    return {
+      promise,
+      cancel: (reason: unknown) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        rejectPromise(reason);
+      },
+    };
   }
 
   // ============================================================================
@@ -1912,20 +1979,20 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   /**
    * Full BLE factory reset (opcode 0x06). Requires a valid deprovision grant.
    *
-   * Clears token, pairing state, all stored WiFi credentials, and conn_policy on
-   * the device, then reboots it. Use this for Reset/Delete flows where the device
-   * may not have WiFi/4G to receive a cloud-channel factory_reset command.
+   * Firmware first wipes all local recording artifacts and reports a durable,
+   * three-byte result. The SDK awaits `persistResult` before sending result
+   * receipt opcode 0x0A; only that receipt lets firmware clear project state and
+   * reboot unpaired. If persistence or the receipt write fails, firmware keeps
+   * the result in its WIPED phase for {@link resumeBleFactoryReset}.
    *
-   * The device reboots ~500ms after sending the success notification, so the BLE
-   * connection will drop shortly after a successful call.
-   *
-   * Falls back gracefully on firmware without 0x06: times out on the result
-   * notification — caller should still proceed with server-side reset.
+   * @param persistResult Must durably store the result before resolving. Reject
+   *   to prevent the receipt and keep the firmware result replayable.
    */
   async bleFactoryReset(
     device: ConnectedDevice,
-    grantBlob: string
-  ): Promise<{ success: boolean; error?: string }> {
+    grantBlob: string,
+    persistResult: BleFactoryResetResultPersister
+  ): Promise<BleFactoryResetResult> {
     log.info('BLE factory reset', { deviceId: device.id });
 
     if (!this.isConnected(device.id)) {
@@ -1935,24 +2002,88 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     try {
       await this.writeGrant(device, grantBlob);
 
-      const resultPromise = this.waitForProvisioningResult(device.id);
+      const resultWait = this.createProvisioningResultWait(device.id, true);
 
-      await this.bleManager.writeCharacteristic(
-        device.id,
-        SERVICE_BOTA_CONTROL,
-        CHAR_DEVICE_COMMAND,
-        Buffer.from([DEVICE_CMD_BLE_FACTORY_RESET])
-      );
+      try {
+        await this.bleManager.writeCharacteristic(
+          device.id,
+          SERVICE_BOTA_CONTROL,
+          CHAR_DEVICE_COMMAND,
+          Buffer.from([DEVICE_CMD_BLE_FACTORY_RESET])
+        );
+      } catch (error) {
+        resultWait.cancel(error);
+        await resultWait.promise.catch(() => undefined);
+        throw error;
+      }
 
-      const result = await resultPromise;
+      const result = await resultWait.promise;
       log.info('BLE factory reset result', { deviceId: device.id, result });
-      return result.success
-        ? { success: true }
-        : { success: false, error: result.error };
+      return await this.persistAndAcknowledgeFactoryReset(
+        device,
+        result,
+        persistResult
+      );
     } catch (error) {
       log.error('BLE factory reset failed', error as Error, { deviceId: device.id });
       throw error;
     }
+  }
+
+  /**
+   * Resume a factory reset whose successful wipe result was not receipted.
+   *
+   * Firmware replays its durable WIPED result when the app subscribes after a
+   * reconnect. This method deliberately sends neither a grant nor opcode 0x06.
+   */
+  async resumeBleFactoryReset(
+    device: ConnectedDevice,
+    persistResult: BleFactoryResetResultPersister
+  ): Promise<BleFactoryResetResult> {
+    log.info('Resuming BLE factory reset result receipt', { deviceId: device.id });
+
+    if (!this.isConnected(device.id)) {
+      throw DeviceError.notConnected(device.id);
+    }
+
+    try {
+      const result = await this.waitForProvisioningResult(device.id, true);
+      return await this.persistAndAcknowledgeFactoryReset(
+        device,
+        result,
+        persistResult
+      );
+    } catch (error) {
+      log.error('BLE factory reset resume failed', error as Error, { deviceId: device.id });
+      throw error;
+    }
+  }
+
+  private async persistAndAcknowledgeFactoryReset(
+    device: ConnectedDevice,
+    provisioningResult: ProvisioningResult,
+    persistResult: BleFactoryResetResultPersister
+  ): Promise<BleFactoryResetResult> {
+    if (!provisioningResult.success) {
+      return {
+        success: false,
+        error: provisioningResult.error ?? 'unknown',
+      };
+    }
+
+    const result: BleFactoryResetResult = {
+      success: true,
+      localRecordingsDeleted: provisioningResult.localRecordingsDeleted!,
+    };
+    await persistResult(result);
+    await this.bleManager.writeCharacteristic(
+      device.id,
+      SERVICE_BOTA_CONTROL,
+      CHAR_DEVICE_COMMAND,
+      Buffer.from([DEVICE_CMD_BLE_FACTORY_RESET_RESULT_ACK])
+    );
+
+    return result;
   }
 
   /**

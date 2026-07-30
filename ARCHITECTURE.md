@@ -209,6 +209,16 @@ DISCONNECTED
   ↓ reconnect (stored peripheral ID / advertised MAC / guarded SN probe after identity rotation)
 ```
 
+Authenticated BLE factory reset is a separate close-loop: write a nonce-bound
+grant and DEVICE_COMMAND `0x06`, require an exact three-byte
+PROVISIONING_RESULT, persist it,
+then write DEVICE_COMMAND `0x0A` as the explicit delivery receipt. Firmware
+replays the result after disconnect-before-receipt.
+`DeviceManager.bleFactoryReset` enforces the persist-before-receipt ordering
+through a required async callback; `resumeBleFactoryReset` consumes the replay
+without resending the destructive command. Backend ACK/finalization stays in
+the consuming app.
+
 **Reconnect matching (`DeviceManager.reconnect`).** All Bota Pins advertise the
 same generic name ("Bota Pin") and iOS/macOS rotate the BLE peripheral ID, so
 name is not a safe reconnect key when several are nearby. Match order: (1)

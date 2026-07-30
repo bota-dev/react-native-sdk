@@ -248,7 +248,29 @@ export type Environment = 'development' | 'gamma' | 'production';
 export interface ProvisioningResult {
   success: boolean;
   error?: 'invalid_token' | 'storage_error' | 'chunk_error' | 'already_paired' | 'unknown';
+  /** Present on the three-byte authenticated factory-reset success result. */
+  localRecordingsDeleted?: number;
 }
+
+/** Result returned by the authenticated BLE factory-reset close-loop. */
+export type BleFactoryResetResult =
+  | {
+      success: true;
+      localRecordingsDeleted: number;
+    }
+  | {
+      success: false;
+      error: NonNullable<ProvisioningResult['error']>;
+    };
+
+/**
+ * Called after firmware reports a successful wipe and before the SDK sends
+ * the explicit result receipt. Reject to leave firmware in its replayable
+ * WIPED phase.
+ */
+export type BleFactoryResetResultPersister = (
+  result: Extract<BleFactoryResetResult, { success: true }>
+) => Promise<void>;
 
 // ============================================================================
 // Remote Recording Control Types

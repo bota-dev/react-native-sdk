@@ -24,11 +24,17 @@ jest.mock(
 
 import { DeviceManager } from '../src/managers/DeviceManager';
 import {
+  CHAR_DEVICE_COMMAND,
   CHAR_DEVICE_LOG_CONTROL,
   CHAR_DEVICE_LOG_DATA,
+  CHAR_PROVISIONING_RESULT,
+  DEVICE_CMD_BLE_FACTORY_RESET,
+  DEVICE_CMD_BLE_FACTORY_RESET_RESULT_ACK,
   DEVICE_LOG_CMD_START,
   DEVICE_LOG_CMD_STOP,
+  SERVICE_BOTA_CONTROL,
   SERVICE_BOTA_DIAGNOSTICS,
+  SERVICE_BOTA_PROVISIONING,
 } from '../src/ble/constants';
 
 const connectedDevice = {
@@ -65,6 +71,215 @@ function createDeviceLogManager() {
 
   return { manager, bleManager, monitor };
 }
+
+function createFactoryResetManager() {
+  const monitor = { remove: jest.fn() };
+  const bleManager = Object.assign(new (require('eventemitter3'))(), {
+    isConnected: jest.fn(() => true),
+    subscribeToCharacteristic: jest.fn(() => monitor),
+    writeCharacteristic: jest.fn().mockResolvedValue(undefined),
+  });
+  const manager = Object.create(DeviceManager.prototype) as any;
+  manager.bleManager = bleManager;
+  manager.writeGrant = jest.fn().mockResolvedValue(undefined);
+
+  return { manager, bleManager, monitor };
+}
+
+async function flushPromises() {
+  await new Promise<void>((resolve) => setImmediate(resolve));
+}
+
+describe('DeviceManager authenticated factory reset', () => {
+  it('persists the three-byte success result before sending receipt opcode 0x0A', async () => {
+    const { manager, bleManager, monitor } = createFactoryResetManager();
+    const persistResult = jest.fn().mockResolvedValue(undefined);
+
+    const reset = manager.bleFactoryReset(connectedDevice, 'grant-blob', persistResult);
+    await flushPromises();
+
+    expect(manager.writeGrant).toHaveBeenCalledWith(connectedDevice, 'grant-blob');
+    expect(bleManager.subscribeToCharacteristic).toHaveBeenCalledWith(
+      connectedDevice.id,
+      SERVICE_BOTA_PROVISIONING,
+      CHAR_PROVISIONING_RESULT,
+      expect.any(Function),
+      expect.any(Function)
+    );
+    expect(bleManager.writeCharacteristic).toHaveBeenCalledWith(
+      connectedDevice.id,
+      SERVICE_BOTA_CONTROL,
+      CHAR_DEVICE_COMMAND,
+      Buffer.from([DEVICE_CMD_BLE_FACTORY_RESET])
+    );
+
+    const onData = bleManager.subscribeToCharacteristic.mock.calls[0][3];
+    onData(Buffer.from([0x00, 0x34, 0x12]));
+
+    await expect(reset).resolves.toEqual({
+      success: true,
+      localRecordingsDeleted: 0x1234,
+    });
+    expect(persistResult).toHaveBeenCalledWith({
+      success: true,
+      localRecordingsDeleted: 0x1234,
+    });
+    expect(bleManager.writeCharacteristic).toHaveBeenLastCalledWith(
+      connectedDevice.id,
+      SERVICE_BOTA_CONTROL,
+      CHAR_DEVICE_COMMAND,
+      Buffer.from([DEVICE_CMD_BLE_FACTORY_RESET_RESULT_ACK])
+    );
+    expect(persistResult.mock.invocationCallOrder[0]).toBeLessThan(
+      bleManager.writeCharacteristic.mock.invocationCallOrder[1]
+    );
+    expect(monitor.remove).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not send receipt when durable result persistence fails', async () => {
+    const { manager, bleManager } = createFactoryResetManager();
+    const persistResult = jest.fn().mockRejectedValue(new Error('storage unavailable'));
+
+    const reset = manager.bleFactoryReset(connectedDevice, 'grant-blob', persistResult);
+    await flushPromises();
+    const onData = bleManager.subscribeToCharacteristic.mock.calls[0][3];
+    onData(Buffer.from([0x00, 0x02, 0x00]));
+
+    await expect(reset).rejects.toThrow('storage unavailable');
+    expect(bleManager.writeCharacteristic).toHaveBeenCalledTimes(1);
+    expect(bleManager.writeCharacteristic.mock.calls[0][3]).toEqual(
+      Buffer.from([DEVICE_CMD_BLE_FACTORY_RESET])
+    );
+  });
+
+  it('keeps the persisted wipe result retryable when receipt write fails', async () => {
+    const { manager, bleManager } = createFactoryResetManager();
+    const persistResult = jest.fn().mockResolvedValue(undefined);
+    bleManager.writeCharacteristic
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('receipt write failed'));
+
+    const reset = manager.bleFactoryReset(
+      connectedDevice,
+      'grant-blob',
+      persistResult
+    );
+    await flushPromises();
+    const onData = bleManager.subscribeToCharacteristic.mock.calls[0][3];
+    onData(Buffer.from([0x00, 0x02, 0x00]));
+
+    await expect(reset).rejects.toThrow('receipt write failed');
+    expect(persistResult).toHaveBeenCalledWith({
+      success: true,
+      localRecordingsDeleted: 2,
+    });
+    expect(bleManager.writeCharacteristic).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns a firmware failure without persisting or acknowledging success', async () => {
+    const { manager, bleManager } = createFactoryResetManager();
+    const persistResult = jest.fn();
+
+    const reset = manager.bleFactoryReset(connectedDevice, 'grant-blob', persistResult);
+    await flushPromises();
+    const onData = bleManager.subscribeToCharacteristic.mock.calls[0][3];
+    onData(Buffer.from([0x01]));
+
+    await expect(reset).resolves.toEqual({
+      success: false,
+      error: 'invalid_token',
+    });
+    expect(persistResult).not.toHaveBeenCalled();
+    expect(bleManager.writeCharacteristic).toHaveBeenCalledTimes(1);
+  });
+
+  it('distinguishes a device wipe/storage failure from an invalid grant', async () => {
+    const { manager, bleManager } = createFactoryResetManager();
+    const persistResult = jest.fn();
+
+    const reset = manager.bleFactoryReset(connectedDevice, 'grant-blob', persistResult);
+    await flushPromises();
+    const onData = bleManager.subscribeToCharacteristic.mock.calls[0][3];
+    onData(Buffer.from([0x02]));
+
+    await expect(reset).resolves.toEqual({
+      success: false,
+      error: 'storage_error',
+    });
+    expect(persistResult).not.toHaveBeenCalled();
+    expect(bleManager.writeCharacteristic).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    Buffer.from([0x00]),
+    Buffer.from([0x00, 0x07]),
+    Buffer.from([0x00, 0x07, 0x00, 0xff]),
+  ])('rejects malformed reset success payload %p without sending receipt', async (payload) => {
+    const { manager, bleManager } = createFactoryResetManager();
+    const persistResult = jest.fn();
+
+    const reset = manager.bleFactoryReset(connectedDevice, 'grant-blob', persistResult);
+    await flushPromises();
+    const onData = bleManager.subscribeToCharacteristic.mock.calls[0][3];
+    onData(payload);
+
+    await expect(reset).rejects.toMatchObject({
+      code: 'INVALID_FACTORY_RESET_RESULT',
+    });
+    expect(persistResult).not.toHaveBeenCalled();
+    expect(bleManager.writeCharacteristic).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects disconnect-before-result without sending a receipt', async () => {
+    const { manager, bleManager, monitor } = createFactoryResetManager();
+    const persistResult = jest.fn();
+
+    const reset = manager.bleFactoryReset(connectedDevice, 'grant-blob', persistResult);
+    await flushPromises();
+    const onError = bleManager.subscribeToCharacteristic.mock.calls[0][4];
+    onError(new Error('link lost'));
+
+    await expect(reset).rejects.toMatchObject({ code: 'NOTIFICATION_ERROR' });
+    expect(persistResult).not.toHaveBeenCalled();
+    expect(bleManager.writeCharacteristic).toHaveBeenCalledTimes(1);
+    expect(monitor.remove).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels the result subscription when the reset opcode write fails', async () => {
+    const { manager, bleManager, monitor } = createFactoryResetManager();
+    const persistResult = jest.fn();
+    bleManager.writeCharacteristic.mockRejectedValueOnce(
+      new Error('opcode write failed')
+    );
+
+    await expect(
+      manager.bleFactoryReset(connectedDevice, 'grant-blob', persistResult)
+    ).rejects.toThrow('opcode write failed');
+
+    expect(persistResult).not.toHaveBeenCalled();
+    expect(monitor.remove).toHaveBeenCalledTimes(1);
+  });
+
+  it('resumes a replayed WIPED result without re-sending grant or opcode 0x06', async () => {
+    const { manager, bleManager } = createFactoryResetManager();
+    const persistResult = jest.fn().mockResolvedValue(undefined);
+
+    const resume = manager.resumeBleFactoryReset(connectedDevice, persistResult);
+    await flushPromises();
+    const onData = bleManager.subscribeToCharacteristic.mock.calls[0][3];
+    onData(Buffer.from([0x00, 0x07, 0x00]));
+
+    await expect(resume).resolves.toEqual({
+      success: true,
+      localRecordingsDeleted: 7,
+    });
+    expect(manager.writeGrant).not.toHaveBeenCalled();
+    expect(bleManager.writeCharacteristic).toHaveBeenCalledTimes(1);
+    expect(bleManager.writeCharacteristic.mock.calls[0][3]).toEqual(
+      Buffer.from([DEVICE_CMD_BLE_FACTORY_RESET_RESULT_ACK])
+    );
+  });
+});
 
 describe('DeviceManager device log subscriptions', () => {
   it('rejects overlapping subscriptions without replacing the pending or active owner', async () => {

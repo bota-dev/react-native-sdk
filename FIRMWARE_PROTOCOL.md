@@ -38,6 +38,29 @@ All custom UUIDs use the `B07A` prefix with the Bluetooth base UUID
 
 See `src/ble/constants.ts` for the characteristic UUID constants used by the SDK.
 
+## Authenticated Factory Reset
+
+Firmware implements the grant-gated BLE factory-reset close-loop on
+`CHAR_DEVICE_COMMAND` (`B07A0002-0005`):
+
+1. The app writes a valid nonce-bound deprovision grant, then opcode `[0x06]`.
+2. Firmware durably wipes every local recording and notifies
+   `CHAR_PROVISIONING_RESULT` (`B07A0003-0005`) with
+   `[0x00, local_recordings_deleted_uint16LE]`.
+3. After persisting that result, the app writes `[0x0A]` to
+   `CHAR_DEVICE_COMMAND` as the explicit result-delivery receipt.
+4. Firmware clears project/user configuration and reboots unpaired.
+
+Unsubscribing from `CHAR_PROVISIONING_RESULT` is not a delivery receipt because
+timeout/error cleanup also removes subscriptions. If the link drops before
+`[0x0A]`, firmware remains in its durable WIPED phase and replays the success
+result after reconnect. `DeviceManager.bleFactoryReset` requires a durable
+result callback, rejects a success notification unless it is exactly three
+bytes, and sends `[0x0A]` only after that callback resolves.
+`resumeBleFactoryReset` handles the replay path without resending `[0x06]`.
+The consuming app remains responsible for retrying authenticated backend
+finalization.
+
 ## Device Diagnostics
 
 `SERVICE_BOTA_DIAGNOSTICS` (`B07A0007`) exposes an opt-in firmware debug log

@@ -181,6 +181,21 @@ BotaClient.devices.isConnected(deviceId);
 await BotaClient.devices.provision(device, token, 'production');
 await BotaClient.devices.isProvisioned(device);
 
+// Authenticated factory reset. Persist the device result before the SDK sends
+// receipt opcode 0x0A; reset success must be the exact three-byte firmware
+// result. Finalize the backend command separately in the app.
+const resetResult = await BotaClient.devices.bleFactoryReset(
+  device,
+  deprovisionGrantBlob,
+  result => durableResetStore.save(commandId, result)
+);
+
+// After disconnect-before-receipt, firmware replays its WIPED result.
+await BotaClient.devices.resumeBleFactoryReset(
+  reconnectedDevice,
+  result => durableResetStore.save(commandId, result)
+);
+
 // Status
 const status = await BotaClient.devices.getStatus(device);
 const unsubscribe = BotaClient.devices.subscribeToStatus(device, (status) => {});

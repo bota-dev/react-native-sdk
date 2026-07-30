@@ -82,6 +82,14 @@ BLE recording commands (start/stop) are gated by an HPKE-encrypted, ECDSA-signed
 - Grant blob is opaque at SDK layer — 171 bytes = enc[65] ‖ ct[106].
 - **P6 nonce handling:** `DeviceManager.readAuthNonce()` always issues a fresh BLE read against `CHAR_AUTH_NONCE` (not a cache lookup). The firmware rotates its session nonce on **every** well-formed grant attempt — success AND most rejection paths per the P6 design — so any cached value is stale immediately after the previous grant. An earlier version of this method returned cached values and produced "nonce mismatch / process result: -1" failures on every recording after the first. The NOTIFY-populated cache is kept only as a fallback for hypothetical NOTIFY-only firmware variants where READ isn't supported.
 
+> **Strict authorization target (not implemented):** System Design v4 C11/C12
+> replaces the public nonce/identity probes with
+> `AUTH_START → AUTH_CHALLENGE → SUBMIT_GRANT → AUTH_RESULT`, introduces
+> bootstrap identity attestation plus Grant v2 `u32` scopes, and requires the
+> SDK to obtain the narrowest Grant before every BLE operation. The canonical
+> operation matrix is in the
+> [Wire Format Reference](../internal-docs/device/Device%E2%80%93App%E2%80%93Backend%20Wire%20Format%20Reference.md#157-complete-ble-authorization-matrix).
+
 ### P5.B Grant-Gated Deprovision / Factory Reset
 
 Since P5, the firmware rejects unauthenticated factory-reset opcodes and **rejects token writes while paired** (security measure to prevent stolen-device hijacking). Cleanup requires a backend-signed deprovision grant (`GRANT_SCOPE_DEPROVISION = 0x08`):

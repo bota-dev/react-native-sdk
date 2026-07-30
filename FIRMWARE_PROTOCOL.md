@@ -1,5 +1,13 @@
 # Firmware Protocol Reference — @bota.dev/react-native-sdk
 
+> **Implementation status (2026-07-30):** This file documents the SDK's
+> currently shipped protocol. The strict target is the default-deny Grant
+> boundary in the internal
+> [Wire Format Reference](../internal-docs/device/Device%E2%80%93App%E2%80%93Backend%20Wire%20Format%20Reference.md):
+> only AUTH handshake plumbing is pre-Grant, and every identity/status/config/
+> storage/WiFi/OTA/lifecycle/diagnostic operation requires its exact scope.
+> Grant v2/bootstrap support is not implemented in this SDK yet.
+
 DEVICE_SETTINGS v0x02 byte 9 is `heartbeat_enabled_mask`: bit 7 marks an explicit value, bit 1 enables cellular direct heartbeat, and bit 0 enables WiFi direct heartbeat. Values without bit 7 retain the legacy both-enabled default.
 
 DEVICE_SETTINGS bytes 5 and 6 encode cellular and WiFi idle timeouts in 10-second units (`0` = immediate, `1-254` = 10-2540 seconds, `255` = always on). A missing or `null` individual API value serializes as byte `18` (180 seconds). For backward compatibility, an SDK input of 1-9 seconds serializes as byte `1` (10 seconds); exact sub-10-second values are not representable.

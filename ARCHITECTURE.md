@@ -75,6 +75,12 @@ src/
 
 Custom GATT service, UUID prefix `B07A`. See [`FIRMWARE_PROTOCOL.md`](./FIRMWARE_PROTOCOL.md) for the SDK-local firmware protocol reference.
 
+The shipped SDK still uses public identity/nonce reads and protects selected
+commands only. The strict C11/C12 target is default deny: AUTH handshake
+plumbing is the sole pre-Grant surface, and every other operation requires the
+exact Grant scope from the canonical
+[Wire Format Reference](../internal-docs/device/Device%E2%80%93App%E2%80%93Backend%20Wire%20Format%20Reference.md).
+
 | Service | UUID | SDK Component |
 | --- | --- | --- |
 | CONTROL | B07A0002 | DeviceManager (status, time sync, recording control) |

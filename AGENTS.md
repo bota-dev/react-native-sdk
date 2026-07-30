@@ -134,12 +134,13 @@ All design docs live in [`../internal-docs/`](../internal-docs/).
 | --- | --- | --- |
 | [Mobile SDK System Design](../internal-docs/Mobile%20SDK%20System%20Design.md) | Full SDK architecture, upload queue, windowed transfer | In progress |
 | [FIRMWARE_PROTOCOL](./FIRMWARE_PROTOCOL.md) | SDK-local Bluetooth GATT service defs, recording transfer protocol, ACK/NACK behavior | SDK package reference |
-| [FIRMWARE_INTEGRATION_GUIDE](../internal-docs/device/FIRMWARE_INTEGRATION_GUIDE.md) | Broader firmware workflows, GATT service defs, heartbeat | Internal design reference |
-| [Device-App Protocol](../internal-docs/device/Device-App%20Protocol.md) | Bluetooth service definitions, OTA protocol | ✅ Complete |
+| [FIRMWARE_INTEGRATION_GUIDE](../internal-docs/device/FIRMWARE_INTEGRATION_GUIDE.md) | Broader shipped firmware workflows, GATT implementation, heartbeat | Internal workflow reference |
+| [Device–App–Backend Wire Format Reference](../internal-docs/device/Device%E2%80%93App%E2%80%93Backend%20Wire%20Format%20Reference.md) | Normative BLE messages, Grant scopes, complete authorization matrix | ⚠️ C12 target not implemented |
+| [Device-App Protocol](../internal-docs/device/Device-App%20Protocol.md) | Historical 2025 bonding/proximity protocol | Superseded |
 | [Bluetooth Reliable Transfer Design](../internal-docs/device/BLE%20Reliable%20Transfer%20Design.md) | v2 windowed transfer (sliding window, replaces stop-and-wait) | ⬜ Not implemented |
 | [Upload-Management](../internal-docs/device/Upload-Management.md) | Bluetooth sync, WiFi/4G direct upload, recovery, failover | ✅ Done |
-| [Device-Provisioning](../internal-docs/device/Device-Provisioning.md) | Bluetooth pairing, token write, QR claim flow | ✅ Done |
+| [Device-Provisioning](../internal-docs/device/Device-Provisioning.md) | Shipped pairing/token flow plus strict bootstrap registration target | ⚠️ C11 target pending |
 | [WiFi-Configuration](../internal-docs/device/WiFi-Configuration.md) | WiFi credential provisioning via Bluetooth WIFI_CONFIG service | MVP done |
 | [Connection-Management](../internal-docs/device/Connection-Management.md) | Connection lifecycles, Bluetooth reconnect strategy | ✅ Done |
 | [Heartbeat-Channel-Control](../internal-docs/device/Heartbeat-Channel-Control.md) | Legacy-safe DEVICE_SETTINGS byte-9 heartbeat channel mask | ✅ Done |
-| [Device–App–Backend Security](../internal-docs/device/Device%E2%80%93App%E2%80%93Backend%20Security%20%26%20Communication%20Design.md) | Auth model, Grant tokens (v1), MVP limitations | MVP done |
+| [Device–App–Backend Security](../internal-docs/device/Device%E2%80%93App%E2%80%93Backend%20Security%20%26%20Communication%20Design.md) | Auth model, Grant tokens, shipped-gap matrix | ⚠️ C11/C12 pending |

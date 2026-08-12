@@ -58,7 +58,7 @@ npm test            # Jest unit tests
 3. **Test against physical device**: link into demo app (see Local Testing below) and run the affected flow:
    - **Bluetooth discovery changes** — scan for devices, verify Bota-* prefix filtering
    - **Reconnect changes** — verify exact ID/MAC fast paths and guarded serial recovery after a flash changes the peripheral identity
-   - **Recording transfer changes** — sync a recording end-to-end (list → transfer → confirm); while WiFi upload is active, force trigger-busy and BLE loss and confirm no competing BLE transfer starts
+   - **Recording transfer changes** — sync a recording end-to-end (list → transfer → confirm); while WiFi upload is active, force trigger-busy and BLE loss and confirm no competing BLE transfer starts. Verify legacy 33-byte and file-bound 49-byte SHA packets; a mismatched appended recording ID must not be forwarded as `content_sha256`.
    - **Provisioning changes** — pair a fresh device, verify token write and pairing state
    - **Factory-reset changes** — verify grant-gated opcode `0x06`, persist the three-byte result before writing explicit receipt opcode `0x0A`, replay after disconnect-before-receipt, authenticated backend finalization retry, and complete local-recording removal per [`Device-Provisioning §3.1`](../internal-docs/device/Device-Provisioning.md#31-authenticated-factory-reset)
    - **Status changes** — verify DEVICE_STATUS notifications update correctly

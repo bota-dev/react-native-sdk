@@ -463,9 +463,8 @@ export function parseTransferPacket(data: Buffer): TransferPacket {
       };
 
     case PACKET_TYPE_SHA256: {
-      // [type=0x04, sha256[32]] = 33 bytes. P9.F2 BLE integrity hash, sent right
-      // after EOF. The SDK forwards the hex value to the backend so the server
-      // can verify the assembled S3 object matches what the device hashed.
+      // Legacy: [type=0x04, sha256[32]]. Fixed firmware appends the 16-byte
+      // recording ID so the receiver can reject a hash for another file.
       if (data.length < 1 + 32) {
         throw new Error(`SHA256 packet too short: ${data.length}`);
       }
@@ -473,6 +472,7 @@ export function parseTransferPacket(data: Buffer): TransferPacket {
         type: 'sha256',
         sequenceNumber: 0,
         sha256: data.slice(1, 33),
+        recordingId: data.length >= 49 ? data.slice(33, 49) : undefined,
       };
     }
 

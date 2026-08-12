@@ -138,7 +138,7 @@ Device → SDK: RECORDING_TRANSFER notify (DATA seq)  ← data packet
 Device → SDK: RECORDING_TRANSFER notify (DATA seq)  ← next data packet
   ...device continues while BLE transmit capacity is available...
 Device → SDK: RECORDING_TRANSFER notify (EOF + CRC32) ← transfer complete
-Device → SDK: RECORDING_TRANSFER notify (SHA256)      ← optional integrity hash
+Device → SDK: RECORDING_TRANSFER notify (SHA256 + recording ID) ← optional integrity hash
 SDK → Device: TRANSFER_CONTROL write (ACK/NACK)     → final CRC result
 SDK → Device: TRANSFER_CONTROL write 0x07 + file_id → confirm (device deletes file)
 ```

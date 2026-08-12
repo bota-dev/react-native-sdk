@@ -157,7 +157,7 @@ Packet types from device to app:
 | `0x01` | DATA | `[type, seq uint16LE, len uint16LE, payload...]` |
 | `0x02` | EOF | `[type, seq uint16LE, crc32 uint32LE]` |
 | `0x03` | PAUSED | Streaming mode caught up to the live recording |
-| `0x04` | SHA256 | `[type, sha256[32]]`, optional after EOF |
+| `0x04` | SHA256 | Legacy `[type, sha256[32]]`; current `[type, sha256[32], recording_id[16]]`, optional after EOF |
 | `0x05` | E2E_START | BLE end-to-end encryption session header |
 | `0x81` | ENCRYPTED_DATA | Encrypted audio chunk with auth tag |
 | `0x82` | ENCRYPTED_EOF | Encrypted EOF; CRC field is unused |
@@ -177,6 +177,9 @@ Implementation notes:
   window for optional SHA-256, then writes the final ACK/NACK.
 - Plain transfer integrity is checked with EOF CRC32. P9.F2+ firmware may also
   emit SHA-256 after EOF so the host app can pass `content_sha256` to the backend.
+- When `recording_id` is present, it must match the active START request. The SDK
+  ignores a mismatched hash while retaining CRC32-valid audio. Legacy 33-byte
+  packets remain accepted without identity binding.
 - Encrypted transfer integrity is covered per chunk by auth tags; encrypted EOF
   keeps the same framing but does not use the CRC field.
 - Firmware streams DATA notifications back-to-back while BLE transmit capacity is

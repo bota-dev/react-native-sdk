@@ -111,12 +111,13 @@ Firmware emits the OGG/Opus post-fclose tail (final-page flush + EOS page) as ad
 
 ### BLE SHA-256 — End-to-End Integrity Verification
 
-Both transfer paths (`transferRecording` and `streamTransfer`) recognize a new `BOTA_PKT_TYPE_SHA256 = 0x04` packet emitted by firmware right after EOF on `CHAR_RECORDING_TRANSFER` (33 bytes: `[0x04, sha256[32]]`). Wire-up:
+Both transfer paths (`transferRecording` and `streamTransfer`) recognize `BOTA_PKT_TYPE_SHA256 = 0x04` after EOF. Legacy firmware sends `[0x04, sha256[32]]`; fixed firmware sends `[0x04, sha256[32], recording_id[16]]`. Wire-up:
 
 - **EOF holds the resolve.** When EOF arrives in `ProtocolHandler`, the transfer is **not** finalized immediately — `state.eofReceived = true` and a 200ms `SHA256_GRACE_WINDOW_MS` timer starts. Either the SHA packet arrives within the window (timer cancelled, finalize immediately with the hash) OR the timer fires (finalize without a hash, pre-P9.F2 firmware path).
 - **`transferRecording`** returns `{ data, e2eEncrypted, sha256? }` (hex string, 64 chars).
 - **`streamTransfer`** returns `{ totalBytes, checksum, sha256? }`.
 - **`RecordingManager.syncRecording`** emits `contentSha256` on the `transferring` and `completed` stages of its `SyncProgress` generator AND forwards it on the upload-task so the SDK's `notifyCompletion` includes `content_sha256` in the `/upload-complete` POST body.
+- **File binding.** When the 16-byte suffix is present, `ProtocolHandler` compares it with the active transfer UUID. A mismatch invalidates only the hash metadata; CRC32-valid audio still completes and the incorrect hash is not forwarded.
 - **Backward-compat both directions**: old SDKs ignore the unknown 0x04 packet type; new SDK on old firmware sees the 200ms grace window time out and resolves without a hash (no integrity verify, same as before). E2E relay path (P10) suppresses SHA forwarding — backend decrypts and hashes plaintext on receipt, no client SHA in scope.
 
 End-to-end: device computes SHA over SD bytes at `recording_stop` → emits over BLE after EOF → SDK forwards in upload-complete body → backend integrity-verify worker (P9.B) compares against a server-side SHA of the assembled S3 object → mismatch sets `status=integrity_failure`. This closes the BLE gap and gives parity with the WiFi/4G direct-upload path.

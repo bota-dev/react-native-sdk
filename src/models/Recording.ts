@@ -169,6 +169,9 @@ export interface TransferPacket {
   e2eChunk?: Uint8Array;
   /** P9.F2 sha256 only: device's SHA-256 over the SD-file bytes (32 raw bytes). */
   sha256?: Uint8Array;
+  /** Recording ID bound to the SHA-256 by fixed firmware. Absent on legacy
+   *  33-byte packets, present on the 49-byte packet. */
+  recordingId?: Uint8Array;
 }
 
 /**

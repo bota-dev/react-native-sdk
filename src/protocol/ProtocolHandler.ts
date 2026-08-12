@@ -33,6 +33,7 @@ import type { StorageInfo } from '../models/Device';
 import type { DeviceRecording, TransferPacket } from '../models/Recording';
 import { TransferError, DeviceError } from '../utils/errors';
 import { logger } from '../utils/logger';
+import { isRecordingHashForTransfer } from './recordingIdentity';
 
 const log = logger.tag('ProtocolHandler');
 
@@ -306,6 +307,21 @@ export class ProtocolHandler {
             // 'sha256' packet arrives ≤200ms after EOF on P9.F2+ firmware.
             // Store it and finalize immediately — no need to wait for the grace timer.
             if (packet.type === 'sha256' && packet.sha256) {
+              const packetRecordingId = packet.recordingId;
+              if (
+                !isRecordingHashForTransfer(packetRecordingId, recordingUuid)
+              ) {
+                log.warn('Ignoring SHA-256 packet for another recording', {
+                  recordingUuid,
+                  packetRecordingId: packetRecordingId
+                    ? Buffer.from(packetRecordingId).toString('hex')
+                    : null,
+                });
+                if (state.eofReceived) {
+                  await finalize();
+                }
+                return;
+              }
               state.sha256Hex = Buffer.from(packet.sha256).toString('hex');
               log.debug('SHA-256 packet received', {
                 recordingUuid,
@@ -857,7 +873,19 @@ export class ProtocolHandler {
 
               case 'sha256':
                 if (packet.sha256) {
-                  state.sha256Hex = Buffer.from(packet.sha256).toString('hex');
+                  const packetRecordingId = packet.recordingId;
+                  if (
+                    !isRecordingHashForTransfer(packetRecordingId, recordingUuid)
+                  ) {
+                    log.warn('Ignoring SHA-256 packet for another recording', {
+                      recordingUuid,
+                      packetRecordingId: packetRecordingId
+                        ? Buffer.from(packetRecordingId).toString('hex')
+                        : null,
+                    });
+                  } else {
+                    state.sha256Hex = Buffer.from(packet.sha256).toString('hex');
+                  }
                 }
                 if (state.eofReceived) {
                   await finalize();

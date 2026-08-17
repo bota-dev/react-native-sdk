@@ -163,6 +163,12 @@ Packet types from device to app:
 | `0x82` | ENCRYPTED_EOF | Encrypted EOF; CRC field is unused |
 | `0xff` | ERROR | Firmware-side transfer error |
 
+ERROR payloads use `[0xff, seq uint16LE, error_code]`. Recording-transfer
+codes include `0x11` for a missing file, `0x14` when the file exists but its
+device storage key is unavailable, and `0x20` while another upload owns storage.
+The SDK exposes `0x14` as `TransferError.code === 'STORAGE_KEY_UNAVAILABLE'`;
+retrying cannot repair a persistently lost device root key.
+
 Final result writes from app to device:
 
 | Type | Meaning |

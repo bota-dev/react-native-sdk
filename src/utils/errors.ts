@@ -2,6 +2,8 @@
  * Custom error types for the Bota SDK
  */
 
+import { BLE_ERROR_STORAGE_KEY_UNAVAILABLE } from '../ble/constants';
+
 /**
  * Base error class for all Bota SDK errors
  */
@@ -224,6 +226,13 @@ export class TransferError extends BotaError {
   }
 
   static deviceError(uuid: string, errorCode: number): TransferError {
+    if (errorCode === BLE_ERROR_STORAGE_KEY_UNAVAILABLE) {
+      return new TransferError(
+        `Recording ${uuid} exists, but its device storage key is unavailable`,
+        'STORAGE_KEY_UNAVAILABLE',
+        uuid
+      );
+    }
     return new TransferError(
       `Device error (code: ${errorCode}) during transfer of ${uuid}`,
       'DEVICE_ERROR',

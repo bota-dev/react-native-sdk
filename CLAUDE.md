@@ -109,6 +109,11 @@ The BLE adapter is a single shared resource. `BleManager` owns a FIFO `radioChai
 
 Firmware emits the OGG/Opus post-fclose tail (final-page flush + EOS page) as additional DATA packets at the end of a live streaming transfer, before the EOF packet. The SDK's existing DATA-packet handler appends them transparently — no SDK change required for byte-equivalence with the device's SD file. The EOF packet's CRC32 covers the trailer bytes too. See firmware `le_trans_data.c` "Post-stream trailer drain" block.
 
+Recording-transfer error `0x14` means the requested encrypted file exists but
+the device storage root key is unavailable. `TransferError.deviceError()` maps
+it to `STORAGE_KEY_UNAVAILABLE`; do not present it as file-not-found or retry it
+indefinitely.
+
 ### BLE SHA-256 — End-to-End Integrity Verification
 
 Both transfer paths (`transferRecording` and `streamTransfer`) recognize a new `BOTA_PKT_TYPE_SHA256 = 0x04` packet emitted by firmware right after EOF on `CHAR_RECORDING_TRANSFER` (33 bytes: `[0x04, sha256[32]]`). Wire-up:

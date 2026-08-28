@@ -512,6 +512,18 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         },
       };
 
+      /* Keep device RTC/FAT metadata canonical UTC before callers can start a
+       * recording. Legacy firmware may not expose TIME_SYNC, so this setup
+       * write is deliberately non-fatal to the BLE connection. */
+      try {
+        await this.syncTime(device.id);
+      } catch (error) {
+        log.warn('Connection time sync failed', {
+          deviceId: device.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+
       this.connectedDevices.set(device.id, connectedDevice);
       this.emit('deviceConnected', connectedDevice);
 

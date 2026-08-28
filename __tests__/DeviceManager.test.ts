@@ -28,6 +28,7 @@ import {
   CHAR_DEVICE_LOG_CONTROL,
   CHAR_DEVICE_LOG_DATA,
   CHAR_PROVISIONING_RESULT,
+  CHAR_TIME_SYNC,
   DEVICE_CMD_BLE_FACTORY_RESET,
   DEVICE_CMD_BLE_FACTORY_RESET_RESULT_ACK,
   DEVICE_LOG_CMD_START,
@@ -630,6 +631,7 @@ describe('DeviceManager connect identity reads', () => {
       getMtu: jest.fn().mockResolvedValue(185),
       hasService: jest.fn().mockResolvedValue(true),
       disconnect: jest.fn().mockResolvedValue(undefined),
+      writeCharacteristic: jest.fn().mockResolvedValue(undefined),
     };
 
     const manager = Object.create(DeviceManager.prototype) as any;
@@ -665,6 +667,15 @@ describe('DeviceManager connect identity reads', () => {
     }, 'user');
 
     expect(manager.readSerialNumber).toHaveBeenCalledWith('ios-peripheral-id');
+    expect(bleManager.writeCharacteristic).toHaveBeenCalledWith(
+      'ios-peripheral-id',
+      SERVICE_BOTA_CONTROL,
+      CHAR_TIME_SYNC,
+      expect.objectContaining({ length: 8 })
+    );
+    expect(bleManager.writeCharacteristic.mock.invocationCallOrder[0]).toBeLessThan(
+      manager.emit.mock.invocationCallOrder[1]
+    );
     expect(result.serialNumber).toBe('EVFXXW67KP');
   });
 
@@ -675,6 +686,7 @@ describe('DeviceManager connect identity reads', () => {
       getMtu: jest.fn().mockResolvedValue(185),
       hasService: jest.fn().mockResolvedValue(true),
       disconnect: jest.fn().mockResolvedValue(undefined),
+      writeCharacteristic: jest.fn().mockRejectedValue(new Error('not supported')),
     };
 
     const manager = Object.create(DeviceManager.prototype) as any;
@@ -698,18 +710,30 @@ describe('DeviceManager connect identity reads', () => {
     manager.subscribeToNonce = jest.fn();
     manager.saveReconnectRegistry = jest.fn().mockResolvedValue(undefined);
 
-    const result = await manager.connect({
-      id: 'ios-peripheral-id',
-      name: 'Bota Pin',
-      deviceType: 'bota_pin',
-      firmwareVersion: '0.0.0',
-      pairingState: 'unpaired',
-      rssi: -50,
-      discoveredAt: new Date(),
-    }, 'user');
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    let result;
+    try {
+      result = await manager.connect({
+        id: 'ios-peripheral-id',
+        name: 'Bota Pin',
+        deviceType: 'bota_pin',
+        firmwareVersion: '0.0.0',
+        pairingState: 'unpaired',
+        rssi: -50,
+        discoveredAt: new Date(),
+      }, 'user');
+    } finally {
+      warn.mockRestore();
+    }
 
     expect(manager.readSerialNumber).toHaveBeenCalledWith('ios-peripheral-id');
     expect(result.serialNumber).toBe('EVFXXW67KP');
+    expect(bleManager.writeCharacteristic).toHaveBeenCalledWith(
+      'ios-peripheral-id',
+      SERVICE_BOTA_CONTROL,
+      CHAR_TIME_SYNC,
+      expect.objectContaining({ length: 8 })
+    );
     expect(manager.reconnectRegistry.FY7DBSUMQK).toBeUndefined();
     expect(manager.reconnectRegistry.EVFXXW67KP.bleId).toBe('ios-peripheral-id');
   });

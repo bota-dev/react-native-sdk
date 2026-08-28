@@ -198,6 +198,7 @@ DISCOVERED
   ↓ connect(deviceId)
   ↓ service discovery
   ↓ read PAIRING_STATE (B07A0301)
+  ↓ write TIME_SYNC (UTC Unix time; source timezone is display metadata)
 CONNECTED (unpaired)
   ↓ provisionDevice(device, token, endpoint)
      → write DEVICE_TOKEN (B07A0302, chunked protocol)
@@ -208,6 +209,12 @@ CONNECTED (paired)
 DISCONNECTED
   ↓ reconnect (stored peripheral ID / advertised MAC / guarded SN probe after identity rotation)
 ```
+
+Every successful physical connection and reconnection writes `TIME_SYNC`
+before `deviceConnected` is emitted. Firmware keeps its RTC and FAT recording
+timestamps in UTC; JavaScript `Date` and application/backend presentation code
+perform localization. The write is best-effort so legacy firmware without the
+characteristic remains connectable.
 
 Authenticated BLE factory reset is a separate close-loop: write a nonce-bound
 grant and DEVICE_COMMAND `0x06`, require an exact three-byte

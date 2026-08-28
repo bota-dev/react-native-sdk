@@ -177,6 +177,8 @@ const reconnected = await BotaClient.devices.reconnect(serialNumber);
 await BotaClient.devices.disconnect(device);
 BotaClient.devices.isConnected(deviceId);
 
+// Device and recording timestamps are UTC; localize only for display.
+
 // Provisioning
 await BotaClient.devices.provision(device, token, 'production');
 await BotaClient.devices.isProvisioned(device);

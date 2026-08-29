@@ -223,6 +223,9 @@ npm run lint         # ESLint
 npm run test         # Jest unit tests
 ```
 
+The development toolchain uses Jest 30 and ESLint 10. ESLint configuration is
+defined in `eslint.config.mjs` using the flat-config format.
+
 ### Release
 
 1. Update version in `package.json`

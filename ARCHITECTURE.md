@@ -299,3 +299,6 @@ Each missing or `null` individual API idle-timeout value defaults to byte `18` (
 | SQLite | expo-sqlite | expo-sqlite |
 
 Both platforms use the same TypeScript protocol layer. Platform differences are isolated to react-native-ble-plx and native module boundaries.
+
+Repository verification uses Jest 30 and ESLint 10 with flat configuration;
+these tools do not alter the published SDK runtime.

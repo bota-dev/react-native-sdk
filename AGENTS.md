@@ -45,6 +45,8 @@ npm install
 npm run build       # tsup → lib/ (CJS + ESM + .d.ts)
 ```
 
+The development toolchain uses Jest 30 and ESLint 10 with flat configuration.
+
 ## Test
 
 ```bash

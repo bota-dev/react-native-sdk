@@ -296,7 +296,7 @@ export class StorageManager {
     try {
       const keys = await AsyncStorage.getAllKeys();
       const botaKeys = keys.filter((k) => k.startsWith(STORAGE_PREFIX));
-      await AsyncStorage.multiRemove(botaKeys);
+      await Promise.all(botaKeys.map((key) => AsyncStorage.removeItem(key)));
 
       this.uploadQueue = [];
       this.sdkState = { lastSyncTimes: {}, deviceInfo: {} };

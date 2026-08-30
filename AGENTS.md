@@ -40,6 +40,9 @@ Follow the **Plan → Work → Review → Compound** loop ([source](https://ever
 
 ## Build
 
+Use Node.js 22.13 or newer. The development compatibility baseline is React
+Native 0.87, React 19, TypeScript 6, Builder Bob 0.43, and AsyncStorage 3.
+
 ```bash
 npm install
 npm run build       # tsup → lib/ (CJS + ESM + .d.ts)

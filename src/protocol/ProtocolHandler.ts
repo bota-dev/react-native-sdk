@@ -405,7 +405,7 @@ export class ProtocolHandler {
           const ct = Buffer.from(packet.e2eChunk);
           const plainLen = ct.length - 16;  // last 16 bytes are the auth tag
           const lenHdr = Buffer.alloc(2);
-          lenHdr.writeUInt16BE(plainLen);
+          lenHdr.writeUInt16BE(plainLen, 0);
           state.chunks.push(Buffer.concat([lenHdr, ct]));
           state.totalBytes += plainLen;
           onProgress?.(state.totalBytes);

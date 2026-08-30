@@ -300,5 +300,6 @@ Each missing or `null` individual API idle-timeout value defaults to byte `18` (
 
 Both platforms use the same TypeScript protocol layer. Platform differences are isolated to react-native-ble-plx and native module boundaries.
 
-Repository verification uses Jest 30 and ESLint 10 with flat configuration;
-these tools do not alter the published SDK runtime.
+Repository verification targets React Native 0.87 and React 19 using Node
+22.13+, TypeScript 6, Builder Bob 0.43, AsyncStorage 3, Jest 30, and ESLint 10
+with flat configuration. The published peer ranges remain backward-compatible.

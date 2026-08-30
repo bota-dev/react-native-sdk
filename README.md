@@ -6,6 +6,8 @@ Official React Native SDK for Bota wearable devices.
 
 ## Installation
 
+Building the SDK from source requires Node.js 22.13 or newer.
+
 ```bash
 npm install @bota.dev/react-native-sdk react-native-ble-plx
 # or

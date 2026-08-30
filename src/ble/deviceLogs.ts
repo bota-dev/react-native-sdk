@@ -45,7 +45,7 @@ export class DeviceLogDecoder {
         message: Buffer.from(line).toString('utf8'),
         isBacklog,
       });
-      this.lineBuffer = this.lineBuffer.subarray(newlineIndex + 1);
+      this.lineBuffer = Buffer.from(this.lineBuffer.subarray(newlineIndex + 1));
       newlineIndex = this.lineBuffer.indexOf(0x0a);
     }
 

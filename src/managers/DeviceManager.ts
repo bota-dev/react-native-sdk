@@ -1116,7 +1116,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         SERVICE_BOTA_AUTH,
         CHAR_AUTH_NONCE,
         (data) => {
-          log.debug('[NONCE] notify fired', { deviceId, length: data.length, hexPrefix: data.length > 0 ? data.subarray(0, 4).toString('hex') : '-' });
+          log.debug('[NONCE] notify fired', { deviceId, length: data.length, hexPrefix: data.length > 0 ? Buffer.from(data.subarray(0, 4)).toString('hex') : '-' });
           if (data.length === 16) {
             const hex = Buffer.from(data).toString('hex');
             this.nonceCache.set(deviceId, hex);
@@ -1146,7 +1146,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         log.debug('[NONCE] read probe', {
           deviceId,
           length: data.length,
-          hexPrefix: data.length > 0 ? data.subarray(0, 4).toString('hex') : '-',
+          hexPrefix: data.length > 0 ? Buffer.from(data.subarray(0, 4)).toString('hex') : '-',
         });
         if (data.length === 16 && !this.nonceCache.has(deviceId)) {
           const hex = Buffer.from(data).toString('hex');
@@ -1195,7 +1195,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       log.debug('[NONCE] direct read returned', {
         deviceId: device.id,
         length: data.length,
-        hexPrefix: data.length > 0 ? data.subarray(0, 4).toString('hex') : '-',
+        hexPrefix: data.length > 0 ? Buffer.from(data.subarray(0, 4)).toString('hex') : '-',
       });
 
       if (data.length === 16) {

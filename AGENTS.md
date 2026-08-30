@@ -7,7 +7,12 @@ Public React Native SDK for communicating with Bota wearable devices via Bluetoo
 - React Native: this repository (`@bota.dev/react-native-sdk`)
 - Native iOS: [`../bota-mobile-sdk-ios`](../bota-mobile-sdk-ios)
 - Native Android: [`../bota-mobile-sdk-android`](../bota-mobile-sdk-android)
-- Backend SDKs: separate future `bota-api-sdk-*` naming family
+- Target device-facing family name: **Bota Device SDK**
+- Future backend-facing family name: **Bota API SDK**
+
+The current repositories and package remain authoritative until the proposed
+Rust-core Device SDK monorepo reaches feature parity. Do not describe the target
+layout as shipped. See [Device SDK Architecture](../internal-docs/Device%20SDK%20Architecture.md).
 
 ## Documentation Rule
 
@@ -138,7 +143,8 @@ All design docs live in [`../internal-docs/`](../internal-docs/).
 
 | Doc | Covers | Status |
 | --- | --- | --- |
-| [Mobile SDK System Design](../internal-docs/Mobile%20SDK%20System%20Design.md) | Full SDK architecture, upload queue, windowed transfer | In progress |
+| [Device SDK Architecture](../internal-docs/Device%20SDK%20Architecture.md) | Proposed Rust core, platform bindings, naming, monorepo, and synchronized releases | Proposed |
+| [Mobile SDK System Design](../internal-docs/Mobile%20SDK%20System%20Design.md) | Detailed native mobile behavior, upload queue, and sync flows | In progress |
 | [FIRMWARE_PROTOCOL](./FIRMWARE_PROTOCOL.md) | SDK-local Bluetooth GATT service defs, recording transfer protocol, ACK/NACK behavior | SDK package reference |
 | [FIRMWARE_INTEGRATION_GUIDE](../internal-docs/device/FIRMWARE_INTEGRATION_GUIDE.md) | Broader firmware workflows, GATT service defs, heartbeat | Internal design reference |
 | [Device-App Protocol](../internal-docs/device/Device-App%20Protocol.md) | Bluetooth service definitions, OTA protocol | ✅ Complete |

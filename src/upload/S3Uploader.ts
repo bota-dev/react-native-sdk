@@ -57,7 +57,7 @@ export class S3Uploader {
           'Content-Type': contentType,
           'Content-Length': data.length.toString(),
         },
-        body: data,
+        body: Uint8Array.from(data),
         signal: abortSignal,
       });
 
@@ -142,7 +142,7 @@ export class S3Uploader {
           'Authorization': `Bearer ${bearerToken}`,
           'Content-Length': ciphertext.length.toString(),
         },
-        body: ciphertext,
+        body: Uint8Array.from(ciphertext),
         signal: abortSignal,
       });
 

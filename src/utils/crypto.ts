@@ -196,20 +196,19 @@ export function parseWiFiCredentialPacket(
 } {
   let offset = 0;
 
-  const nonce = packet.subarray(offset, offset + 12);
+  const nonce = Buffer.from(packet.subarray(offset, offset + 12));
   offset += 12;
 
-  const ssidEncrypted = packet.subarray(offset, offset + ssidLength);
+  const ssidEncrypted = Buffer.from(packet.subarray(offset, offset + ssidLength));
   offset += ssidLength;
 
-  const ssidAuthTag = packet.subarray(offset, offset + 16);
+  const ssidAuthTag = Buffer.from(packet.subarray(offset, offset + 16));
   offset += 16;
 
-  const passwordEncrypted = packet.subarray(offset, offset + passwordLength);
+  const passwordEncrypted = Buffer.from(packet.subarray(offset, offset + passwordLength));
   offset += passwordLength;
 
-  const passwordAuthTag = packet.subarray(offset, offset + 16);
-  offset += 16;
+  const passwordAuthTag = Buffer.from(packet.subarray(offset, offset + 16));
 
   return {
     nonce,

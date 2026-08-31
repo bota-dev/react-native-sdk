@@ -4,15 +4,23 @@ Public React Native SDK for communicating with Bota wearable devices via Bluetoo
 
 ## SDK Family
 
-- React Native: this repository (`@bota.dev/react-native-sdk`)
-- Native iOS: [`../bota-mobile-sdk-ios`](../bota-mobile-sdk-ios)
-- Native Android: [`../bota-mobile-sdk-android`](../bota-mobile-sdk-android)
-- Target device-facing family name: **Bota Device SDK**
+- React Native: this repository (`@bota.dev/react-native-sdk`, with the
+  `BotaClient` compatibility entry point)
+- Target source monorepo: [`../app-sdk`](../app-sdk), including the public Apple
+  module `BotaAppleSDK`
+- Legacy Apple migration input: [`../bota-mobile-sdk-ios`](../bota-mobile-sdk-ios)
+  (`BotaSDK` remains its module name)
+- Legacy Android migration input:
+  [`../bota-mobile-sdk-android`](../bota-mobile-sdk-android) (`com.bota.sdk`
+  remains its namespace)
+- Target application-embedded family name: **Bota App SDK**
 - Future backend-facing family name: **Bota API SDK**
 
-The current repositories and package remain authoritative until the proposed
-Rust-core Device SDK monorepo reaches feature parity. Do not describe the target
-layout as shipped. See [Device SDK Architecture](../internal-docs/Device%20SDK%20Architecture.md).
+The `app-sdk` repository is the target Rust-core source monorepo. This React
+Native package remains supported throughout migration, while the legacy native
+repositories remain migration inputs until their parity and release gates pass.
+Do not describe incomplete target packages as shipped. See
+[App SDK Architecture](../internal-docs/App%20SDK%20Architecture.md).
 
 ## Documentation Rule
 
@@ -143,7 +151,7 @@ All design docs live in [`../internal-docs/`](../internal-docs/).
 
 | Doc | Covers | Status |
 | --- | --- | --- |
-| [Device SDK Architecture](../internal-docs/Device%20SDK%20Architecture.md) | Proposed Rust core, platform bindings, naming, monorepo, and synchronized releases | Proposed |
+| [App SDK Architecture](../internal-docs/App%20SDK%20Architecture.md) | Proposed Rust core, platform bindings, public package naming, monorepo, and synchronized releases | Proposed |
 | [Mobile SDK System Design](../internal-docs/Mobile%20SDK%20System%20Design.md) | Detailed native mobile behavior, upload queue, and sync flows | In progress |
 | [FIRMWARE_PROTOCOL](./FIRMWARE_PROTOCOL.md) | SDK-local Bluetooth GATT service defs, recording transfer protocol, ACK/NACK behavior | SDK package reference |
 | [FIRMWARE_INTEGRATION_GUIDE](../internal-docs/device/FIRMWARE_INTEGRATION_GUIDE.md) | Broader firmware workflows, GATT service defs, heartbeat | Internal design reference |

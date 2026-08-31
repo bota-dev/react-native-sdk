@@ -6,17 +6,21 @@ Public React Native SDK for Bluetooth communication with Bota wearable devices.
 
 ---
 
-## SDK Family Scope
+## App SDK Family Scope
 
 | Repository | Platform | Package/module |
 | --- | --- | --- |
-| `react-native-sdk` | React Native | `@bota.dev/react-native-sdk` |
-| [`bota-mobile-sdk-ios`](https://github.com/bota-dev/bota-mobile-sdk-ios) | Native iOS | `BotaSDK` |
-| [`bota-mobile-sdk-android`](https://github.com/bota-dev/bota-mobile-sdk-android) | Native Android | `com.bota.sdk` |
+| `react-native-sdk` | Supported React Native package | `@bota.dev/react-native-sdk` (`BotaClient` compatibility entry point) |
+| [`app-sdk`](https://github.com/bota-dev/app-sdk) | Target Apple package | `BotaAppleSDK` |
+| [`app-sdk`](https://github.com/bota-dev/app-sdk) | Future target Android artifact | `dev.bota:bota-android-sdk` |
+| [`bota-mobile-sdk-ios`](https://github.com/bota-dev/bota-mobile-sdk-ios) | Legacy Apple migration input | `BotaSDK` (legacy module) |
+| [`bota-mobile-sdk-android`](https://github.com/bota-dev/bota-mobile-sdk-android) | Legacy Android migration input | `com.bota.sdk` (legacy namespace) |
 
-Each mobile SDK implements the same device-facing behavior in its platform's
-native APIs. This repository owns only the React Native implementation; it does
-not contain or publish the native SDK sources.
+The Bota App SDK family implements the same device-facing behavior through each
+platform's native APIs. The `app-sdk` repository is the target source monorepo;
+the legacy Apple and Android repositories remain migration inputs until their
+parity and release gates pass. This repository continues to publish the React
+Native package and preserve its `BotaClient` entry point during migration.
 
 ---
 

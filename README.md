@@ -1,8 +1,10 @@
-# @bota.dev/react-native-sdk
+# Bota SDK for React Native
 
 `DeviceConnectionSettings` optionally accepts `heartbeat_enabled_connections`; serialization writes the explicit DEVICE_SETTINGS byte-9 mask and parsing resolves legacy payloads to both channels enabled. Missing or `null` individual radio idle timeouts serialize as the 180-second default, while legacy 1-9 second values round up to the wire minimum of 10 seconds.
 
-Official React Native SDK for Bota wearable devices.
+**Bota SDK for React Native** is the official React Native SDK for Bota wearable
+devices. Its npm package remains `@bota.dev/react-native-sdk`, with `BotaClient`
+as the compatibility entry point.
 
 ## Installation
 
@@ -103,14 +105,26 @@ for await (const progress of BotaClient.recordings.syncRecording(
 - [Firmware Protocol Reference](./FIRMWARE_PROTOCOL.md) documents the SDK-facing
   BLE services, packet formats, and recording transfer ACK/NACK behavior.
 
-## Related Mobile SDKs
+## Bota App SDK Family
 
-- React Native: this repository (`@bota.dev/react-native-sdk`)
-- Native iOS: [bota-mobile-sdk-ios](https://github.com/bota-dev/bota-mobile-sdk-ios)
-- Native Android: [bota-mobile-sdk-android](https://github.com/bota-dev/bota-mobile-sdk-android)
+- **Bota SDK for React Native**: this supported package
+  (`@bota.dev/react-native-sdk`) retains the `BotaClient` compatibility entry
+  point.
+- Apple target: `BotaAppleSDK` from the
+  [`app-sdk`](https://github.com/bota-dev/app-sdk) source monorepo.
+- Android target: the future `dev.bota:bota-android-sdk` artifact from
+  [`app-sdk`](https://github.com/bota-dev/app-sdk).
+- Legacy Apple migration input:
+  [`bota-mobile-sdk-ios`](https://github.com/bota-dev/bota-mobile-sdk-ios), whose
+  module remains `BotaSDK`.
+- Legacy Android migration input:
+  [`bota-mobile-sdk-android`](https://github.com/bota-dev/bota-mobile-sdk-android),
+  whose namespace remains `com.bota.sdk`.
 
-The native SDKs are independent platform implementations of the same device
-protocol. They are not bundled with the React Native package.
+The legacy native repositories are migration inputs, not the public target
+packages. They remain separate from this React Native package until their
+parity and release gates pass. See the public
+[Bota App SDK architecture](https://github.com/bota-dev/app-sdk/blob/main/ARCHITECTURE.md).
 
 ## API Reference
 

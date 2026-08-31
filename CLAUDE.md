@@ -6,6 +6,13 @@ See [AGENTS.md](AGENTS.md) for build commands and conventions. See [ARCHITECTURE
 
 **Documentation rule:** Every public API change must include documentation updates — `CLAUDE.md`, `ARCHITECTURE.md`, `AGENTS.md`, `README.md`, public docs (`../docs/`) as needed, and `../internal-docs/` if the change implements or invalidates a design doc. See [`../internal-docs/CLAUDE.md`](../internal-docs/CLAUDE.md) for the downstream impact matrix.
 
+> **v5 target designs (not implemented):** SDK work for logical recording
+> manifests/markers/pause-resume, enterprise WiFi profile relay, local-only
+> authorization and transfer, production diagnostics/self-test, and Device Find
+> must follow [System Design v5](../internal-docs/System%20Design%20v5.md) and its
+> linked detailed designs. Existing SDK behavior remains authoritative until a
+> capability-versioned implementation lands.
+
 This file provides context for Claude Code when working in this repository.
 
 ## Repository Overview

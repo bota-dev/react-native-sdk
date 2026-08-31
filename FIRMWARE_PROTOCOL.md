@@ -67,6 +67,12 @@ finalization.
 stream. It requires firmware built with `DEBUG=1`; the SDK reports a failed Start
 write as `DeviceError` code `FEATURE_UNAVAILABLE`.
 
+This service is not the v5 production support/repair interface and must remain
+absent from release firmware. The future grant-scoped health snapshot,
+fault-history, structured-event, and self-test operations are specified in
+[Device Diagnostics and Self-Test Design](../internal-docs/device/Device-Diagnostics-and-Self-Test-Design.md)
+and require separate versioned protocol allocation before SDK implementation.
+
 | Characteristic | UUID | Direction | Use |
 | --- | --- | --- | --- |
 | LOG_CONTROL | `B07A0007-0001` | App -> Device | Enable or disable log notifications |

@@ -49,7 +49,13 @@ Firmware implements the grant-gated BLE factory-reset close-loop on
    `[0x00, local_recordings_deleted_uint16LE]`.
 3. After persisting that result, the app writes `[0x0A]` to
    `CHAR_DEVICE_COMMAND` as the explicit result-delivery receipt.
-4. Firmware clears project/user configuration and reboots unpaired.
+4. Firmware clears the current token, pairing state, WiFi profiles,
+   connection policy/settings, and BLE relay key, then reboots unpaired.
+
+The current wipe does not remove the storage root `S_dev`, persisted timezone,
+or `DEV_CERT.PEM` / `DEV_KEY.PEM`. Because the released certificate is
+project-scoped, this is only a reusable reset core, not complete target wipe
+conformance. The exact artifact boundary is tracked in System Design v5.
 
 Unsubscribing from `CHAR_PROVISIONING_RESULT` is not a delivery receipt because
 timeout/error cleanup also removes subscriptions. If the link drops before
@@ -105,7 +111,8 @@ with `DeviceError` code `ALREADY_SUBSCRIBED` and leaves the original owner intac
 ## Device Status
 
 `CHAR_DEVICE_STATUS` (`B07A0002-0001`) is parsed by the SDK as a binary status
-packet. Current firmware may send 15 bytes; older firmware sent 14 bytes.
+packet. Current firmware emits a 17-byte base and may append modem text; the
+parser accepts legacy 14-byte and 15-byte packets explicitly.
 
 | Offset | Field | Encoding |
 | --- | --- | --- |
@@ -146,15 +153,19 @@ Current SDK and firmware use streamed notifications with a final ACK/NACK. The
 app does not ACK each DATA packet.
 
 ```
-SDK -> Device: TRANSFER_CONTROL write 0x02 + recording_uuid
+SDK -> Device: TRANSFER_CONTROL write 0x02 + file_id[4] + zero[12]
 Device -> SDK: RECORDING_TRANSFER notify DATA seq=0
 Device -> SDK: RECORDING_TRANSFER notify DATA seq=1
 Device -> SDK: RECORDING_TRANSFER notify DATA seq=N
 Device -> SDK: RECORDING_TRANSFER notify EOF + CRC32
 Device -> SDK: RECORDING_TRANSFER notify SHA256        (optional, P9.F2+)
 SDK -> Device: TRANSFER_CONTROL write ACK or NACK      (final result)
-SDK -> Device: TRANSFER_CONTROL write 0x07 + recording_uuid
+SDK -> Device: TRANSFER_CONTROL write 0x07 + file_id[4] + zero[12]
 ```
+
+Those 16-byte v1 control fields are not full recording UUIDs. Full logical
+UUID and immutable-generation transfer requires the separately versioned v2
+profile.
 
 Packet types from device to app:
 
@@ -163,7 +174,7 @@ Packet types from device to app:
 | `0x01` | DATA | `[type, seq uint16LE, len uint16LE, payload...]` |
 | `0x02` | EOF | `[type, seq uint16LE, crc32 uint32LE]` |
 | `0x03` | PAUSED | Streaming mode caught up to the live recording |
-| `0x04` | SHA256 | `[type, sha256[32]]`, optional after EOF |
+| `0x04` | SHA256 | `[type, sha256[32], file_id[16]]`, optional after EOF; v1 `file_id` is the requested 4-byte ID plus 12 zero bytes |
 | `0x05` | E2E_START | BLE end-to-end encryption session header |
 | `0x81` | ENCRYPTED_DATA | Encrypted audio chunk with auth tag |
 | `0x82` | ENCRYPTED_EOF | Encrypted EOF; CRC field is unused |
@@ -189,6 +200,9 @@ Implementation notes:
   window for optional SHA-256, then writes the final ACK/NACK.
 - Plain transfer integrity is checked with EOF CRC32. P9.F2+ firmware may also
   emit SHA-256 after EOF so the host app can pass `content_sha256` to the backend.
+  The host must also verify that the packet's 16-byte v1 file-ID field equals
+  the field sent in START. A negotiated 33-byte legacy form provides the hash
+  only and does not provide this recording-reference binding.
 - Encrypted transfer integrity is covered per chunk by auth tags; encrypted EOF
   keeps the same framing but does not use the CRC field.
 - Firmware streams DATA notifications back-to-back while BLE transmit capacity is
@@ -197,8 +211,10 @@ Implementation notes:
 ## Confirm Delete
 
 After the app has uploaded the recording and notified its backend, it writes
-`TRANSFER_CMD_CONFIRM_SYNC` (`0x07`) plus the recording UUID to
-`CHAR_TRANSFER_CONTROL`. Firmware may then delete the local recording file.
+`TRANSFER_CMD_CONFIRM_SYNC` (`0x07`) plus the same v1 4-byte file ID followed by
+12 zero bytes to `CHAR_TRANSFER_CONTROL`. Firmware may then delete the local
+recording file. A full logical recording UUID belongs only to the separately
+versioned v2 profile.
 
 Do not send confirm immediately after Bluetooth transfer; confirm means the cloud
 upload path has completed.

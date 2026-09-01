@@ -79,6 +79,7 @@ npm test            # Jest unit tests
    - **Time sync changes** — run `npm test -- --runInBand __tests__/DeviceManager.test.ts`; connect and reconnect to a physical device and verify the SDK writes `TIME_SYNC` before emitting `deviceConnected`, while unsupported legacy firmware still connects
    - **Recording transfer changes** — sync a recording end-to-end (list → transfer → confirm); while WiFi upload is active, force trigger-busy and BLE loss and confirm no competing BLE transfer starts
    - **Provisioning changes** — pair a fresh device, verify token write and pairing state
+   - **Deprovision/rebind changes** — interrupt immediately after `0x05`; verify retained data is never treated as factory-fresh and only the exact authorized rebind/reset can resume. This target is currently incomplete and tracked in System Design v5.
    - **Factory-reset changes** — verify grant-gated opcode `0x06`, persist the three-byte result before writing explicit receipt opcode `0x0A`, replay after disconnect-before-receipt, authenticated backend finalization retry, and complete local-recording removal per [`Device-Provisioning §3.1`](../internal-docs/device/Device-Provisioning.md#31-authenticated-factory-reset)
    - **Status changes** — verify DEVICE_STATUS notifications update correctly
    - **Firmware update changes** — download an assigned release, verify byte progress advances before Bluetooth transfer; force a device-side write rejection and confirm the SDK fails immediately instead of advancing transfer progress
@@ -151,15 +152,15 @@ All design docs live in [`../internal-docs/`](../internal-docs/).
 
 | Doc | Covers | Status |
 | --- | --- | --- |
-| [App SDK Architecture](../internal-docs/App%20SDK%20Architecture.md) | Proposed Rust core, platform bindings, public package naming, monorepo, and synchronized releases | Proposed |
-| [Mobile SDK System Design](../internal-docs/Mobile%20SDK%20System%20Design.md) | Detailed native mobile behavior, upload queue, and sync flows | In progress |
+| [App SDK Architecture](../internal-docs/App%20SDK%20Architecture.md) | Current target for the Rust core, platform bindings, public package naming, monorepo, and synchronized releases | Target; implementation conformance is tracked in System Design v5 |
+| [Mobile SDK System Design](../internal-docs/Mobile%20SDK%20System%20Design.md) | Historical SDK proposal retained for context | Superseded; do not use as the current contract |
 | [FIRMWARE_PROTOCOL](./FIRMWARE_PROTOCOL.md) | SDK-local Bluetooth GATT service defs, recording transfer protocol, ACK/NACK behavior | SDK package reference |
 | [FIRMWARE_INTEGRATION_GUIDE](../internal-docs/device/FIRMWARE_INTEGRATION_GUIDE.md) | Broader firmware workflows, GATT service defs, heartbeat | Internal design reference |
-| [Device-App Protocol](../internal-docs/device/Device-App%20Protocol.md) | Bluetooth service definitions, OTA protocol | ✅ Complete |
-| [Bluetooth Reliable Transfer Design](../internal-docs/device/BLE%20Reliable%20Transfer%20Design.md) | v2 windowed transfer (sliding window, replaces stop-and-wait) | ⬜ Not implemented |
-| [Upload-Management](../internal-docs/device/Upload-Management.md) | Bluetooth sync, WiFi/4G direct upload, recovery, failover | ✅ Done |
-| [Device-Provisioning](../internal-docs/device/Device-Provisioning.md) | Bluetooth pairing, token write, QR claim flow | ✅ Done |
-| [WiFi-Configuration](../internal-docs/device/WiFi-Configuration.md) | WiFi credential provisioning via Bluetooth WIFI_CONFIG service | MVP done |
-| [Connection-Management](../internal-docs/device/Connection-Management.md) | Connection lifecycles, Bluetooth reconnect strategy | ✅ Done |
-| [Heartbeat-Channel-Control](../internal-docs/device/Heartbeat-Channel-Control.md) | Legacy-safe DEVICE_SETTINGS byte-9 heartbeat channel mask | ✅ Done |
-| [Device–App–Backend Security](../internal-docs/device/Device%E2%80%93App%E2%80%93Backend%20Security%20%26%20Communication%20Design.md) | Auth model, Grant tokens (v1), MVP limitations | MVP done |
+| [Device-App Protocol](../internal-docs/device/Device-App%20Protocol.md) | Compatibility index for current owning protocol documents | Index only |
+| [Bluetooth Reliable Transfer Design](../internal-docs/device/BLE%20Reliable%20Transfer%20Design.md) | v2 windowed repair and durable resume over the released continuous-stream/final-ACK profile | Implementation conformance: [System Design v5](../internal-docs/System%20Design%20v5.md#33-security-configuration-and-remote-control-conformance) |
+| [Upload-Management](../internal-docs/device/Upload-Management.md) | Bluetooth sync, WiFi/cellular direct upload, recovery, failover | Target; implementation conformance is tracked in System Design v5 |
+| [Device-Provisioning](../internal-docs/device/Device-Provisioning.md) ([中文](../internal-docs/device/Device-Provisioning_ZH.md)) | Registration, bind, reconnect, rebind, reset, transfer, app-less activation | Authoritative target; implementation conformance is tracked in System Design v5 |
+| [WiFi-Configuration](../internal-docs/device/WiFi-Configuration.md) | WiFi credential provisioning and protection | Target; implementation conformance is tracked in System Design v5 |
+| [Connection-Management](../internal-docs/device/Connection-Management.md) | Connection lifecycles, reconnect, failover, and policy | Target; implementation conformance is tracked in System Design v5 |
+| [Heartbeat-Channel-Control](../internal-docs/device/Heartbeat-Channel-Control.md) | Heartbeat channels and dynamic policy | Target; implementation conformance is tracked in System Design v5 |
+| [Device–App–Backend Security](../internal-docs/device/Device%E2%80%93App%E2%80%93Backend%20Security%20%26%20Communication%20Design.md) | Authentication, authorization, credentials, encryption, and channel security | Authoritative target; implementation conformance is tracked in System Design v5 |

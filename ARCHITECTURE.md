@@ -81,13 +81,15 @@ Custom GATT service, UUID prefix `B07A`. See [`FIRMWARE_PROTOCOL.md`](./FIRMWARE
 
 | Service | UUID | SDK Component |
 | --- | --- | --- |
+| AUDIO | B07A0001 | Reserved audio control/data surface |
 | CONTROL | B07A0002 | DeviceManager (status, time sync, recording control) |
 | PROVISIONING | B07A0003 | DeviceManager (pairing, token write) |
 | STORAGE | B07A0004 | RecordingManager (list, transfer) |
+| AUTH | B07A0005 | DeviceManager (public key, nonce, compatibility key/cert delivery) |
 | WIFI_CONFIG | B07A0006 | DeviceManager (WiFi credential write) |
-| DIAGNOSTICS | B07A0007 | DeviceManager (opt-in debug log stream) |
+| DIAGNOSTICS | B07A0007 | DeviceManager (opt-in debug-firmware log stream) |
 
-### Device Status (15-byte binary, CONTROL B07A0201; 14-byte compatible)
+### Device Status (17-byte baseline, CONTROL B07A0201; 14/15-byte compatible)
 
 ```
 [0] battery_level (0-100)
@@ -99,7 +101,9 @@ Custom GATT service, UUID prefix `B07A`. See [`FIRMWARE_PROTOCOL.md`](./FIRMWARE
 [9-10] storage_total_mb (uint16LE)
 [11-12] storage_used_mb (uint16LE)
 [13] LTE signal quality (CSQ 0-31, 99=unknown)
-[14] WiFi radio status (optional on older firmware)
+[14] WiFi radio status
+[15-16] battery voltage in mV (uint16LE)
+[17...] optional UTF-8 modem information
 ```
 
 ### Device Debug Logs (DIAGNOSTICS B07A0007)
@@ -164,12 +168,15 @@ same recording while still allowing genuine direct-upload failures to recover.
 
 ```
 RecordingManager.syncRecording(device, fileId)
-  1. customer app calls getUploadUrl(fileId) from their backend
-     → backend: POST /recordings → { id: rec_xxx, upload_url, upload_token }
-  2. Bluetooth transfer: file_id → Buffer (via TRANSFER_CONTROL + RECORDING_TRANSFER)
-  3. S3 upload: PUT upload_url with audio Buffer
-  4. customer app notifies backend: POST /recordings/rec_xxx/upload-complete
-  5. Bluetooth confirm: TRANSFER_CONTROL 0x07 + file_id (device deletes local file)
+  1. customer app creates the recording through its backend
+     → backend: POST /recordings → recording resource { id: rec_xxx, status, ... }
+  2. customer app requests upload credentials
+     → backend: POST /recordings/rec_xxx/upload-url
+     → { upload_url, upload_token, expires_in, content_type }
+  3. Bluetooth transfer: file_id → Buffer (via TRANSFER_CONTROL + RECORDING_TRANSFER)
+  4. S3 upload: PUT upload_url with audio Buffer
+  5. customer app notifies backend: POST /recordings/rec_xxx/upload-complete
+  6. Bluetooth confirm: TRANSFER_CONTROL 0x07 + file_id (device deletes local file)
 
 UploadQueue handles retries:
   - Persists to SQLite before upload attempt
@@ -197,22 +204,36 @@ after firmware has stopped writing `update.ufw`.
 
 ```
 UNDISCOVERED
-  ↓ scanForDevices() — filters "Bota-" prefix in Bluetooth name
+  ↓ scanForDevices() — discover candidates; final identity never trusts name
 DISCOVERED
   ↓ connect(deviceId)
   ↓ service discovery
   ↓ read PAIRING_STATE (B07A0301)
   ↓ write TIME_SYNC (UTC Unix time; source timezone is display metadata)
 CONNECTED (unpaired)
-  ↓ provisionDevice(device, token, endpoint)
-     → write DEVICE_TOKEN (B07A0302, chunked protocol)
-     → write API_ENDPOINT (B07A0303)
+  ↓ provisionDevice(device, provisionalToken, environmentCompatibility)
+     → write raw DEVICE_TOKEN (B07A0302, released compatibility profile)
+     → legacy API_ENDPOINT write (B07A0303; current firmware ignores it)
      → wait PROVISIONING_RESULT notification (B07A0305)
 CONNECTED (paired)
   ↓ disconnected / app background
 DISCONNECTED
   ↓ reconnect (stored peripheral ID / advertised MAC / guarded SN probe after identity rotation)
 ```
+
+This graph describes the released SDK behavior, not the latest credential
+transport target. The current App can observe the reusable token and the BLE
+link uses Just Works/bonding. The target provisioning profile relays only a
+versioned opaque payload protected to the manufacturing-registered `PK_D` and
+bound to the exact device nonce/attempt/context; see Device Provisioning and
+System Design v5.
+
+Non-destructive `0x05` may transiently return the connection to the baseline
+`UNPAIRED` value before the replacement token is written. The target lifecycle
+calls an interrupted instance `deprovisioned-protected` because recordings and
+WiFi/settings remain. This SDK does not yet persist enough rebind context to
+recover that exact interrupted transaction across App restart/disconnect; see
+System Design v5.
 
 Every successful physical connection and reconnection writes `TIME_SYNC`
 before `deviceConnected` is emitted. Firmware keeps its RTC and FAT recording
@@ -229,6 +250,11 @@ replays the result after disconnect-before-receipt.
 through a required async callback; `resumeBleFactoryReset` consumes the replay
 without resending the destructive command. Backend ACK/finalization stays in
 the consuming app.
+
+Physical provisioning success is only one step of first binding. The Partner
+Backend prepares the exact bind attempt before the write and confirms that same
+attempt only after durable device success. The firmware build selects its API
+environment; the compatibility write above cannot redirect it.
 
 **Reconnect matching (`DeviceManager.reconnect`).** All Bota Pins advertise the
 same generic name ("Bota Pin") and iOS/macOS rotate the BLE peripheral ID, so

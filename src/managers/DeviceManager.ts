@@ -889,9 +889,9 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
   /**
    * @deprecated Firmware ≥ P5 rejects the unauthenticated BLE factory-reset opcode (0x01).
-   * Use the backend unbind/delete flow instead: `DELETE /v1/projects/{projectId}/devices/{id}`
-   * or `POST /v1/projects/{projectId}/devices/{id}/unbind`. The backend emits a `factory_reset`
-   * heartbeat command that the device processes over WiFi/4G.
+   * Use a durable backend `factory_reset` command with `bleFactoryReset()` /
+   * `resumeBleFactoryReset()`, or let that same exact command complete over the
+   * authenticated direct-device channel. Backend unbind/delete is not a wipe.
    *
    * This method will fail silently on P5+ firmware (device returns INVALID_TOKEN).
    */
@@ -1001,8 +1001,9 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   }
 
   /**
-   * Single provisioning attempt: writes API endpoint + token, waits for result,
-   * throws a typed ProvisioningError on failure. No retry.
+   * Single provisioning attempt: performs the legacy endpoint compatibility
+   * write, writes the token, waits for result, and throws a typed
+   * ProvisioningError on failure. Current firmware ignores the endpoint write.
    */
   private async writeProvisioningOnce(
     device: ConnectedDevice,
@@ -1050,9 +1051,9 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   }
 
   /**
-   * Read the device's Ed25519 public key (PK_D) from the Auth service.
-   * Returns the 32-byte key as a 64-char lowercase hex string, or null if
-   * the firmware does not expose the Auth service (legacy devices).
+   * Read the device's P-256/secp256r1 public key (PK_D) from the Auth service.
+   * Returns the 64-byte raw X||Y key as a 128-char lowercase hex string, or null
+   * if the firmware does not expose the Auth service (legacy devices).
    */
   async readPublicKey(device: ConnectedDevice): Promise<string | null> {
     if (!this.isConnected(device.id)) {
@@ -1483,6 +1484,10 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     return parsePairingState(data[0]);
   }
 
+  /**
+   * @deprecated Signed firmware selects its build environment. The retained
+   * characteristic write is a compatibility no-op on current firmware.
+   */
   async setApiEndpoint(
     device: ConnectedDevice,
     environment: Environment
@@ -1511,13 +1516,12 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   }
 
   /**
-   * P4: Deliver the per-device X.509 leaf certificate + RSA-2048 private
-   * key issued by the Bota Device CA at bind time. The device persists
-   * both in syscfg and presents the cert on every WiFi/4G TLS handshake
-   * (mTLS) — the API gateway authenticates by chain validation against
-   * the Bota Device Root CA.
+   * @deprecated Legacy certificate-delivery scaffolding. The target device
+   * certificate profile uses a device-generated, non-exportable private key;
+   * no backend/App API may deliver a reusable device private key.
    *
-   * Both PEMs are concatenated as a single payload separated by a newline:
+   * This method implements the deprecated profile in which both PEMs are
+   * concatenated as a single payload separated by a newline:
    *
    *   <cert PEM>\n<privkey PEM>
    *
@@ -1525,12 +1529,9 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
    * marker. Chunked over the same chunk-header protocol used for the
    * device token (max chunk = MTU-5; chunks prefixed with [index, total]).
    *
-   * Call once after a successful `provision()`, before the first WiFi/4G
-   * upload from the device.
-   *
    * @param device      - Connected device
-   * @param certPem     - PEM-encoded leaf certificate from bind response
-   * @param privkeyPem  - PEM-encoded RSA private key from bind response
+   * @param certPem     - Legacy PEM-encoded leaf certificate
+   * @param privkeyPem  - Legacy PEM-encoded RSA private key
    */
   async deliverCert(
     device: ConnectedDevice,
@@ -1570,10 +1571,12 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   }
 
   /**
+   * @deprecated Compatibility write only. Released firmware persists this key
+   * but hard-disables application-layer BLE E2E, so callers must not infer that
+   * the App relay cannot read recording payloads.
+   *
    * P10: Write the backend's X25519 BLE-e2e public key (32 raw bytes) to the
-   * device's `CHAR_BACKEND_PUBKEY`. The device persists it in syscfg and uses
-   * it to hybrid-encrypt audio chunks before BLE transfer; the app then
-   * relays ciphertext it cannot read to `POST /v1/recordings/{id}/upload-relay`.
+   * device's `CHAR_BACKEND_PUBKEY`.
    *
    * Call this once after a successful `provision()` and again after any
    * pubkey rotation (re-fetch from `GET /v1/ble-pubkey`).
@@ -1941,17 +1944,16 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   /**
    * Deprovision a device via a grant-gated BLE command (P5.B).
    *
-   * Writes the recording grant blob, then sends opcode 0x05 to CHAR_DEVICE_COMMAND.
+   * Writes the deprovision grant blob, then sends opcode 0x05 to CHAR_DEVICE_COMMAND.
    * The device verifies the grant and clears its pairing state + token, allowing
    * re-provisioning without a physical firmware reflash.
    *
    * Call this BEFORE revoking the device token on the backend. Once the token is
    * revoked the backend can no longer issue a grant for this device.
    *
-   * Falls back gracefully on old firmware (no 0x05 handler): the device ignores
-   * the opcode and the result notification times out, which we treat as a soft
-   * failure — the caller should still proceed with server-side unbind and rely on
-   * the heartbeat factory_reset path for credential wipe.
+   * Old firmware may ignore 0x05 and time out. That is a failed physical
+   * deprovision, not permission to claim a wipe; the caller must keep the local
+   * state discrepancy visible and follow the lifecycle recovery contract.
    */
   async deprovision(
     device: ConnectedDevice,
@@ -1989,7 +1991,9 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   }
 
   /**
-   * Full BLE factory reset (opcode 0x06). Requires a valid deprovision grant.
+   * Full BLE factory reset (opcode 0x06). Current firmware accepts the legacy
+   * shared deprovision scope; the target contract requires a distinct exact-
+   * action factory-reset Grant.
    *
    * Firmware first wipes all local recording artifacts and reports a durable,
    * three-byte result. The SDK awaits `persistResult` before sending result

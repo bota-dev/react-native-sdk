@@ -72,7 +72,9 @@ BotaClient.devices.startScan();
 // Connect to a device
 const connectedDevice = await BotaClient.devices.connect(discoveredDevice);
 
-// Provision with token from your backend
+// Provision with a provisional token from your backend. The environment
+// argument is legacy compatibility metadata; signed firmware chooses its own
+// API environment, so the App/backend and firmware profiles must already match.
 await BotaClient.devices.provision(connectedDevice, deviceToken, 'production');
 
 // Check device capabilities
@@ -80,8 +82,8 @@ if (connectedDevice.capabilities?.wifiUpload) {
   // Scan for nearby WiFi networks via the device's radio (works on both iOS and Android)
   const { networks, currentSsid } = await BotaClient.devices.scanWiFiNetworks(connectedDevice);
 
-  // Configure WiFi on device
-  // grant is a stateless JWT from your backend (POST /devices/{id}/wifi-config/grant)
+  // Configure WiFi on device. Do not use real production credentials until the
+  // firmware's exact-action Grant + encrypted credential profile is released.
   await BotaClient.devices.configureWiFi(connectedDevice, ssid, password, grant);
 }
 
@@ -195,7 +197,8 @@ BotaClient.devices.isConnected(deviceId);
 
 // Device and recording timestamps are UTC; localize only for display.
 
-// Provisioning
+// Provisioning. `environment` cannot redirect signed firmware; it must match
+// the firmware build profile.
 await BotaClient.devices.provision(device, token, 'production');
 await BotaClient.devices.isProvisioned(device);
 
@@ -431,10 +434,11 @@ The SDK does not communicate directly with the Bota API. Your mobile app should:
 
 - Device uploads directly to Bota backend using device token (dtok_*)
 - No app involvement in audio transfer
-- App can optionally configure WiFi credentials for WiFi-capable devices:
-  - Request a stateless WiFi config grant from your backend (POST /devices/{id}/wifi-config/grant)
-  - SDK encrypts credentials with grant session key and transmits via Bluetooth
-  - Device stores credentials encrypted in Flash (backend never stores WiFi passwords)
+- App-side WiFi configuration APIs exist, but the released firmware path is not
+  production-safe for credentials: it accepts a non-empty Grant blob and uses a
+  plaintext application payload. Do not provision real WiFi passwords until the
+  exact-action Grant, encrypted delivery, protected storage and explicit
+  replace/forget contract in the WiFi design are released.
 - Backend sends webhooks to notify your app when processing completes
 
 See the [Bota API documentation](https://docs.bota.dev) for backend integration details.

@@ -232,7 +232,7 @@ export function parseWifiStatus(byte: number): WifiStatus {
 /**
  * Parse device status from characteristic value
  *
- * Firmware format (15 bytes, backwards-compatible with 14):
+ * Firmware format (17-byte baseline, backwards-compatible with 14/15):
  * Byte 0:      Battery % (0-100)
  * Byte 1:      LTE status (BOTA_LTE_* code)
  * Byte 2:      Device state
@@ -242,7 +242,9 @@ export function parseWifiStatus(byte: number): WifiStatus {
  * Bytes 9-10:  Storage total MB (uint16LE)
  * Bytes 11-12: Storage used MB (uint16LE)
  * Byte 13:     LTE signal quality (CSQ 0-31, 99=unknown)
- * Byte 14:     WiFi status (BOTA_WIFI_* code) — optional, firmware >= 1.1
+ * Byte 14:     WiFi status (BOTA_WIFI_* code)
+ * Bytes 15-16: Battery voltage (uint16LE millivolts)
+ * Bytes 17+:   Optional UTF-8 modem information
  */
 export function parseDeviceStatus(data: Buffer): DeviceStatus {
   if (data.length < 14) {

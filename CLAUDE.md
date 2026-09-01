@@ -8,7 +8,8 @@ See [AGENTS.md](AGENTS.md) for build commands and conventions. See [ARCHITECTURE
 
 > **v5 target designs (not implemented):** SDK work for logical recording
 > manifests/markers/pause-resume, enterprise WiFi profile relay, local-only
-> authorization and transfer, production diagnostics/self-test, and Device Find
+> authorization and transfer, authorized no-router local WiFi recording sync
+> with resume and BLE fallback, production diagnostics/self-test, and Device Find
 > must follow [System Design v5](../internal-docs/System%20Design%20v5.md) and its
 > linked detailed designs. Existing SDK behavior remains authoritative until a
 > capability-versioned implementation lands.
@@ -76,7 +77,8 @@ For WiFi/Cellular devices, the SDK supports:
 
 - Device-side WiFi network scanning via Bluetooth (`DeviceManager.scanWiFiNetworks`) — no platform dependencies, works on iOS and Android
 - WiFi network configuration and provisioning (`configureWiFi`, `getWiFiStatus`, `subscribeToWiFiStatus`)
-- Grant-based credential encryption (ChaCha20-Poly1305 via K_session)
+- WiFi credential encryption is a target only. Current firmware accepts a
+  non-empty Grant and plaintext application payload; see System Design v5.
 - Device capability detection (`CAP_WIFI_UPLOAD`, `CAP_LTE_UPLOAD`, `CAP_BLE_SYNC`)
 - Safe direct-upload handoff: trigger-busy, BLE loss, or unreadable status keeps WiFi/cellular ownership; BLE fallback requires a fresh `syncActive=false` status
 
@@ -91,18 +93,19 @@ BLE recording commands (start/stop) are gated by an HPKE-encrypted, ECDSA-signed
 
 ### P5.B Grant-Gated Deprovision / Factory Reset
 
-Since P5, the firmware rejects unauthenticated factory-reset opcodes and **rejects token writes while paired** (security measure to prevent stolen-device hijacking). Cleanup requires a backend-signed deprovision grant (`GRANT_SCOPE_DEPROVISION = 0x08`):
+Since P5, the firmware rejects unauthenticated factory-reset opcodes and **rejects token writes while paired**. The current compatibility implementation uses one backend-signed deprovision scope for both `0x05` and `0x06`; the target design requires distinct exact-action deprovision and factory-reset Grants:
 
 - `DeviceManager.deprovision(device, grantBlob)` — opcode `0x05` to `CHAR_DEVICE_COMMAND`. Clears token + pairing state. **No reboot** — connection stays up. Use for rebind flows.
 - `DeviceManager.bleFactoryReset(device, grantBlob, persistResult)` — sends opcode `0x06`, requires the exact three-byte wipe-success result, awaits the caller's durable `persistResult` callback, then writes DEVICE_COMMAND `0x0A`. A malformed result or rejected persistence callback prevents `0x0A`, so firmware remains WIPED and replayable. A failed opcode write cancels the pending result subscription.
 - `DeviceManager.resumeBleFactoryReset(device, persistResult)` — subscribes for a replayed WIPED result after reconnect and completes the same persist-before-`0x0A` sequence without resending the grant or opcode `0x06`. Backend command finalization remains app orchestration and is intentionally outside the SDK.
-- Grant blob comes from `POST /dashboard/projects/:projectId/devices/:deviceId/deprovision-grant` — same wire format as recording grant, scope = `0x08`. The endpoint enforces project-membership authorization; the grant is HPKE-encrypted to the device's `pk_d` and ECDSA-signed.
+- Current grant blob comes from `POST /dashboard/projects/:projectId/devices/:deviceId/deprovision-grant`. This shared-scope behavior is an implementation gap, not the target contract; see System Design v5.
 
-**Auto-recovery on rebind:** `DeviceManager.provision(device, token, env, options)` accepts `options.fetchDeprovisionGrant: (nonce_d) => Promise<grant_blob>`. When supplied and the device returns `ALREADY_PAIRED`, the SDK reads the P6 session nonce, invokes the fetcher, performs an opcode-0x05 deprovision, and retries the token write — all on the same BLE connection, transparent to the caller. Without the fetcher, `provision()` throws `ProvisioningError [ALREADY_PAIRED]` so callers can drive recovery manually. See [internal-docs Device-Provisioning §3](../internal-docs/device/Device-Provisioning.md#3-device-rebinding-change-user) for the full sequence diagram.
+**Auto-recovery on rebind:** `DeviceManager.provision(device, token, env, options)` accepts `options.fetchDeprovisionGrant: (nonce_d) => Promise<grant_blob>`. When supplied and the device returns `ALREADY_PAIRED`, the SDK reads the P6 session nonce, invokes the fetcher, performs an opcode-0x05 deprovision, and retries the token write — all on the same BLE connection, transparent to the caller. Without the fetcher, `provision()` throws `ProvisioningError [ALREADY_PAIRED]` so callers can drive recovery manually. The current SDK has no durable rebind journal for a disconnect after `0x05`; current firmware also exposes only generic `UNPAIRED` instead of the target retained-data `deprovisioned-protected` lifecycle. That interrupted-flow gap is tracked in System Design v5. See [internal-docs Device-Provisioning §3](../internal-docs/device/Device-Provisioning.md#3-device-rebinding-change-user) for the full sequence diagram.
 
 Factory reset is intentionally distinct from this rebind recovery. See
 [Device-Provisioning §3.1](../internal-docs/device/Device-Provisioning.md#31-authenticated-factory-reset)
-for the approved remote/BLE close-loop and current implementation status.
+for the approved remote/BLE close-loop. Current implementation status is in
+[System Design v5](../internal-docs/System%20Design%20v5.md).
 
 ### BLE Radio Arbitration (`BleManager`)
 
@@ -128,7 +131,11 @@ indefinitely.
 
 ### BLE SHA-256 — End-to-End Integrity Verification
 
-Both transfer paths (`transferRecording` and `streamTransfer`) recognize a new `BOTA_PKT_TYPE_SHA256 = 0x04` packet emitted by firmware right after EOF on `CHAR_RECORDING_TRANSFER` (33 bytes: `[0x04, sha256[32]]`). Wire-up:
+The transfer protocol defines `BOTA_PKT_TYPE_SHA256 = 0x04` immediately after
+EOF as 49 bytes: `[0x04, sha256[32], file_id[16]]`. The final field must equal
+the v1 START field (4-byte file ID plus 12 zero bytes); a negotiated 33-byte
+legacy form carries only the hash. See the package protocol reference for the
+normative behavior and System Design v5 for implementation conformance.
 
 - **EOF holds the resolve.** When EOF arrives in `ProtocolHandler`, the transfer is **not** finalized immediately — `state.eofReceived = true` and a 200ms `SHA256_GRACE_WINDOW_MS` timer starts. Either the SHA packet arrives within the window (timer cancelled, finalize immediately with the hash) OR the timer fires (finalize without a hash, pre-P9.F2 firmware path).
 - **`transferRecording`** returns `{ data, e2eEncrypted, sha256? }` (hex string, 64 chars).
@@ -156,12 +163,12 @@ The SDK supports app-driven firmware updates via Bluetooth:
 - `SERVICE_BOTA_CONTROL` (B07A0002) - Device control, recording status
 - `SERVICE_BOTA_PROVISIONING` (B07A0003) - Device pairing/provisioning
 - `SERVICE_BOTA_STORAGE` (B07A0004) - Recording list and transfer
-- `SERVICE_BOTA_AUTH` (B07A0005) - Device cryptographic identity (Ed25519 PK_D) — v1+ firmware only
+- `SERVICE_BOTA_AUTH` (B07A0005) - Device cryptographic identity (secp256r1/P-256 PK_D) — v1+ firmware only
 - `SERVICE_BOTA_WIFI_CONFIG` (B07A0006) - WiFi configuration (WiFi Upload)
 
 ### Device Identity (Auth Service)
 
-`DeviceManager.readPublicKey(device)` reads the device's secp256r1 public key (PK_D) from `SERVICE_BOTA_AUTH` char `CHAR_PK_D` (B07A0005-0001). Returns a 128-char lowercase hex string (64 bytes, raw x‖y), or `null` if the Auth service is absent (legacy firmware) or if the read returns the wrong length. Used during bind to register PK_D on the backend. Pairing must use a `ConnectedDevice` whose serial was freshly read from the same BLE peripheral; never combine cached serial identity with a fresh PK_D read.
+`DeviceManager.readPublicKey(device)` reads the device's secp256r1 public key (PK_D) from `SERVICE_BOTA_AUTH` char `CHAR_PK_D` (B07A0005-0001). Returns a 128-char lowercase hex string (64 bytes, raw x‖y), or `null` if the Auth service is absent (legacy firmware) or if the read returns the wrong length. During ordinary bind it is an observed value for equality verification against the manufacturing/device registry, never enrollment or key replacement. Pairing must use a `ConnectedDevice` whose serial was freshly read from the same BLE peripheral; never combine cached serial identity with a fresh PK_D read.
 
 ### Device State Cache (in-memory, SN-keyed)
 
@@ -367,14 +374,14 @@ const status: SyncStatus = deriveSyncStatus({
 
 The SDK provides methods to read/write per-device connection settings via Bluetooth:
 
-- `DeviceManager.readConnectionSettings(device)` — reads 8-byte binary from `DEVICE_SETTINGS` characteristic, returns `DeviceConnectionSettings`
-- `DeviceManager.writeConnectionSettings(device, settings)` — serializes `DeviceConnectionSettings` to 8 bytes and writes to device
+- `DeviceManager.readConnectionSettings(device)` — reads baseline 12-byte v0x02 (or legacy 8-byte v0x01) from `DEVICE_SETTINGS`, returns `DeviceConnectionSettings`
+- `DeviceManager.writeConnectionSettings(device, settings)` — serializes the baseline 12-byte v0x02 payload and writes it to the device
 
 **Types:**
 - `ConnectionType = 'wifi' | 'ble' | 'cellular'`
 - `DeviceConnectionSettings` — `{ enabled_connections: { wifi: boolean, cellular: boolean }, upload_network_preference: ConnectionType[] }`
 
-**Bluetooth binary layout (8 bytes):** version(0x01), enabled_mask(bit 0: WiFi, bit 1: 4G), upload_net_pref[3] (1=WiFi, 2=BLE, 3=4G, 0=end), reserved[3].
+**Bluetooth binary layout:** baseline v0x02 is 12 bytes and adds streaming/channel policy fields; legacy v0x01 is 8 bytes: version, enabled mask, upload preference and reserved bytes. The parser accepts both versions; new writes use v0x02.
 
 Serialization helpers live in `src/ble/parsers.ts`: `serializeConnectionSettings()` and `parseConnectionSettings()`.
 

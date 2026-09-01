@@ -247,9 +247,17 @@ export type Environment = 'development' | 'gamma' | 'production';
  */
 export interface ProvisioningResult {
   success: boolean;
-  error?: 'invalid_token' | 'storage_error' | 'chunk_error' | 'already_paired' | 'unknown';
+  error?:
+    | 'invalid_token'
+    | 'storage_error'
+    | 'chunk_error'
+    | 'already_paired'
+    | 'reset_pending'
+    | 'unknown';
   /** Present on the three-byte authenticated factory-reset success result. */
   localRecordingsDeleted?: number;
+  /** Present only after firmware durably clears reset and provisioning state. */
+  resetFinalized?: boolean;
 }
 
 /** Result returned by the authenticated BLE factory-reset close-loop. */

@@ -97,6 +97,10 @@ describe('DeviceManager authenticated factory reset', () => {
     const persistResult = jest.fn().mockResolvedValue(undefined);
 
     const reset = manager.bleFactoryReset(connectedDevice, 'grant-blob', persistResult);
+    let completed = false;
+    void reset.then(() => {
+      completed = true;
+    });
     await flushPromises();
 
     expect(manager.writeGrant).toHaveBeenCalledWith(connectedDevice, 'grant-blob');
@@ -116,11 +120,8 @@ describe('DeviceManager authenticated factory reset', () => {
 
     const onData = bleManager.subscribeToCharacteristic.mock.calls[0][3];
     onData(Buffer.from([0x00, 0x34, 0x12]));
+    await flushPromises();
 
-    await expect(reset).resolves.toEqual({
-      success: true,
-      localRecordingsDeleted: 0x1234,
-    });
     expect(persistResult).toHaveBeenCalledWith({
       success: true,
       localRecordingsDeleted: 0x1234,
@@ -134,7 +135,18 @@ describe('DeviceManager authenticated factory reset', () => {
     expect(persistResult.mock.invocationCallOrder[0]).toBeLessThan(
       bleManager.writeCharacteristic.mock.invocationCallOrder[1]
     );
-    expect(monitor.remove).toHaveBeenCalledTimes(1);
+    expect(bleManager.subscribeToCharacteristic).toHaveBeenCalledTimes(2);
+    expect(completed).toBe(false);
+
+    const onFinalized = bleManager.subscribeToCharacteristic.mock.calls[1][3];
+    onFinalized(Buffer.from([0x07]));
+
+    await expect(reset).resolves.toEqual({
+      success: true,
+      localRecordingsDeleted: 0x1234,
+    });
+    expect(completed).toBe(true);
+    expect(monitor.remove).toHaveBeenCalledTimes(2);
   });
 
   it('does not send receipt when durable result persistence fails', async () => {
@@ -269,16 +281,22 @@ describe('DeviceManager authenticated factory reset', () => {
     await flushPromises();
     const onData = bleManager.subscribeToCharacteristic.mock.calls[0][3];
     onData(Buffer.from([0x00, 0x07, 0x00]));
+    await flushPromises();
 
-    await expect(resume).resolves.toEqual({
-      success: true,
-      localRecordingsDeleted: 7,
-    });
     expect(manager.writeGrant).not.toHaveBeenCalled();
     expect(bleManager.writeCharacteristic).toHaveBeenCalledTimes(1);
     expect(bleManager.writeCharacteristic.mock.calls[0][3]).toEqual(
       Buffer.from([DEVICE_CMD_BLE_FACTORY_RESET_RESULT_ACK])
     );
+    expect(bleManager.subscribeToCharacteristic).toHaveBeenCalledTimes(2);
+
+    const onFinalized = bleManager.subscribeToCharacteristic.mock.calls[1][3];
+    onFinalized(Buffer.from([0x07]));
+
+    await expect(resume).resolves.toEqual({
+      success: true,
+      localRecordingsDeleted: 7,
+    });
   });
 });
 

@@ -21,6 +21,7 @@ import type {
   DeviceWiFiScanResult,
   ConnectionType,
   DeviceConnectionSettings,
+  ProvisioningResult,
 } from '../models/Device';
 import type { DeviceRecording, AudioCodec, TransferPacket } from '../models/Recording';
 import {
@@ -91,7 +92,45 @@ import {
   WIFI_RADIO_NO_CREDENTIALS,
   WIFI_RADIO_DISABLED,
   WIFI_RADIO_ERROR,
+  PROVISIONING_SUCCESS,
+  PROVISIONING_INVALID_TOKEN,
+  PROVISIONING_STORAGE_ERROR,
+  PROVISIONING_CHUNK_ERROR,
+  PROVISIONING_ALREADY_PAIRED,
+  PROVISIONING_RESET_PENDING,
+  PROVISIONING_RESET_FINALIZED,
 } from './constants';
+
+/** Parse a provisioning or authenticated factory-reset result notification. */
+export function parseProvisioningResult(data: Buffer): ProvisioningResult {
+  if (data.length < 1) {
+    return { success: false, error: 'unknown' };
+  }
+
+  switch (data[0]) {
+    case PROVISIONING_SUCCESS:
+      return {
+        success: true,
+        ...(data.length >= 3
+          ? { localRecordingsDeleted: data.readUInt16LE(1) }
+          : {}),
+      };
+    case PROVISIONING_INVALID_TOKEN:
+      return { success: false, error: 'invalid_token' };
+    case PROVISIONING_STORAGE_ERROR:
+      return { success: false, error: 'storage_error' };
+    case PROVISIONING_CHUNK_ERROR:
+      return { success: false, error: 'chunk_error' };
+    case PROVISIONING_ALREADY_PAIRED:
+      return { success: false, error: 'already_paired' };
+    case PROVISIONING_RESET_PENDING:
+      return { success: false, error: 'reset_pending' };
+    case PROVISIONING_RESET_FINALIZED:
+      return { success: true, resetFinalized: true };
+    default:
+      return { success: false, error: 'unknown' };
+  }
+}
 
 /**
  * Parse device type from manufacturer data byte

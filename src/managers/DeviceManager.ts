@@ -33,11 +33,6 @@ import {
   API_ENDPOINT_DEV,
   API_ENDPOINT_PROD,
   API_ENDPOINT_GAMMA,
-  PROVISIONING_SUCCESS,
-  PROVISIONING_INVALID_TOKEN,
-  PROVISIONING_STORAGE_ERROR,
-  PROVISIONING_CHUNK_ERROR,
-  PROVISIONING_ALREADY_PAIRED,
   OPERATION_TIMEOUT,
   RECORDING_CMD_GRANT_START,
   RECORDING_CMD_GRANT_STOP,
@@ -74,6 +69,7 @@ import {
   parseWiFiScanResult,
   serializeConnectionSettings,
   parseConnectionSettings,
+  parseProvisioningResult,
 } from '../ble/parsers';
 import type {
   DiscoveredDevice,
@@ -1027,6 +1023,8 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
           throw ProvisioningError.chunkError(device.id);
         case 'already_paired':
           throw ProvisioningError.alreadyPaired(device.id);
+        case 'reset_pending':
+          throw ProvisioningError.resetPending(device.id);
         default:
           throw new ProvisioningError(
             'Provisioning failed',
@@ -1651,7 +1649,8 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
   private createProvisioningResultWait(
     deviceId: string,
-    requireFactoryResetPayload = false
+    requireFactoryResetPayload = false,
+    requireResetFinalized = false
   ): {
     promise: Promise<ProvisioningResult>;
     cancel: (reason: unknown) => void;
@@ -1693,44 +1692,31 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         SERVICE_BOTA_PROVISIONING,
         CHAR_PROVISIONING_RESULT,
         (data) => {
-          if (data.length < 1) {
-            resolveOnce({ success: false, error: 'unknown' });
+          const result = parseProvisioningResult(data);
+          if (
+            requireFactoryResetPayload &&
+            result.success &&
+            (data.length !== 3 || result.resetFinalized)
+          ) {
+            rejectOnce(new ProvisioningError(
+              `Factory reset result must be exactly 3 bytes, received ${data.length}`,
+              'INVALID_FACTORY_RESET_RESULT',
+              deviceId
+            ));
             return;
           }
-
-          const resultCode = data[0];
-          switch (resultCode) {
-            case PROVISIONING_SUCCESS:
-              if (requireFactoryResetPayload && data.length !== 3) {
-                rejectOnce(new ProvisioningError(
-                  `Factory reset result must be exactly 3 bytes, received ${data.length}`,
-                  'INVALID_FACTORY_RESET_RESULT',
-                  deviceId
-                ));
-                break;
-              }
-              resolveOnce({
-                success: true,
-                ...(data.length >= 3
-                  ? { localRecordingsDeleted: data.readUInt16LE(1) }
-                  : {}),
-              });
-              break;
-            case PROVISIONING_INVALID_TOKEN:
-              resolveOnce({ success: false, error: 'invalid_token' });
-              break;
-            case PROVISIONING_STORAGE_ERROR:
-              resolveOnce({ success: false, error: 'storage_error' });
-              break;
-            case PROVISIONING_CHUNK_ERROR:
-              resolveOnce({ success: false, error: 'chunk_error' });
-              break;
-            case PROVISIONING_ALREADY_PAIRED:
-              resolveOnce({ success: false, error: 'already_paired' });
-              break;
-            default:
-              resolveOnce({ success: false, error: 'unknown' });
+          if (
+            requireResetFinalized &&
+            (!result.success || result.resetFinalized !== true)
+          ) {
+            rejectOnce(new ProvisioningError(
+              'Device did not confirm durable factory-reset finalization',
+              'INVALID_FACTORY_RESET_FINALIZATION_RESULT',
+              deviceId
+            ));
+            return;
           }
+          resolveOnce(result);
         },
         (error) => {
           rejectOnce(new ProvisioningError(
@@ -2092,12 +2078,24 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       localRecordingsDeleted: provisioningResult.localRecordingsDeleted!,
     };
     await persistResult(result);
-    await this.bleManager.writeCharacteristic(
+    const finalizationWait = this.createProvisioningResultWait(
       device.id,
-      SERVICE_BOTA_CONTROL,
-      CHAR_DEVICE_COMMAND,
-      Buffer.from([DEVICE_CMD_BLE_FACTORY_RESET_RESULT_ACK])
+      false,
+      true
     );
+    try {
+      await this.bleManager.writeCharacteristic(
+        device.id,
+        SERVICE_BOTA_CONTROL,
+        CHAR_DEVICE_COMMAND,
+        Buffer.from([DEVICE_CMD_BLE_FACTORY_RESET_RESULT_ACK])
+      );
+    } catch (error) {
+      finalizationWait.cancel(error);
+      await finalizationWait.promise.catch(() => undefined);
+      throw error;
+    }
+    await finalizationWait.promise;
 
     return result;
   }

@@ -168,6 +168,14 @@ export class ProvisioningError extends BotaError {
     );
   }
 
+  static resetPending(deviceId: string): ProvisioningError {
+    return new ProvisioningError(
+      'Device factory reset is still pending. Keep the device powered and reconnect to finish the reset before pairing.',
+      'RESET_PENDING',
+      deviceId
+    );
+  }
+
   static timeout(deviceId: string): ProvisioningError {
     return new ProvisioningError(
       'Provisioning timed out waiting for device response',

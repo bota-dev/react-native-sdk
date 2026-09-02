@@ -21,6 +21,13 @@ See [AGENTS.md](AGENTS.md) for build commands and conventions. See [ARCHITECTURE
 > [Remote Device Control](../internal-docs/device/Remote-Recording-Control.md)
 > ([中文](../internal-docs/device/Remote-Recording-Control_ZH.md)).
 
+> **Network target:** The partner-facing WiFi/4G heartbeat and upload contract,
+> including canonical reports, dynamic cadence, authenticated App-relay duty,
+> whole-file direct retry and desired/applied settings, is
+> [Connection Management](../internal-docs/device/Connection-Management.md)
+> ([中文](../internal-docs/device/Connection-Management_ZH.md)). The SDK's
+> 12-byte v0x02 parser remains compatibility behavior.
+
 This file provides context for Claude Code when working in this repository.
 
 ## Repository Overview

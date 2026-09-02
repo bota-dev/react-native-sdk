@@ -14,6 +14,13 @@ See [AGENTS.md](AGENTS.md) for build commands and conventions. See [ARCHITECTURE
 > linked detailed designs. Existing SDK behavior remains authoritative until a
 > capability-versioned implementation lands.
 
+> **Remote-control target:** The released recording-scope Grant plus `0x10`/
+> `0x11` flow is compatibility behavior, not a command-bound result protocol.
+> Future App/BLE relay must preserve one opaque exact `command_id`, device
+> receipt/result and recovery contract from
+> [Remote Device Control](../internal-docs/device/Remote-Recording-Control.md)
+> ([中文](../internal-docs/device/Remote-Recording-Control_ZH.md)).
+
 This file provides context for Claude Code when working in this repository.
 
 ## Repository Overview

@@ -29,3 +29,8 @@ test('legacy candidates are packed twice, verified, and preserved', () => {
   assert.match(workflow, /actions\/upload-artifact@/);
   assert.match(workflow, /legacy-react-native-\$\{\{ github\.ref_name \}\}-\$\{\{ env\.SOURCE_REVISION \}\}/);
 });
+
+test('legacy candidate CI runs lint and dependency-license gates', () => {
+  assert.match(workflow, /npm run lint/);
+  assert.match(workflow, /npm run license-check/);
+});

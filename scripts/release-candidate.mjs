@@ -126,6 +126,9 @@ export function verifyCandidateInventory({ inventoryPath, tarballPath }) {
   const inventory = readJson(inventoryPath, 'candidate inventory');
   assertObjectKeys(inventory, INVENTORY_KEYS, 'candidate inventory');
   assertObjectKeys(inventory.tarball, TARBALL_KEYS, 'candidate inventory tarball');
+  if (inventory.schemaVersion !== 1) {
+    throw new Error(`candidate inventory schema version must be 1; got ${inventory.schemaVersion}`);
+  }
   validateReleaseMetadata(inventory, 'candidate inventory');
 
   const packedPackage = readPackedPackageJson(tarballPath);

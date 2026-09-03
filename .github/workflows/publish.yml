@@ -50,9 +50,11 @@ jobs:
       - name: Run release gates
         run: |
           npm run typecheck
+          npm run lint
           npm test -- --runInBand
           npm run test:release
           npm run build
+          npm run license-check
 
       - name: Build and verify deterministic candidate
         shell: bash

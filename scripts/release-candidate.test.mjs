@@ -114,3 +114,22 @@ test('detects a tarball changed after the inventory was written', () => {
     tarballPath: fixture.tarballPath,
   }), /tarball (byte length|SHA-1|SHA-256)/);
 });
+
+test('rejects an unsupported candidate inventory schema', () => {
+  const fixture = makeFixture();
+  writeCandidateInventory({
+    outputPath: fixture.inventoryPath,
+    packageJsonPath: fixture.packageJsonPath,
+    sourceRevision: SOURCE_REVISION,
+    tag: `v${VERSION}`,
+    tarballPath: fixture.tarballPath,
+  });
+  const inventory = JSON.parse(readFileSync(fixture.inventoryPath, 'utf8'));
+  inventory.schemaVersion = 999;
+  writeFileSync(fixture.inventoryPath, `${JSON.stringify(inventory, null, 2)}\n`);
+
+  assert.throws(() => verifyCandidateInventory({
+    inventoryPath: fixture.inventoryPath,
+    tarballPath: fixture.tarballPath,
+  }), /schema version must be 1/);
+});

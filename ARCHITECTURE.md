@@ -22,6 +22,19 @@ the legacy Apple and Android repositories remain migration inputs until their
 parity and release gates pass. This repository continues to publish the React
 Native package and preserve its `BotaClient` entry point during migration.
 
+## Release Ownership
+
+| SDK line | Source | Version | Distribution channel |
+| --- | --- | --- | --- |
+| React Native maintenance | This repository | `0.0.x` | npm `latest` |
+| Synchronized App SDK beta | `app-sdk` | `1.x.y-beta.n` | npm `beta`, exact SwiftPM/Maven version |
+
+CI in this repository builds the `0.0.x` package twice, verifies byte identity,
+and preserves a source-revision and checksum-bound candidate. It has no npm
+publication credential and never runs `npm publish`; a maintainer publishes the
+preserved tarball interactively under WebAuthn by following
+[PUBLISHING.md](PUBLISHING.md).
+
 ---
 
 ## Overview

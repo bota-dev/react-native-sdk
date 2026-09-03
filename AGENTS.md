@@ -59,9 +59,19 @@ Native 0.87, React 19, TypeScript 6, Builder Bob 0.43, and AsyncStorage 3.
 ```bash
 npm install
 npm run build       # tsup → lib/ (CJS + ESM + .d.ts)
+npm run test:release # candidate-integrity and workflow-policy tests
 ```
 
 The development toolchain uses Jest 30 and ESLint 10 with flat configuration.
+
+## Release Ownership
+
+- This repository publishes only `0.0.x`, which owns npm `latest`.
+- GitHub Actions creates a checksum-bound candidate but cannot publish it.
+- A maintainer publishes the exact preserved tarball interactively with
+  WebAuthn; follow [PUBLISHING.md](PUBLISHING.md).
+- The synchronized `app-sdk` line owns npm `beta`. Never move or overwrite that
+  dist-tag from this repository.
 
 ## Test
 
@@ -145,6 +155,9 @@ cd app && npx expo start --clear
 | `src/storage/StorageManager.ts` | Local SQLite persistence (device registry, transfer state) |
 | `src/models/` | TypeScript types (Device, Recording, DeviceStatus, etc.) |
 | `jest.config.js` | Jest/Babel transform config for TypeScript unit tests |
+| `scripts/release-candidate.mjs` | Creates and verifies immutable legacy npm candidate inventories |
+| `.github/workflows/publish.yml` | Builds and preserves `v0.0.x` candidates; never publishes npm |
+| `PUBLISHING.md` | Interactive WebAuthn publication and registry verification runbook |
 
 ## Design Docs
 

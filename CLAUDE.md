@@ -263,10 +263,14 @@ configuration is defined in `eslint.config.mjs` using the flat-config format.
 
 ### Release
 
-1. Update version in `package.json`
-2. Commit and push
-3. Create a GitHub release with tag `vX.Y.Z`
-4. CI automatically publishes to npm
+This repository owns only the production `0.0.x` maintenance line and npm
+`latest`. CI accepts an annotated `v0.0.x` tag on `main`, builds the package
+twice with npm `12.0.2`, verifies byte identity, and preserves the exact
+checksum-bound candidate. CI has no npm publication authority. A maintainer
+publishes only that downloaded tarball interactively with WebAuthn and verifies
+that npm `beta` did not move. Follow [PUBLISHING.md](PUBLISHING.md).
+
+The synchronized App SDK is published from `app-sdk` and owns npm `beta`.
 
 ### Local Development (testing SDK changes in a consuming app)
 

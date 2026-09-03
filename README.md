@@ -16,6 +16,12 @@ npm install @bota.dev/react-native-sdk react-native-ble-plx
 yarn add @bota.dev/react-native-sdk react-native-ble-plx
 ```
 
+The untagged install is the supported production maintenance line and resolves
+through npm `latest` to a `0.0.x` version. The synchronized cross-platform Bota
+App SDK is available separately as a beta with
+`npm install @bota.dev/react-native-sdk@beta`; do not switch production apps to
+that line implicitly.
+
 ### iOS Setup
 
 1. Add Bluetooth permissions to `ios/YourApp/Info.plist`:

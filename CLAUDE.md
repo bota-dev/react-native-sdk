@@ -177,6 +177,8 @@ The SDK supports app-driven firmware updates via Bluetooth:
 - Treats any nonzero READY result received after upload acceptance as a terminal SD/FAT write failure (`FW_STORAGE_WRITE_FAILED`) instead of continuing to report transfer progress
 - Progress events via `OtaStage`: `downloading` → `preparing` → `updating` → `verifying` → `completed`
 
+The SDK is an untrusted byte relay for firmware authenticity. Its CRC32 and progress/completion states protect transport behavior but do not authorize an artifact or prove that it is safe to execute. The device and boot chain own signature, compatibility, rollback and recovery enforcement as defined in [Firmware Integrity, Secure Boot & OTA Security](../internal-docs/device/Device%E2%80%93App%E2%80%93Backend%20OTA%20Security%20Design.md); current conformance remains in [System Design v5](../internal-docs/System%20Design%20v5.md).
+
 ### Bluetooth Services (defined in `src/ble/constants.ts`)
 
 - `SERVICE_BOTA_AUDIO` (B07A0001) - Audio streaming

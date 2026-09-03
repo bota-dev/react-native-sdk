@@ -25,6 +25,7 @@ dist-tag while preparing source.
 Create an annotated tag on the exact `main` commit and push it:
 
 ```bash
+set -euo pipefail
 VERSION="$(node -p 'require("./package.json").version')"
 SOURCE_REVISION="$(git rev-parse HEAD)"
 git tag -a "v$VERSION" -m "Bota React Native SDK $VERSION"
@@ -45,6 +46,7 @@ beside a checkout of the same tag. Never rebuild after tagging.
 ## 3. Verify Before Authentication
 
 ```bash
+set -euo pipefail
 PACKAGE_PATH="$(find . -maxdepth 1 -name '*.tgz' -print -quit)"
 node scripts/release-candidate.mjs verify \
   --tarball "$PACKAGE_PATH" \
@@ -63,6 +65,7 @@ Sign in to npm interactively with the maintainer account, then publish only the
 downloaded tarball:
 
 ```bash
+set -euo pipefail
 npx --yes npm@12.0.2 publish "$PACKAGE_PATH" --access public --tag latest
 ```
 
@@ -71,6 +74,7 @@ Do not publish the checkout directory and do not omit `--tag latest`.
 ## 5. Verify The Registry
 
 ```bash
+set -euo pipefail
 VERSION="$(node -p 'require("./release-candidate.json").version')"
 EXPECTED_SHA1="$(node -p 'require("./release-candidate.json").tarball.sha1')"
 PUBLISHED_SHA1="$(npx --yes npm@12.0.2 view "@bota.dev/react-native-sdk@$VERSION" dist.shasum)"

@@ -20,7 +20,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
     "test": "jest --passWithNoTests",
-    "test:release": "node --test scripts/release-candidate.test.mjs",
+    "test:release": "node --test scripts/release-candidate.test.mjs scripts/publish-workflow.test.mjs",
     "clean": "rm -rf lib",
     "license-check": "node scripts/check-licenses.mjs",
     "release:candidate": "node scripts/release-candidate.mjs"

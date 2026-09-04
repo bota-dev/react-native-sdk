@@ -208,6 +208,40 @@ Implementation notes:
 - Firmware streams DATA notifications back-to-back while BLE transmit capacity is
   available, then keeps the transfer active until the final ACK.
 
+## Encrypted Upload v2 Contract (Not Wired)
+
+The SDK retains three migration profiles. `legacy_plain_v1` is the active
+`0x01` DATA/`0x02` EOF path. `legacy_p10_relay` is the historical `0x05`,
+`0x81`, and `0x82` format routed through `/upload-relay` by the consuming app.
+`encrypted_upload_v2` relays the device's canonical stored ciphertext and
+authenticated manifest unchanged, but this repository currently provides only
+internal contract parsers, serializers, constants, and pinned golden vectors.
+
+| Characteristic | UUID |
+| --- | --- |
+| Transfer capabilities v2 | `B07A0004-0006-1000-8000-00805F9B34FB` |
+| Signed blob v2 | `B07A0004-0007-1000-8000-00805F9B34FB` |
+| Transfer control v2 | `B07A0004-0008-1000-8000-00805F9B34FB` |
+| Recording transfer v2 | `B07A0004-0009-1000-8000-00805F9B34FB` |
+| Transfer status v2 | `B07A0004-000A-1000-8000-00805F9B34FB` |
+| Recording list v2 | `B07A0004-000B-1000-8000-00805F9B34FB` |
+
+Current implementation status:
+
+- Contract parser/serializer: present, internal.
+- Canonical vectors: vendored byte-for-byte from the recorded `app-sdk` Git
+  revision in `protocol/vendor/app-sdk/encrypted-upload-v2.source.json`.
+- Runtime capability negotiation: not wired.
+- Batch-v2 transfer: not wired.
+- Streaming-v2: undefined.
+- Legacy v1/P10: unchanged.
+- `BACKEND_PUBKEY` selection: prohibited. Its presence never enables v2.
+
+Absence of the capabilities characteristic means v2 is unsupported. Even when
+the characteristic is present, runtime code must require explicit capability
+negotiation before sending v2 framing. The current managers and BLE adapter do
+not read or write these characteristics.
+
 ## Confirm Delete
 
 After the app has uploaded the recording and notified its backend, it writes

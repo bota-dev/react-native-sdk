@@ -21,6 +21,8 @@
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
     "test": "jest --passWithNoTests",
     "test:release": "node --test scripts/release-candidate.test.mjs scripts/publish-workflow.test.mjs",
+    "sync:encrypted-upload-v2": "node scripts/sync-encrypted-upload-v2-vectors.mjs",
+    "sync:encrypted-upload-v2:check": "node scripts/sync-encrypted-upload-v2-vectors.mjs --check",
     "clean": "rm -rf lib",
     "license-check": "node scripts/check-licenses.mjs",
     "release:candidate": "node scripts/release-candidate.mjs"

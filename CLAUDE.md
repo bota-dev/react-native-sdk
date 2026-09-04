@@ -158,10 +158,12 @@ normative behavior and System Design v5 for implementation conformance.
 - **`RecordingManager.syncRecording`** emits `contentSha256` on the `transferring` and `completed` stages of its `SyncProgress` generator AND forwards it on the upload-task so the SDK's `notifyCompletion` includes `content_sha256` in the `/upload-complete` POST body.
 - **Backward-compat both directions**: old SDKs ignore the unknown 0x04 packet type; new SDK on old firmware sees the 200ms grace window time out and resolves without a hash (no integrity verify, same as before). E2E relay path (P10) suppresses SHA forwarding — backend decrypts and hashes plaintext on receipt, no client SHA in scope.
 
-This repository retains released v1/P10 compatibility only. The new
-capability-gated `encrypted_upload_v2` workflow belongs in `app-sdk` and is
-defined by [Encrypted Upload v2](../internal-docs/device/Encrypted-Upload-v2.md);
-do not infer it from the recording-list flag or a stored backend public key.
+This repository retains released v1/P10 runtime behavior. It now also carries
+an internal, vector-pinned `encrypted_upload_v2` contract codec and UUID
+constants, but no manager negotiates or starts that workflow. Batch-v2 runtime
+transfer remains unwired and streaming-v2 is undefined. The owning design is
+[Encrypted Upload v2](../internal-docs/device/Encrypted-Upload-v2.md); never
+infer v2 support from the recording-list flag or a stored `BACKEND_PUBKEY`.
 
 End-to-end: device computes SHA over SD bytes at `recording_stop` → emits over BLE after EOF → SDK forwards in upload-complete body → backend integrity-verify worker (P9.B) compares against a server-side SHA of the assembled S3 object → mismatch sets `status=integrity_failure`. This closes the BLE gap and gives parity with the WiFi/4G direct-upload path.
 

@@ -136,6 +136,12 @@ cd app && npx expo start --clear
 
 **Public API surface** — everything exported from `src/index.ts` is public and semver-versioned. Be conservative about adding to it. Internal modules are not exported.
 
+**Encrypted Upload v2 boundary** — the internal contract codec and pinned
+vectors do not mean runtime support. Keep capability negotiation, batch-v2
+transfer, and streaming-v2 out of runtime managers until their workflow is
+implemented; never select encryption from `BACKEND_PUBKEY`. Legacy v1/P10
+behavior remains unchanged.
+
 ## Key Files
 
 | File | Purpose |
@@ -147,6 +153,7 @@ cd app && npx expo start --clear
 | `src/ble/deviceLogs.ts` | B07A0007 diagnostic log packet decoder |
 | `src/ble/parsers.ts` | Binary struct parsers (DeviceStatus, RecordingEntry, etc.) |
 | `src/protocol/ProtocolHandler.ts` | Protocol handler (Bluetooth packet assembly, ACK logic) |
+| `src/protocol/encryptedUploadV2.ts` | Internal v2 framing codec; not a runtime workflow or root export |
 | `src/managers/DeviceManager.ts` | Device discovery, connection, bonding, provisioning, authenticated factory-reset receipt/replay, diagnostics subscriptions |
 | `src/managers/RecordingManager.ts` | Recording list, Bluetooth transfer, upload orchestration |
 | `src/sync/deviceUploadHandoff.ts` | Direct-upload ownership and safe BLE-fallback policy |
@@ -156,6 +163,7 @@ cd app && npx expo start --clear
 | `src/models/` | TypeScript types (Device, Recording, DeviceStatus, etc.) |
 | `jest.config.js` | Jest/Babel transform config for TypeScript unit tests |
 | `scripts/release-candidate.mjs` | Creates and verifies immutable legacy npm candidate inventories |
+| `scripts/sync-encrypted-upload-v2-vectors.mjs` | Vendors canonical v2 vectors from one pinned `app-sdk` commit |
 | `.github/workflows/publish.yml` | Builds and preserves `v0.0.x` candidates; never publishes npm |
 | `PUBLISHING.md` | Interactive WebAuthn publication and registry verification runbook |
 
@@ -168,6 +176,7 @@ All design docs live in [`../internal-docs/`](../internal-docs/).
 | [App SDK Architecture](../internal-docs/App%20SDK%20Architecture.md) | Current target for the Rust core, platform bindings, public package naming, monorepo, and synchronized releases | Target; implementation conformance is tracked in System Design v5 |
 | [Mobile SDK System Design](../internal-docs/Mobile%20SDK%20System%20Design.md) | Historical SDK proposal retained for context | Superseded; do not use as the current contract |
 | [FIRMWARE_PROTOCOL](./FIRMWARE_PROTOCOL.md) | SDK-local Bluetooth GATT service defs, recording transfer protocol, ACK/NACK behavior | SDK package reference |
+| [Encrypted Upload v2](../internal-docs/device/Encrypted-Upload-v2.md) | Three-profile migration, opaque canonical ciphertext, capability negotiation, and downgrade policy | Contract codec only; runtime workflow not implemented here |
 | [FIRMWARE_INTEGRATION_GUIDE](../internal-docs/device/FIRMWARE_INTEGRATION_GUIDE.md) | Broader firmware workflows, GATT service defs, heartbeat | Internal design reference |
 | [Device-App Protocol](../internal-docs/device/Device-App%20Protocol.md) | Compatibility index for current owning protocol documents | Index only |
 | [Bluetooth Reliable Transfer Design](../internal-docs/device/BLE%20Reliable%20Transfer%20Design.md) | v2 windowed repair and durable resume over the released continuous-stream/final-ACK profile | Implementation conformance: [System Design v5](../internal-docs/System%20Design%20v5.md#33-security-configuration-and-remote-control-conformance) |

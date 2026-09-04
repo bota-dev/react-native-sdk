@@ -169,6 +169,21 @@ payload passes CRC32 verification; it sends NACK on final CRC mismatch and Abort
 on cancellation. Firmware streams DATA packets back-to-back and keeps the
 transfer active until this final app result.
 
+### Encrypted Upload v2 contract boundary
+
+`src/protocol/encryptedUploadV2.ts` is an internal transitional contract codec.
+It validates and round-trips the capability, signed-blob, signed-document, and
+transfer framing while leaving ciphertext, manifests, authorizations, and
+receipts opaque. Its canonical vectors are copied only from a pinned `app-sdk`
+commit by `scripts/sync-encrypted-upload-v2-vectors.mjs`; the sidecar records the
+source revision and SHA-256, and check mode does not require a sibling checkout.
+
+This is contract evidence, not a runtime feature. Capability negotiation,
+batch-v2 transfer, staging, completion receipts, and deletion are not wired to
+`BleManager`, `ProtocolHandler`, or `RecordingManager`. Streaming-v2 is
+undefined. Released plaintext v1 and historical P10 behavior are unchanged,
+and a stored `BACKEND_PUBKEY` must never select v2.
+
 ---
 
 ## Upload Flow

@@ -178,6 +178,13 @@ receipts opaque. Its canonical vectors are copied only from a pinned `app-sdk`
 commit by `scripts/sync-encrypted-upload-v2-vectors.mjs`; the sidecar records the
 source revision and SHA-256, and check mode does not require a sibling checkout.
 
+`src/protocol/encryptedUploadV2Selection.ts` mirrors the App SDK core's pure
+three-profile gate. It requires every batch capability bit, usable advertised
+bounds, and a full recording generation for v2; rejects legacy under
+`v2_required`; requires the exact `bota_enc_v2` storage format; and permits P10
+only after the historical header was observed.
+It is internal, has no transport side effects, and cannot select or start v2.
+
 This is contract evidence, not a runtime feature. Capability negotiation,
 batch-v2 transfer, staging, completion receipts, and deletion are not wired to
 `BleManager`, `ProtocolHandler`, or `RecordingManager`. Streaming-v2 is

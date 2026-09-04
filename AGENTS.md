@@ -137,10 +137,11 @@ cd app && npx expo start --clear
 **Public API surface** — everything exported from `src/index.ts` is public and semver-versioned. Be conservative about adding to it. Internal modules are not exported.
 
 **Encrypted Upload v2 boundary** — the internal contract codec and pinned
-vectors do not mean runtime support. Keep capability negotiation, batch-v2
-transfer, and streaming-v2 out of runtime managers until their workflow is
-implemented; never select encryption from `BACKEND_PUBKEY`. Legacy v1/P10
-behavior remains unchanged.
+vectors do not mean runtime support. The internal pure selection validator may
+reject an invalid application/backend decision, but it must not start a
+transfer. Keep capability negotiation, batch-v2 transfer, and streaming-v2 out
+of runtime managers until their workflow is implemented; never select
+encryption from `BACKEND_PUBKEY`. Legacy v1/P10 behavior remains unchanged.
 
 ## Key Files
 
@@ -154,6 +155,7 @@ behavior remains unchanged.
 | `src/ble/parsers.ts` | Binary struct parsers (DeviceStatus, RecordingEntry, etc.) |
 | `src/protocol/ProtocolHandler.ts` | Protocol handler (Bluetooth packet assembly, ACK logic) |
 | `src/protocol/encryptedUploadV2.ts` | Internal v2 framing codec; not a runtime workflow or root export |
+| `src/protocol/encryptedUploadV2Selection.ts` | Internal side-effect-free three-profile policy/capability validator |
 | `src/managers/DeviceManager.ts` | Device discovery, connection, bonding, provisioning, authenticated factory-reset receipt/replay, diagnostics subscriptions |
 | `src/managers/RecordingManager.ts` | Recording list, Bluetooth transfer, upload orchestration |
 | `src/sync/deviceUploadHandoff.ts` | Direct-upload ownership and safe BLE-fallback policy |

@@ -25,6 +25,26 @@ export interface DeviceRecording {
   isEncrypted?: boolean;
 }
 
+/** Durable metadata for resuming one encrypted-upload-v2 BLE transfer. It
+ * intentionally excludes ciphertext, signed documents, credentials, URLs,
+ * headers, and local paths. */
+export interface PersistedEncryptedUploadV2Checkpoint {
+  deviceId: string;
+  uploadSessionUuid: string;
+  recordingUuid: string;
+  recordingGeneration: number;
+  ownerRevision: number;
+  revision: number;
+  nextCiphertextOffset: bigint;
+  prefixSha256: Uint8Array;
+  highestContiguousSequence?: number;
+  windowPackets: number;
+  dataPayloadBytes: number;
+  checkpointIntervalBlocks: number;
+  ciphertextLength: bigint;
+  ciphertextSha256: Uint8Array;
+}
+
 /**
  * Upload information provided by customer backend
  * (obtained by calling customer's API, not Bota API directly)

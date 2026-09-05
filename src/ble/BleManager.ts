@@ -722,6 +722,23 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
     }
   }
 
+  /** Distinguish an absent optional characteristic from a failed GATT read. */
+  async hasCharacteristic(
+    deviceId: string,
+    serviceUuid: string,
+    characteristicUuid: string
+  ): Promise<boolean> {
+    const device = this.connectedDevices.get(deviceId);
+    if (!device) {
+      throw DeviceError.notConnected(deviceId);
+    }
+    const characteristics = await device.characteristicsForService(serviceUuid);
+    return characteristics.some(
+      (characteristic) =>
+        characteristic.uuid.toUpperCase() === characteristicUuid.toUpperCase()
+    );
+  }
+
   /**
    * Get a connected device
    */

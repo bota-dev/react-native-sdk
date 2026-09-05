@@ -159,9 +159,19 @@ normative behavior and System Design v5 for implementation conformance.
 - **Backward-compat both directions**: old SDKs ignore the unknown 0x04 packet type; new SDK on old firmware sees the 200ms grace window time out and resolves without a hash (no integrity verify, same as before). E2E relay path (P10) suppresses SHA forwarding — backend decrypts and hashes plaintext on receipt, no client SHA in scope.
 
 This repository retains released v1/P10 runtime behavior. It now also carries
-an internal, vector-pinned `encrypted_upload_v2` contract codec and UUID
-constants, but no manager negotiates or starts that workflow. Batch-v2 runtime
-transfer remains unwired and streaming-v2 is undefined. The owning design is
+a vector-pinned `encrypted_upload_v2` codec plus additive, explicit
+`RecordingManager` batch-v2 list/sync methods. The new path reads the optional
+capability by characteristic discovery, uses only `0406..040B`, writes opaque
+ciphertext to an application sink, persists verified checkpoint metadata
+before WINDOW_ACK, and gates CONFIRM on the exact completion receipt plus
+device complete status. Pre-confirm failures retain the device copy and never
+enter the legacy path. A lost post-CONFIRM result is surfaced as
+`encrypted_upload_v2_confirmation_uncertain` without rolling back the
+finalized backend session; its checkpoint remains for reconciliation.
+An optional `AbortSignal` reaches provider, sink, signed-document, and BLE
+transfer work but cannot roll back an attempted CONFIRM. Streaming-v2 is
+undefined, and production firmware does not yet advertise the target
+characteristics. The owning design is
 [Encrypted Upload v2](../internal-docs/device/Encrypted-Upload-v2.md); never
 infer v2 support from the recording-list flag or a stored `BACKEND_PUBKEY`.
 

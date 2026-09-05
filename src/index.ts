@@ -14,6 +14,10 @@ export type { BotaConfig, SdkState, BluetoothState } from './BotaClient';
 export { DeviceManager, RecordingManager, StreamingSession, OTAManager } from './managers';
 export type {
   UploadInfoProvider,
+  EncryptedUploadV2Provider,
+  EncryptedUploadV2ProviderContext,
+  EncryptedUploadV2Material,
+  EncryptedUploadV2SyncOptions,
   FirmwareInfo,
   FirmwareDownloadProgressCallback,
   OtaStage,
@@ -72,12 +76,34 @@ export type {
   SyncProgress,
   UploadTaskStatus,
   UploadTask,
+  PersistedEncryptedUploadV2Checkpoint,
   TransferPacket,
   StreamingState,
   StreamingSyncProgress,
   StreamingSyncOptions,
   StreamingSessionEvents,
 } from './models/Recording';
+
+export type {
+  EncryptedUploadV2CapabilitySnapshot,
+  EncryptedUploadV2Recording,
+} from './protocol/ProtocolHandler';
+export {
+  EncryptedUploadV2RuntimeError,
+} from './protocol/encryptedUploadV2Runtime';
+export {
+  EncryptedUploadProfileSelectionError,
+} from './protocol/encryptedUploadV2Selection';
+export type {
+  EncryptedUploadV2Checkpoint,
+  EncryptedUploadV2CiphertextSink,
+  EncryptedUploadV2TransferEvidence,
+  EncryptedUploadV2RuntimeErrorCode,
+} from './protocol/encryptedUploadV2Runtime';
+export type {
+  EncryptedUploadProfileSelectionErrorCode,
+  UploadSecurityPolicy,
+} from './protocol/encryptedUploadV2Selection';
 
 // Models - Status & Events
 export type {

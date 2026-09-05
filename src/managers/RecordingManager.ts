@@ -8,7 +8,11 @@ declare function setTimeout(callback: () => void, ms: number): number;
 import EventEmitter from 'eventemitter3';
 import { Buffer } from 'buffer';
 
-import { ProtocolHandler } from '../protocol/ProtocolHandler';
+import {
+  ProtocolHandler,
+  type EncryptedUploadV2CapabilitySnapshot,
+  type EncryptedUploadV2Recording,
+} from '../protocol/ProtocolHandler';
 import { StorageManager } from '../storage/StorageManager';
 import { UploadQueue } from '../upload/UploadQueue';
 import type { ConnectedDevice, StorageInfo } from '../models/Device';
@@ -21,6 +25,7 @@ import type {
   StreamingSessionEvents,
   StreamingSyncOptions,
   StreamingUploadProvider,
+  PersistedEncryptedUploadV2Checkpoint,
 } from '../models/Recording';
 import type { RecordingManagerEvents } from '../models/Status';
 import { DeviceError } from '../utils/errors';
@@ -42,6 +47,24 @@ import {
   type DeviceUploadMonitorOutcome,
   type DeviceUploadOwnership,
 } from '../sync/deviceUploadHandoff';
+import {
+  decodeEncryptedUploadV2Document,
+} from '../protocol/encryptedUploadV2';
+import {
+  EncryptedUploadProfileSelectionError,
+  validateEncryptedUploadProfileSelection,
+  type UploadSecurityPolicy,
+} from '../protocol/encryptedUploadV2Selection';
+import {
+  EncryptedUploadV2RuntimeError,
+  hashEncryptedUploadV2Bytes,
+  randomEncryptedUploadV2TransportSessionId,
+  randomEncryptedUploadV2WriteId,
+  throwIfEncryptedUploadV2Cancelled,
+  type EncryptedUploadV2Checkpoint,
+  type EncryptedUploadV2CiphertextSink,
+  type EncryptedUploadV2TransferEvidence,
+} from '../protocol/encryptedUploadV2Runtime';
 
 const log = logger.tag('RecordingManager');
 
@@ -52,6 +75,49 @@ export type UploadInfoProvider = (
   recording: DeviceRecording
 ) => Promise<UploadInfo>;
 
+export interface EncryptedUploadV2ProviderContext {
+  recording: EncryptedUploadV2Recording;
+  capability: EncryptedUploadV2CapabilitySnapshot;
+  checkpoint?: PersistedEncryptedUploadV2Checkpoint;
+  signal?: AbortSignal;
+}
+
+export interface EncryptedUploadV2SyncOptions {
+  signal?: AbortSignal;
+}
+
+export interface EncryptedUploadV2Material {
+  policy: UploadSecurityPolicy;
+  profile: 'encrypted_upload_v2';
+  recordingId: string;
+  uploadSessionUuid: string;
+  ownerRevision: number;
+  authorization: Buffer;
+  sink: EncryptedUploadV2CiphertextSink;
+  stageCiphertext: (
+    evidence: EncryptedUploadV2TransferEvidence,
+    signal?: AbortSignal
+  ) => Promise<void>;
+  submitManifest: (
+    manifest: Buffer,
+    evidence: EncryptedUploadV2TransferEvidence,
+    signal?: AbortSignal
+  ) => Promise<void>;
+  finalize: (
+    evidence: EncryptedUploadV2TransferEvidence,
+    signal?: AbortSignal
+  ) => Promise<void>;
+  completionReceipt: (
+    evidence: EncryptedUploadV2TransferEvidence,
+    signal?: AbortSignal
+  ) => Promise<Buffer>;
+  cancel?: () => Promise<void>;
+}
+
+export type EncryptedUploadV2Provider = (
+  context: EncryptedUploadV2ProviderContext
+) => Promise<EncryptedUploadV2Material>;
+
 /**
  * Recording Manager class
  */
@@ -60,6 +126,7 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
   private storage: StorageManager;
   private uploadQueue: UploadQueue;
   private isInitialized = false;
+  private activeEncryptedUploadV2Devices = new Set<string>();
 
   constructor() {
     super();
@@ -143,6 +210,336 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
     });
 
     return recordings;
+  }
+
+  /** Read the explicit v2 capability. Undefined means the characteristic is
+   * absent; GATT read failures still reject and must not trigger downgrade. */
+  async getEncryptedUploadV2Capabilities(
+    device: ConnectedDevice
+  ): Promise<EncryptedUploadV2CapabilitySnapshot | undefined> {
+    if (!getBleManager().isConnected(device.id)) {
+      throw DeviceError.notConnected(device.id);
+    }
+    return this.protocolHandler.getEncryptedUploadV2Capabilities(device.id);
+  }
+
+  /** List only committed bota_enc_v2 recordings through the dedicated v2
+   * namespace. Legacy four-byte IDs are intentionally not joined by position. */
+  async listEncryptedUploadV2Recordings(
+    device: ConnectedDevice
+  ): Promise<EncryptedUploadV2Recording[]> {
+    const capability = await this.getEncryptedUploadV2Capabilities(device);
+    if (!capability) {
+      throw new EncryptedUploadProfileSelectionError(
+        'encrypted_upload_v2_unsupported'
+      );
+    }
+    validateEncryptedUploadProfileSelection(
+      { policy: 'v2_preferred', profile: 'encrypted_upload_v2' },
+      {
+        encryptedUploadV2Capabilities: capability.capabilities,
+        recordingGeneration: 0,
+        recordingStorageFormat: 3,
+        historicalP10HeaderObserved: false,
+      }
+    );
+    return this.protocolHandler.listEncryptedUploadV2Recordings(
+      device.id,
+      randomEncryptedUploadV2TransportSessionId()
+    );
+  }
+
+  /** Capability-gated batch-v2 path. The application owns every backend call;
+   * the SDK only sequences BLE, opaque staging callbacks, and retention. */
+  async *syncEncryptedRecordingV2(
+    device: ConnectedDevice,
+    recording: EncryptedUploadV2Recording,
+    provider: EncryptedUploadV2Provider,
+    options: EncryptedUploadV2SyncOptions = {}
+  ): AsyncGenerator<SyncProgress> {
+    if (!getBleManager().isConnected(device.id)) {
+      throw DeviceError.notConnected(device.id);
+    }
+    if (this.activeEncryptedUploadV2Devices.has(device.id)) {
+      throw new EncryptedUploadV2RuntimeError(
+        'encrypted_upload_v2_operation_in_progress'
+      );
+    }
+    this.activeEncryptedUploadV2Devices.add(device.id);
+
+    let material: EncryptedUploadV2Material | undefined;
+    let transportSessionId: bigint | undefined;
+    let confirmed = false;
+    let confirmationUncertain = false;
+    let cleanupAttempted = false;
+
+    const cleanupUnconfirmed = async () => {
+      if (cleanupAttempted || confirmationUncertain || confirmed) return;
+      cleanupAttempted = true;
+      if (transportSessionId !== undefined) {
+        try {
+          await this.protocolHandler.abortEncryptedUploadV2(
+            device.id,
+            transportSessionId
+          );
+        } catch {
+          // Retain the checkpoint and device recording when cleanup is uncertain.
+        }
+      }
+      if (material?.cancel) {
+        try {
+          await material.cancel();
+        } catch {
+          // Preserve the original failure and leave backend cleanup retryable.
+        }
+      }
+    };
+
+    try {
+      throwIfEncryptedUploadV2Cancelled(options.signal);
+      this.emit('syncStarted', recording.uuid);
+      yield {
+        stage: 'preparing',
+        progress: 0,
+        totalBytes: safeProgressBytes(recording.ciphertextLength),
+      };
+      throwIfEncryptedUploadV2Cancelled(options.signal);
+      const capability = await this.protocolHandler.getEncryptedUploadV2Capabilities(
+        device.id
+      );
+      throwIfEncryptedUploadV2Cancelled(options.signal);
+      if (!capability) {
+        throw new EncryptedUploadProfileSelectionError(
+          'encrypted_upload_v2_unsupported'
+        );
+      }
+      const bounds = capability.capabilities;
+      const negotiatedMtu = await getBleManager().getMtu(device.id);
+      throwIfEncryptedUploadV2Cancelled(options.signal);
+      const maximumFrameBytes = Math.min(512, negotiatedMtu - 3);
+      if (maximumFrameBytes < 128) {
+        throw new EncryptedUploadProfileSelectionError(
+          'encrypted_upload_v2_unsupported'
+        );
+      }
+      const maximumMissingSequences = Math.min(
+        bounds.maximumMissingSequences,
+        Math.floor((maximumFrameBytes - 68) / 4)
+      );
+      const windowPackets = Math.min(
+        bounds.maximumWindowPackets,
+        maximumMissingSequences
+      );
+      const dataPayloadBytes = Math.min(
+        bounds.maximumDataPayloadBytes,
+        maximumFrameBytes - 28
+      );
+      if (
+        maximumMissingSequences <= 0 ||
+        windowPackets <= 0 ||
+        dataPayloadBytes <= 0
+      ) {
+        throw new EncryptedUploadProfileSelectionError(
+          'encrypted_upload_v2_unsupported'
+        );
+      }
+      const storedCheckpoint = this.storage.getEncryptedUploadV2Checkpoint(
+        device.id,
+        recording.uuid,
+        recording.generation
+      );
+      material = await provider({
+        recording,
+        capability,
+        checkpoint: storedCheckpoint,
+        signal: options.signal,
+      });
+      throwIfEncryptedUploadV2Cancelled(options.signal);
+      validateEncryptedUploadProfileSelection(
+        { policy: material.policy, profile: material.profile },
+        {
+          encryptedUploadV2Capabilities: capability.capabilities,
+          recordingGeneration: recording.generation,
+          recordingStorageFormat: recording.storageFormat,
+          historicalP10HeaderObserved: false,
+        }
+      );
+      decodeEncryptedUploadV2Document('authorization', material.authorization);
+
+      const checkpoint = compatibleEncryptedUploadV2Checkpoint(
+        storedCheckpoint,
+        material,
+        recording,
+        windowPackets,
+        dataPayloadBytes,
+        bounds.durableCheckpointIntervalBlocks
+      );
+      transportSessionId = randomEncryptedUploadV2TransportSessionId();
+
+      await this.protocolHandler.sendEncryptedUploadV2Document(
+        device.id,
+        1,
+        randomEncryptedUploadV2WriteId(),
+        material.authorization,
+        bounds.maximumSignedBlobBytes,
+        options.signal
+      );
+      throwIfEncryptedUploadV2Cancelled(options.signal);
+      const transfer = await this.protocolHandler.transferEncryptedUploadV2(
+        device.id,
+        {
+          transportSessionId,
+          uploadSessionUuid: material.uploadSessionUuid,
+          recording,
+          authorizationSha256: hashEncryptedUploadV2Bytes(material.authorization),
+          windowPackets,
+          dataPayloadBytes,
+          checkpointIntervalBlocks: bounds.durableCheckpointIntervalBlocks,
+          maximumMissingSequences,
+          checkpoint,
+          sink: material.sink,
+          signal: options.signal,
+          persistCheckpoint: async (value) => {
+            await this.storage.saveEncryptedUploadV2Checkpoint({
+              deviceId: device.id,
+              uploadSessionUuid: material!.uploadSessionUuid,
+              recordingUuid: recording.uuid,
+              recordingGeneration: recording.generation,
+              ownerRevision: material!.ownerRevision,
+              revision: value.revision,
+              nextCiphertextOffset: value.nextCiphertextOffset,
+              prefixSha256: value.prefixSha256,
+              highestContiguousSequence: value.highestContiguousSequence,
+              windowPackets,
+              dataPayloadBytes,
+              checkpointIntervalBlocks: bounds.durableCheckpointIntervalBlocks,
+              ciphertextLength: recording.ciphertextLength,
+              ciphertextSha256: recording.ciphertextSha256,
+            });
+          },
+        }
+      );
+
+      yield {
+        stage: 'transferring',
+        progress: 1,
+        bytesTransferred: safeProgressBytes(transfer.evidence.ciphertextLength),
+        totalBytes: safeProgressBytes(transfer.evidence.ciphertextLength),
+      };
+      throwIfEncryptedUploadV2Cancelled(options.signal);
+      yield {
+        stage: 'uploading',
+        progress: 0,
+        bytesUploaded: 0,
+        totalBytes: safeProgressBytes(transfer.evidence.ciphertextLength),
+      };
+      throwIfEncryptedUploadV2Cancelled(options.signal);
+      await material.stageCiphertext(transfer.evidence, options.signal);
+      throwIfEncryptedUploadV2Cancelled(options.signal);
+      await material.submitManifest(
+        transfer.manifest,
+        transfer.evidence,
+        options.signal
+      );
+      throwIfEncryptedUploadV2Cancelled(options.signal);
+      await material.finalize(transfer.evidence, options.signal);
+      throwIfEncryptedUploadV2Cancelled(options.signal);
+      const receipt = await material.completionReceipt(
+        transfer.evidence,
+        options.signal
+      );
+      throwIfEncryptedUploadV2Cancelled(options.signal);
+      decodeEncryptedUploadV2Document('receipt', receipt);
+
+      yield { stage: 'completing', progress: 0.5 };
+      throwIfEncryptedUploadV2Cancelled(options.signal);
+      await this.protocolHandler.confirmEncryptedUploadV2(device.id, {
+        transportSessionId,
+        uploadSessionUuid: material.uploadSessionUuid,
+        recordingUuid: recording.uuid,
+        recordingGeneration: recording.generation,
+        ownerRevision: material.ownerRevision,
+        receipt,
+        maximumSignedBlobBytes: bounds.maximumSignedBlobBytes,
+        writeId: randomEncryptedUploadV2WriteId(),
+        signal: options.signal,
+      });
+      confirmed = true;
+      try {
+        await this.storage.deleteEncryptedUploadV2Checkpoint(
+          device.id,
+          recording.uuid,
+          recording.generation
+        );
+      } catch (error) {
+        log.warn('Encrypted upload v2 checkpoint cleanup remains pending', {
+          deviceId: device.id,
+          recordingUuid: recording.uuid,
+          error: (error as Error).message,
+        });
+      }
+      await this.storage.setLastSyncTime(device.id);
+
+      yield {
+        stage: 'completed',
+        progress: 1,
+        recordingId: material.recordingId,
+      };
+      this.emit('syncCompleted', recording.uuid, material.recordingId);
+    } catch (error) {
+      if (confirmed) throw error;
+      confirmationUncertain =
+        error instanceof EncryptedUploadV2RuntimeError &&
+        error.code === 'encrypted_upload_v2_confirmation_uncertain';
+      if (
+        error instanceof EncryptedUploadV2RuntimeError &&
+        error.code === 'encrypted_upload_v2_checkpoint_mismatch'
+      ) {
+        try {
+          await this.storage.deleteEncryptedUploadV2Checkpoint(
+            device.id,
+            recording.uuid,
+            recording.generation
+          );
+        } catch (cleanupError) {
+          log.warn('Rejected encrypted upload v2 checkpoint remains pending', {
+            deviceId: device.id,
+            recordingUuid: recording.uuid,
+            error: (cleanupError as Error).message,
+          });
+        }
+      }
+      await cleanupUnconfirmed();
+      const failure = error as Error;
+      yield { stage: 'failed', progress: 0, error: failure.message };
+      this.emit('syncFailed', recording.uuid, failure);
+      throw failure;
+    } finally {
+      await cleanupUnconfirmed();
+      this.activeEncryptedUploadV2Devices.delete(device.id);
+    }
+  }
+
+  async *syncAllEncryptedRecordingsV2(
+    device: ConnectedDevice,
+    provider: EncryptedUploadV2Provider,
+    options: EncryptedUploadV2SyncOptions = {}
+  ): AsyncGenerator<SyncProgress & { recordingIndex?: number; totalRecordings?: number }> {
+    const recordings = await this.listEncryptedUploadV2Recordings(device);
+    for (let index = 0; index < recordings.length; index += 1) {
+      for await (const progress of this.syncEncryptedRecordingV2(
+        device,
+        recordings[index],
+        provider,
+        options
+      )) {
+        yield {
+          ...progress,
+          recordingIndex: index,
+          totalRecordings: recordings.length,
+        };
+      }
+    }
   }
 
   /**
@@ -794,8 +1191,47 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
     this.uploadQueue.destroy();
     this.storage.destroy();
     this.removeAllListeners();
+    this.activeEncryptedUploadV2Devices.clear();
     this.isInitialized = false;
   }
+}
+
+function compatibleEncryptedUploadV2Checkpoint(
+  stored: PersistedEncryptedUploadV2Checkpoint | undefined,
+  material: EncryptedUploadV2Material,
+  recording: EncryptedUploadV2Recording,
+  windowPackets: number,
+  dataPayloadBytes: number,
+  checkpointIntervalBlocks: number
+): EncryptedUploadV2Checkpoint {
+  if (
+    stored &&
+    stored.uploadSessionUuid.toLowerCase() === material.uploadSessionUuid.toLowerCase() &&
+    stored.ownerRevision === material.ownerRevision &&
+    stored.recordingUuid.toLowerCase() === recording.uuid.toLowerCase() &&
+    stored.recordingGeneration === recording.generation &&
+    stored.windowPackets === windowPackets &&
+    stored.dataPayloadBytes === dataPayloadBytes &&
+    stored.checkpointIntervalBlocks === checkpointIntervalBlocks &&
+    stored.ciphertextLength === recording.ciphertextLength &&
+    Buffer.from(stored.ciphertextSha256).equals(recording.ciphertextSha256)
+  ) {
+    return {
+      revision: stored.revision,
+      nextCiphertextOffset: stored.nextCiphertextOffset,
+      prefixSha256: Buffer.from(stored.prefixSha256),
+      highestContiguousSequence: stored.highestContiguousSequence,
+    };
+  }
+  return {
+    revision: 0,
+    nextCiphertextOffset: 0n,
+    prefixSha256: hashEncryptedUploadV2Bytes(Buffer.alloc(0)),
+  };
+}
+
+function safeProgressBytes(value: bigint): number {
+  return Number(value > BigInt(Number.MAX_SAFE_INTEGER) ? BigInt(Number.MAX_SAFE_INTEGER) : value);
 }
 
 // Globals available in React Native (Hermes) but not declared in this tsconfig's lib

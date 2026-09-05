@@ -136,12 +136,18 @@ cd app && npx expo start --clear
 
 **Public API surface** — everything exported from `src/index.ts` is public and semver-versioned. Be conservative about adding to it. Internal modules are not exported.
 
-**Encrypted Upload v2 boundary** — the internal contract codec and pinned
-vectors do not mean runtime support. The internal pure selection validator may
-reject an invalid application/backend decision, but it must not start a
-transfer. Keep capability negotiation, batch-v2 transfer, and streaming-v2 out
-of runtime managers until their workflow is implemented; never select
-encryption from `BACKEND_PUBKEY`. Legacy v1/P10 behavior remains unchanged.
+**Encrypted Upload v2 boundary** — batch-v2 is exposed only through the
+additive explicit v2 list/sync methods and dedicated `0406..040B` runtime.
+Keep the legacy `syncRecording`/`syncAllRecordings` provider behavior unchanged.
+Persist only resumable IDs/digests/offsets/counters/bounds, persist before a
+successful WINDOW_ACK, require receipt plus device-complete status before
+CONFIRM completion, preserve the checkpoint/finalized session on an uncertain
+CONFIRM result, and never downgrade after v2 selection. Only pre-confirm
+failure may invoke ABORT/backend cancellation. Propagate the optional
+`AbortSignal` through provider, sink, signed-document, and transfer work, but
+never roll back an attempted CONFIRM. Streaming-v2 is undefined; never select
+encryption from `BACKEND_PUBKEY`. Production firmware does not yet advertise
+the target characteristics.
 
 ## Key Files
 
@@ -156,6 +162,7 @@ encryption from `BACKEND_PUBKEY`. Legacy v1/P10 behavior remains unchanged.
 | `src/protocol/ProtocolHandler.ts` | Protocol handler (Bluetooth packet assembly, ACK logic) |
 | `src/protocol/encryptedUploadV2.ts` | Internal v2 framing codec; not a runtime workflow or root export |
 | `src/protocol/encryptedUploadV2Selection.ts` | Internal side-effect-free three-profile policy/capability validator |
+| `src/protocol/encryptedUploadV2Runtime.ts` | Stateful opaque sink, window repair, checkpoint-before-ACK, manifest/evidence verification |
 | `src/managers/DeviceManager.ts` | Device discovery, connection, bonding, provisioning, authenticated factory-reset receipt/replay, diagnostics subscriptions |
 | `src/managers/RecordingManager.ts` | Recording list, Bluetooth transfer, upload orchestration |
 | `src/sync/deviceUploadHandoff.ts` | Direct-upload ownership and safe BLE-fallback policy |
@@ -178,7 +185,7 @@ All design docs live in [`../internal-docs/`](../internal-docs/).
 | [App SDK Architecture](../internal-docs/App%20SDK%20Architecture.md) | Current target for the Rust core, platform bindings, public package naming, monorepo, and synchronized releases | Target; implementation conformance is tracked in System Design v5 |
 | [Mobile SDK System Design](../internal-docs/Mobile%20SDK%20System%20Design.md) | Historical SDK proposal retained for context | Superseded; do not use as the current contract |
 | [FIRMWARE_PROTOCOL](./FIRMWARE_PROTOCOL.md) | SDK-local Bluetooth GATT service defs, recording transfer protocol, ACK/NACK behavior | SDK package reference |
-| [Encrypted Upload v2](../internal-docs/device/Encrypted-Upload-v2.md) | Three-profile migration, opaque canonical ciphertext, capability negotiation, and downgrade policy | Contract codec only; runtime workflow not implemented here |
+| [Encrypted Upload v2](../internal-docs/device/Encrypted-Upload-v2.md) | Three-profile migration, opaque canonical ciphertext, capability negotiation, and downgrade policy | Maintenance RN batch runtime implemented in source; firmware advertising, hardware proof, and rollout remain disabled |
 | [FIRMWARE_INTEGRATION_GUIDE](../internal-docs/device/FIRMWARE_INTEGRATION_GUIDE.md) | Broader firmware workflows, GATT service defs, heartbeat | Internal design reference |
 | [Device-App Protocol](../internal-docs/device/Device-App%20Protocol.md) | Compatibility index for current owning protocol documents | Index only |
 | [Bluetooth Reliable Transfer Design](../internal-docs/device/BLE%20Reliable%20Transfer%20Design.md) | v2 windowed repair and durable resume over the released continuous-stream/final-ACK profile | Implementation conformance: [System Design v5](../internal-docs/System%20Design%20v5.md#33-security-configuration-and-remote-control-conformance) |

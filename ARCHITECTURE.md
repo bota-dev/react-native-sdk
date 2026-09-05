@@ -169,9 +169,9 @@ payload passes CRC32 verification; it sends NACK on final CRC mismatch and Abort
 on cancellation. Firmware streams DATA packets back-to-back and keeps the
 transfer active until this final app result.
 
-### Encrypted Upload v2 contract boundary
+### Encrypted Upload v2 capability-gated batch runtime
 
-`src/protocol/encryptedUploadV2.ts` is an internal transitional contract codec.
+`src/protocol/encryptedUploadV2.ts` is the frozen contract codec.
 It validates and round-trips the capability, signed-blob, signed-document, and
 transfer framing while leaving ciphertext, manifests, authorizations, and
 receipts opaque. Its canonical vectors are copied only from a pinned `app-sdk`
@@ -183,13 +183,36 @@ three-profile gate. It requires every batch capability bit, usable advertised
 bounds, and a full recording generation for v2; rejects legacy under
 `v2_required`; requires the exact `bota_enc_v2` storage format; and permits P10
 only after the historical header was observed.
-It is internal, has no transport side effects, and cannot select or start v2.
+The validator remains side-effect free. The additive runtime is separately
+wired through `ProtocolHandler`, `EncryptedUploadV2TransferReceiver`, and the
+explicit `RecordingManager.listEncryptedUploadV2Recordings`,
+`syncEncryptedRecordingV2`, and `syncAllEncryptedRecordingsV2` entry points.
+It discovers the optional capability before reading it, uses only `0406..040B`,
+requires full UUID/generation plus committed storage format 3, and never joins
+the v2 list to a legacy four-byte file ID by list position.
 
-This is contract evidence, not a runtime feature. Capability negotiation,
-batch-v2 transfer, staging, completion receipts, and deletion are not wired to
-`BleManager`, `ProtocolHandler`, or `RecordingManager`. Streaming-v2 is
-undefined. Released plaintext v1 and historical P10 behavior are unchanged,
-and a stored `BACKEND_PUBKEY` must never select v2.
+The application-owned `EncryptedUploadV2Provider` supplies opaque
+authorization/receipt bytes, stable backend session/owner IDs, a ciphertext
+sink, and staging/manifest/finalization callbacks. The receiver writes exact
+ciphertext offsets, repairs missing window sequences, persists a mutually
+verified checkpoint before sending a successful WINDOW_ACK, verifies the
+complete ciphertext and 580-byte manifest evidence, and sends CONFIRM only
+after the exact 336-byte receipt is accepted. AsyncStorage contains only IDs,
+offsets, revisions, digests, counters, and negotiated bounds. Any v2 failure
+before CONFIRM ABORTs best-effort, retains the device recording/checkpoint,
+invokes optional application cleanup, and never falls back to legacy. A lost
+result after CONFIRM returns `encrypted_upload_v2_confirmation_uncertain` and
+preserves the finalized session plus checkpoint for reconciliation. Matching
+device-complete makes subsequent checkpoint cleanup best-effort and
+non-rollback-capable. An optional `AbortSignal` propagates through provider,
+sink, signed-document, and transfer work; cancellation cannot roll back an
+attempted CONFIRM.
+
+Streaming-v2 remains undefined. Released `syncRecording`/`syncAllRecordings`
+plaintext v1 and historical P10 behavior are unchanged, and a stored
+`BACKEND_PUBKEY` never selects v2. Production firmware still does not register
+or advertise `0406..040B`, so source runtime support is not cohort enablement
+or a production release.
 
 ---
 

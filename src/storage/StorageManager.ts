@@ -5,7 +5,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Buffer } from 'buffer';
 
-import type { UploadTask, UploadTaskStatus } from '../models/Recording';
+import type {
+  PersistedEncryptedUploadV2Checkpoint,
+  UploadTask,
+  UploadTaskStatus,
+} from '../models/Recording';
 import { logger } from '../utils/logger';
 
 const log = logger.tag('StorageManager');
@@ -14,6 +18,7 @@ const log = logger.tag('StorageManager');
 const STORAGE_PREFIX = '@bota_sdk:';
 const UPLOAD_QUEUE_KEY = `${STORAGE_PREFIX}upload_queue`;
 const SDK_STATE_KEY = `${STORAGE_PREFIX}sdk_state`;
+const ENCRYPTED_UPLOAD_V2_CHECKPOINTS_KEY = `${STORAGE_PREFIX}encrypted_upload_v2_checkpoints`;
 
 /**
  * SDK persistent state
@@ -33,6 +38,11 @@ export class StorageManager {
     deviceInfo: {},
   };
   private isInitialized = false;
+  private encryptedUploadV2Checkpoints = new Map<
+    string,
+    PersistedEncryptedUploadV2Checkpoint
+  >();
+  private encryptedUploadV2CheckpointMutation = Promise.resolve();
   // Audio buffers held in memory — avoids AsyncStorage size limits for large files
   private audioBuffers: Map<string, Buffer> = new Map();
 
@@ -63,6 +73,23 @@ export class StorageManager {
       const stateData = await AsyncStorage.getItem(SDK_STATE_KEY);
       if (stateData) {
         this.sdkState = JSON.parse(stateData);
+      }
+
+      const checkpointsData = await AsyncStorage.getItem(
+        ENCRYPTED_UPLOAD_V2_CHECKPOINTS_KEY
+      );
+      if (checkpointsData) {
+        const serialized = JSON.parse(checkpointsData) as SerializedEncryptedUploadV2Checkpoint[];
+        this.encryptedUploadV2Checkpoints = new Map(
+          serialized.map((checkpoint) => {
+            const value = deserializeEncryptedUploadV2Checkpoint(checkpoint);
+            return [encryptedUploadV2CheckpointKey(
+              value.deviceId,
+              value.recordingUuid,
+              value.recordingGeneration
+            ), value];
+          })
+        );
       }
 
       this.isInitialized = true;
@@ -252,6 +279,79 @@ export class StorageManager {
     }
   }
 
+  async saveEncryptedUploadV2Checkpoint(
+    checkpoint: PersistedEncryptedUploadV2Checkpoint
+  ): Promise<void> {
+    await this.mutateEncryptedUploadV2Checkpoints(async () => {
+      const value = copyEncryptedUploadV2Checkpoint(checkpoint);
+      const key = encryptedUploadV2CheckpointKey(
+        value.deviceId,
+        value.recordingUuid,
+        value.recordingGeneration
+      );
+      const previous = this.encryptedUploadV2Checkpoints.get(key);
+      this.encryptedUploadV2Checkpoints.set(key, value);
+      try {
+        await this.saveEncryptedUploadV2Checkpoints();
+      } catch (error) {
+        if (previous) this.encryptedUploadV2Checkpoints.set(key, previous);
+        else this.encryptedUploadV2Checkpoints.delete(key);
+        throw error;
+      }
+    });
+  }
+
+  getEncryptedUploadV2Checkpoint(
+    deviceId: string,
+    recordingUuid: string,
+    recordingGeneration: number
+  ): PersistedEncryptedUploadV2Checkpoint | undefined {
+    const value = this.encryptedUploadV2Checkpoints.get(
+      encryptedUploadV2CheckpointKey(deviceId, recordingUuid, recordingGeneration)
+    );
+    return value ? copyEncryptedUploadV2Checkpoint(value) : undefined;
+  }
+
+  async deleteEncryptedUploadV2Checkpoint(
+    deviceId: string,
+    recordingUuid: string,
+    recordingGeneration: number
+  ): Promise<void> {
+    await this.mutateEncryptedUploadV2Checkpoints(async () => {
+      const key = encryptedUploadV2CheckpointKey(
+        deviceId,
+        recordingUuid,
+        recordingGeneration
+      );
+      const previous = this.encryptedUploadV2Checkpoints.get(key);
+      this.encryptedUploadV2Checkpoints.delete(key);
+      try {
+        await this.saveEncryptedUploadV2Checkpoints();
+      } catch (error) {
+        if (previous) this.encryptedUploadV2Checkpoints.set(key, previous);
+        throw error;
+      }
+    });
+  }
+
+  private async mutateEncryptedUploadV2Checkpoints(
+    mutation: () => Promise<void>
+  ): Promise<void> {
+    const result = this.encryptedUploadV2CheckpointMutation.then(mutation);
+    this.encryptedUploadV2CheckpointMutation = result.catch(() => undefined);
+    await result;
+  }
+
+  private async saveEncryptedUploadV2Checkpoints(): Promise<void> {
+    const values = [...this.encryptedUploadV2Checkpoints.values()].map(
+      serializeEncryptedUploadV2Checkpoint
+    );
+    await AsyncStorage.setItem(
+      ENCRYPTED_UPLOAD_V2_CHECKPOINTS_KEY,
+      JSON.stringify(values)
+    );
+  }
+
   // Recording File Methods
 
   /**
@@ -300,6 +400,7 @@ export class StorageManager {
 
       this.uploadQueue = [];
       this.sdkState = { lastSyncTimes: {}, deviceInfo: {} };
+      this.encryptedUploadV2Checkpoints.clear();
       this.audioBuffers.clear();
     } catch (error) {
       log.error('Failed to clear storage', error as Error);
@@ -312,6 +413,7 @@ export class StorageManager {
   destroy(): void {
     this.uploadQueue = [];
     this.sdkState = { lastSyncTimes: {}, deviceInfo: {} };
+    this.encryptedUploadV2Checkpoints.clear();
     this.audioBuffers.clear();
     this.isInitialized = false;
   }
@@ -322,4 +424,81 @@ export class StorageManager {
  */
 export function generateTaskId(): string {
   return `task_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+}
+
+interface SerializedEncryptedUploadV2Checkpoint {
+  deviceId: string;
+  uploadSessionUuid: string;
+  recordingUuid: string;
+  recordingGeneration: number;
+  ownerRevision: number;
+  revision: number;
+  nextCiphertextOffset: string;
+  prefixSha256Hex: string;
+  highestContiguousSequence?: number;
+  windowPackets: number;
+  dataPayloadBytes: number;
+  checkpointIntervalBlocks: number;
+  ciphertextLength: string;
+  ciphertextSha256Hex: string;
+}
+
+function encryptedUploadV2CheckpointKey(
+  deviceId: string,
+  recordingUuid: string,
+  recordingGeneration: number
+): string {
+  return `${deviceId}:${recordingUuid.toLowerCase()}:${recordingGeneration}`;
+}
+
+function serializeEncryptedUploadV2Checkpoint(
+  value: PersistedEncryptedUploadV2Checkpoint
+): SerializedEncryptedUploadV2Checkpoint {
+  return {
+    deviceId: value.deviceId,
+    uploadSessionUuid: value.uploadSessionUuid,
+    recordingUuid: value.recordingUuid,
+    recordingGeneration: value.recordingGeneration,
+    ownerRevision: value.ownerRevision,
+    revision: value.revision,
+    nextCiphertextOffset: value.nextCiphertextOffset.toString(),
+    prefixSha256Hex: Buffer.from(value.prefixSha256).toString('hex'),
+    highestContiguousSequence: value.highestContiguousSequence,
+    windowPackets: value.windowPackets,
+    dataPayloadBytes: value.dataPayloadBytes,
+    checkpointIntervalBlocks: value.checkpointIntervalBlocks,
+    ciphertextLength: value.ciphertextLength.toString(),
+    ciphertextSha256Hex: Buffer.from(value.ciphertextSha256).toString('hex'),
+  };
+}
+
+function deserializeEncryptedUploadV2Checkpoint(
+  value: SerializedEncryptedUploadV2Checkpoint
+): PersistedEncryptedUploadV2Checkpoint {
+  return {
+    deviceId: value.deviceId,
+    uploadSessionUuid: value.uploadSessionUuid,
+    recordingUuid: value.recordingUuid,
+    recordingGeneration: value.recordingGeneration,
+    ownerRevision: value.ownerRevision,
+    revision: value.revision,
+    nextCiphertextOffset: BigInt(value.nextCiphertextOffset),
+    prefixSha256: Buffer.from(value.prefixSha256Hex, 'hex'),
+    highestContiguousSequence: value.highestContiguousSequence,
+    windowPackets: value.windowPackets,
+    dataPayloadBytes: value.dataPayloadBytes,
+    checkpointIntervalBlocks: value.checkpointIntervalBlocks,
+    ciphertextLength: BigInt(value.ciphertextLength),
+    ciphertextSha256: Buffer.from(value.ciphertextSha256Hex, 'hex'),
+  };
+}
+
+function copyEncryptedUploadV2Checkpoint(
+  value: PersistedEncryptedUploadV2Checkpoint
+): PersistedEncryptedUploadV2Checkpoint {
+  return {
+    ...value,
+    prefixSha256: Buffer.from(value.prefixSha256),
+    ciphertextSha256: Buffer.from(value.ciphertextSha256),
+  };
 }

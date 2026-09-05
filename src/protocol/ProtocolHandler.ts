@@ -17,6 +17,12 @@ import {
   CHAR_RECORDING_TRANSFER,
   CHAR_TRANSFER_CONTROL,
   CHAR_TRANSFER_STATUS,
+  CHAR_STORAGE_TRANSFER_CAPABILITIES_V2,
+  CHAR_TRANSFER_SIGNED_BLOB_V2,
+  CHAR_TRANSFER_CONTROL_V2,
+  CHAR_RECORDING_TRANSFER_V2,
+  CHAR_TRANSFER_STATUS_V2,
+  CHAR_RECORDING_LIST_V2,
   TRANSFER_PACKET_TIMEOUT,
   STREAMING_PAUSED_TIMEOUT,
 } from '../ble/constants';
@@ -33,6 +39,25 @@ import type { StorageInfo } from '../models/Device';
 import type { DeviceRecording, TransferPacket } from '../models/Recording';
 import { TransferError, DeviceError } from '../utils/errors';
 import { logger } from '../utils/logger';
+import {
+  decodeEncryptedUploadV2Capabilities,
+  decodeEncryptedUploadV2Document,
+  decodeEncryptedUploadV2SignedBlob,
+  decodeEncryptedUploadV2Transfer,
+  encodeEncryptedUploadV2SignedBlob,
+  encodeEncryptedUploadV2Transfer,
+  type EncryptedUploadV2Capabilities,
+  type EncryptedUploadV2Transfer,
+} from './encryptedUploadV2';
+import {
+  EncryptedUploadV2TransferReceiver,
+  EncryptedUploadV2RuntimeError,
+  hashEncryptedUploadV2Bytes,
+  type EncryptedUploadV2Checkpoint,
+  type EncryptedUploadV2CiphertextSink,
+  type EncryptedUploadV2TransferEvidence,
+  throwIfEncryptedUploadV2Cancelled,
+} from './encryptedUploadV2Runtime';
 
 const log = logger.tag('ProtocolHandler');
 
@@ -41,6 +66,56 @@ const log = logger.tag('ProtocolHandler');
  *  characteristic; a tight window keeps the resolve fast on old firmware (which
  *  never sends one) while reliably catching the packet on new firmware. */
 const SHA256_GRACE_WINDOW_MS = 200;
+const ENCRYPTED_UPLOAD_V2_TIMEOUT_MS = 10000;
+
+export interface EncryptedUploadV2CapabilitySnapshot {
+  rawValue: Buffer;
+  sha256: Buffer;
+  capabilities: EncryptedUploadV2Capabilities;
+}
+
+export interface EncryptedUploadV2Recording {
+  uuid: string;
+  generation: number;
+  storageFormat: 3;
+  startedAt: Date;
+  durationMs: number;
+  plaintextLength: bigint;
+  ciphertextLength: bigint;
+  ciphertextSha256: Buffer;
+}
+
+export interface EncryptedUploadV2ConfirmRequest {
+  transportSessionId: bigint;
+  uploadSessionUuid: string;
+  recordingUuid: string;
+  recordingGeneration: number;
+  ownerRevision: number;
+  receipt: Buffer;
+  maximumSignedBlobBytes: number;
+  writeId: number;
+  signal?: AbortSignal;
+}
+
+export interface EncryptedUploadV2TransferRequest {
+  transportSessionId: bigint;
+  uploadSessionUuid: string;
+  recording: EncryptedUploadV2Recording;
+  authorizationSha256: Buffer;
+  windowPackets: number;
+  dataPayloadBytes: number;
+  checkpointIntervalBlocks: number;
+  maximumMissingSequences: number;
+  checkpoint: EncryptedUploadV2Checkpoint;
+  sink: EncryptedUploadV2CiphertextSink;
+  signal?: AbortSignal;
+  persistCheckpoint: (checkpoint: EncryptedUploadV2Checkpoint) => Promise<void>;
+}
+
+export interface EncryptedUploadV2TransferResult {
+  manifest: Buffer;
+  evidence: EncryptedUploadV2TransferEvidence;
+}
 
 /**
  * Transfer state for tracking ongoing transfers
@@ -86,6 +161,7 @@ export type TransferProgressCallback = (
 export class ProtocolHandler {
   private bleManager: BleManager;
   private activeTransfers: Map<string, TransferState> = new Map();
+  private activeEncryptedUploadV2Transfers: Map<bigint, Subscription> = new Map();
 
   constructor() {
     this.bleManager = getBleManager();
@@ -106,6 +182,662 @@ export class ProtocolHandler {
     );
 
     return parseStorageInfo(data);
+  }
+
+  /** Read a fresh batch-v2 capability value from its dedicated characteristic. */
+  async getEncryptedUploadV2Capabilities(
+    deviceId: string
+  ): Promise<EncryptedUploadV2CapabilitySnapshot | undefined> {
+    if (!this.bleManager.isConnected(deviceId)) {
+      throw DeviceError.notConnected(deviceId);
+    }
+    const present = await this.bleManager.hasCharacteristic(
+      deviceId,
+      SERVICE_BOTA_STORAGE,
+      CHAR_STORAGE_TRANSFER_CAPABILITIES_V2
+    );
+    if (!present) return undefined;
+    const rawValue = await this.bleManager.readCharacteristic(
+      deviceId,
+      SERVICE_BOTA_STORAGE,
+      CHAR_STORAGE_TRANSFER_CAPABILITIES_V2
+    );
+    return {
+      rawValue: Buffer.from(rawValue),
+      sha256: hashEncryptedUploadV2Bytes(rawValue),
+      capabilities: decodeEncryptedUploadV2Capabilities(rawValue),
+    };
+  }
+
+  /** List committed bota_enc_v2 recordings with full UUID and generation. */
+  async listEncryptedUploadV2Recordings(
+    deviceId: string,
+    transportSessionId: bigint
+  ): Promise<EncryptedUploadV2Recording[]> {
+    if (!this.bleManager.isConnected(deviceId)) {
+      throw DeviceError.notConnected(deviceId);
+    }
+    if (transportSessionId === 0n) {
+      throw new EncryptedUploadV2RuntimeError(
+        'encrypted_upload_v2_invalid_configuration'
+      );
+    }
+
+    return new Promise((resolve, reject) => {
+      const recordings: EncryptedUploadV2Recording[] = [];
+      const entryBodies: Buffer[] = [];
+      let subscription: Subscription | undefined;
+      let timer: number | undefined;
+
+      const cleanup = () => {
+        if (timer !== undefined) clearTimeout(timer);
+        subscription?.remove();
+      };
+      const failList = (error: unknown) => {
+        cleanup();
+        reject(error);
+      };
+
+      try {
+        subscription = this.bleManager.subscribeToCharacteristic(
+          deviceId,
+          SERVICE_BOTA_STORAGE,
+          CHAR_RECORDING_LIST_V2,
+          (rawValue) => {
+            try {
+              const value = decodeEncryptedUploadV2Transfer(rawValue);
+              if (value.common.transportSessionId !== transportSessionId) {
+                throw new EncryptedUploadV2RuntimeError(
+                  'encrypted_upload_v2_session_mismatch'
+                );
+              }
+              if (value.type === 'recordingEntry') {
+                entryBodies.push(Buffer.from(rawValue.subarray(12)));
+                recordings.push({
+                  uuid: formatFullUuid(value.recordingUuid),
+                  generation: value.recordingGeneration,
+                  storageFormat: 3,
+                  startedAt: new Date(Number(value.startedAt) * 1000),
+                  durationMs: value.durationSeconds * 1000,
+                  plaintextLength: value.plaintextLength,
+                  ciphertextLength: value.ciphertextLength,
+                  ciphertextSha256: Buffer.from(value.ciphertextSha256),
+                });
+                return;
+              }
+              if (value.type !== 'recordingListEnd') {
+                throw new EncryptedUploadV2RuntimeError(
+                  'encrypted_upload_v2_unexpected_message'
+                );
+              }
+              const listDigest = hashEncryptedUploadV2Bytes(Buffer.concat(entryBodies));
+              if (
+                value.count !== recordings.length ||
+                !constantTimeEqual(listDigest, value.listSha256)
+              ) {
+                throw new EncryptedUploadV2RuntimeError(
+                  'encrypted_upload_v2_integrity_mismatch'
+                );
+              }
+              cleanup();
+              resolve(recordings);
+            } catch (error) {
+              failList(error);
+            }
+          },
+          (error) => failList(error)
+        );
+        const frame = encodeEncryptedUploadV2Transfer({
+          type: 'list',
+          common: { messageType: 0x25, flags: 0, transportSessionId },
+          requestFlags: 0,
+        });
+        timer = setTimeout(() => {
+          failList(new TransferError(
+            'Timeout waiting for encrypted upload v2 recording list',
+            'ENCRYPTED_UPLOAD_V2_LIST_TIMEOUT'
+          ));
+        }, ENCRYPTED_UPLOAD_V2_TIMEOUT_MS);
+        this.bleManager.writeCharacteristic(
+          deviceId,
+          SERVICE_BOTA_STORAGE,
+          CHAR_TRANSFER_CONTROL_V2,
+          frame,
+          true
+        ).catch(failList);
+      } catch (error) {
+        failList(error);
+      }
+    });
+  }
+
+  /** Deliver one exact signed authorization or receipt over 0407. */
+  async sendEncryptedUploadV2Document(
+    deviceId: string,
+    kind: 1 | 2,
+    writeId: number,
+    document: Buffer,
+    maximumDocumentBytes: number,
+    signal?: AbortSignal
+  ): Promise<void> {
+    if (!this.bleManager.isConnected(deviceId)) {
+      throw DeviceError.notConnected(deviceId);
+    }
+    const documentKind = kind === 1 ? 'authorization' : 'receipt';
+    throwIfEncryptedUploadV2Cancelled(signal);
+    decodeEncryptedUploadV2Document(documentKind, document);
+    if (document.length > maximumDocumentBytes) {
+      throw new EncryptedUploadV2RuntimeError(
+        'encrypted_upload_v2_invalid_configuration'
+      );
+    }
+
+    const mtu = await this.bleManager.getMtu(deviceId);
+    const maximumFrameBytes = Math.min(512, mtu - 3);
+    if (maximumFrameBytes < 42) {
+      throw new EncryptedUploadV2RuntimeError(
+        'encrypted_upload_v2_invalid_configuration'
+      );
+    }
+    const chunkBytes = maximumFrameBytes - 12;
+    let subscription: Subscription | undefined;
+    let timer: number | undefined;
+    let began = false;
+    let resultFinished = false;
+    let rejectResult: (error: unknown) => void = () => undefined;
+
+    const result = new Promise<void>((resolve, reject) => {
+      rejectResult = reject;
+      const cleanup = () => {
+        if (timer !== undefined) clearTimeout(timer);
+        subscription?.remove();
+        resultFinished = true;
+      };
+      try {
+        subscription = this.bleManager.subscribeToCharacteristic(
+          deviceId,
+          SERVICE_BOTA_STORAGE,
+          CHAR_TRANSFER_SIGNED_BLOB_V2,
+          (rawValue) => {
+            try {
+              const value = decodeEncryptedUploadV2SignedBlob(rawValue);
+              if (
+                value.type !== 'blobResult' ||
+                value.kind !== kind ||
+                value.writeId !== writeId
+              ) return;
+              cleanup();
+              if (value.result !== 0) {
+                reject(new EncryptedUploadV2RuntimeError(
+                  'encrypted_upload_v2_device_error',
+                  value.result
+                ));
+                return;
+              }
+              resolve();
+            } catch (error) {
+              cleanup();
+              reject(error);
+            }
+          },
+          (error) => {
+            cleanup();
+            reject(error);
+          }
+        );
+      } catch (error) {
+        cleanup();
+        reject(error);
+      }
+    });
+
+    try {
+      began = true;
+      throwIfEncryptedUploadV2Cancelled(signal);
+      await this.bleManager.writeCharacteristic(
+        deviceId,
+        SERVICE_BOTA_STORAGE,
+        CHAR_TRANSFER_SIGNED_BLOB_V2,
+        encodeEncryptedUploadV2SignedBlob({
+          type: 'blobBegin',
+          kind,
+          writeId,
+          totalLength: document.length,
+          sha256: hashEncryptedUploadV2Bytes(document),
+        }),
+        true
+      );
+      throwIfEncryptedUploadV2Cancelled(signal);
+      for (let offset = 0; offset < document.length; offset += chunkBytes) {
+        throwIfEncryptedUploadV2Cancelled(signal);
+        await this.bleManager.writeCharacteristic(
+          deviceId,
+          SERVICE_BOTA_STORAGE,
+          CHAR_TRANSFER_SIGNED_BLOB_V2,
+          encodeEncryptedUploadV2SignedBlob({
+            type: 'blobData',
+            kind,
+            writeId,
+            offset,
+            data: Buffer.from(document.subarray(offset, offset + chunkBytes)),
+          }),
+          true
+        );
+        throwIfEncryptedUploadV2Cancelled(signal);
+      }
+      await this.bleManager.writeCharacteristic(
+        deviceId,
+        SERVICE_BOTA_STORAGE,
+        CHAR_TRANSFER_SIGNED_BLOB_V2,
+        encodeEncryptedUploadV2SignedBlob({ type: 'blobCommit', kind, writeId }),
+        true
+      );
+      throwIfEncryptedUploadV2Cancelled(signal);
+      if (!resultFinished) {
+        timer = setTimeout(() => {
+          subscription?.remove();
+          resultFinished = true;
+          rejectResult(new TransferError(
+            'Timeout waiting for encrypted upload v2 signed document result',
+            'ENCRYPTED_UPLOAD_V2_DOCUMENT_TIMEOUT'
+          ));
+        }, ENCRYPTED_UPLOAD_V2_TIMEOUT_MS);
+      }
+      await result;
+    } catch (error) {
+      subscription?.remove();
+      if (timer !== undefined) clearTimeout(timer);
+      if (began) {
+        try {
+          await this.bleManager.writeCharacteristic(
+            deviceId,
+            SERVICE_BOTA_STORAGE,
+            CHAR_TRANSFER_SIGNED_BLOB_V2,
+            encodeEncryptedUploadV2SignedBlob({ type: 'blobAbort', kind, writeId }),
+            true
+          );
+        } catch {
+          // The operation already failed; the caller must reconnect if cleanup is uncertain.
+        }
+      }
+      throw error;
+    }
+  }
+
+  /** Run one dedicated batch-v2 ciphertext transfer after authorization. */
+  async transferEncryptedUploadV2(
+    deviceId: string,
+    request: EncryptedUploadV2TransferRequest,
+    onProgress?: TransferProgressCallback
+  ): Promise<EncryptedUploadV2TransferResult> {
+    if (!this.bleManager.isConnected(deviceId)) {
+      throw DeviceError.notConnected(deviceId);
+    }
+    if (
+      this.activeEncryptedUploadV2Transfers.has(request.transportSessionId) ||
+      request.authorizationSha256.length !== 32 ||
+      request.recording.storageFormat !== 3
+    ) {
+      throw new EncryptedUploadV2RuntimeError(
+        'encrypted_upload_v2_invalid_configuration'
+      );
+    }
+
+    const receiver = new EncryptedUploadV2TransferReceiver({
+      transportSessionId: request.transportSessionId,
+      expectedCiphertextLength: request.recording.ciphertextLength,
+      expectedCiphertextSha256: request.recording.ciphertextSha256,
+      maximumDataPayloadBytes: request.dataPayloadBytes,
+      maximumWindowPackets: request.windowPackets,
+      maximumMissingSequences: request.maximumMissingSequences,
+      checkpoint: request.checkpoint,
+      sink: request.sink,
+      signal: request.signal,
+      persistCheckpoint: request.persistCheckpoint,
+    });
+    await receiver.prepare();
+
+    return new Promise((resolve, reject) => {
+      let subscription: Subscription | undefined;
+      let timer: number | undefined;
+      let opened = false;
+      let stopping = false;
+      let settled = false;
+      let processing = Promise.resolve();
+      let openingWrite = Promise.resolve();
+      let finishOpeningWrite: () => void = () => undefined;
+      let pendingNotifications = 0;
+      let abortListener: (() => void) | undefined;
+
+      const stopIntake = () => {
+        if (timer !== undefined) clearTimeout(timer);
+        subscription?.remove();
+        if (abortListener) request.signal?.removeEventListener('abort', abortListener);
+      };
+      const releaseOwnership = () => {
+        stopIntake();
+        this.activeEncryptedUploadV2Transfers.delete(request.transportSessionId);
+      };
+      const resetTimer = () => {
+        if (timer !== undefined) clearTimeout(timer);
+        timer = setTimeout(() => {
+          failTransfer(new TransferError(
+            'Timeout waiting for encrypted upload v2 transfer data',
+            'ENCRYPTED_UPLOAD_V2_TRANSFER_TIMEOUT'
+          ));
+        }, ENCRYPTED_UPLOAD_V2_TIMEOUT_MS);
+      };
+      const failTransfer = (error: unknown) => {
+        if (stopping || settled) return;
+        stopping = true;
+        stopIntake();
+        void Promise.all([openingWrite, processing]).then(async () => {
+          const abort = encodeEncryptedUploadV2Transfer({
+            type: 'abort',
+            common: {
+              messageType: 0x24,
+              flags: 0,
+              transportSessionId: request.transportSessionId,
+            },
+            reason: 0x00ff,
+          });
+          try {
+            await this.bleManager.writeCharacteristic(
+              deviceId,
+              SERVICE_BOTA_STORAGE,
+              CHAR_TRANSFER_CONTROL_V2,
+              abort,
+              true
+            );
+          } catch {
+            // The transfer remains failed; reconnect before starting another owner.
+          }
+          if (settled) return;
+          settled = true;
+          releaseOwnership();
+          reject(error);
+        });
+      };
+
+      try {
+        subscription = this.bleManager.subscribeToCharacteristic(
+          deviceId,
+          SERVICE_BOTA_STORAGE,
+          CHAR_RECORDING_TRANSFER_V2,
+          (rawValue) => {
+            if (stopping || settled) return;
+            pendingNotifications += 1;
+            if (timer !== undefined) {
+              clearTimeout(timer);
+              timer = undefined;
+            }
+            processing = processing.then(async () => {
+              if (stopping || settled) return;
+              const value = decodeEncryptedUploadV2Transfer(rawValue);
+              if (value.common.transportSessionId !== request.transportSessionId) {
+                throw new EncryptedUploadV2RuntimeError(
+                  'encrypted_upload_v2_session_mismatch'
+                );
+              }
+              if (!opened) {
+                const resuming = request.checkpoint.nextCiphertextOffset > 0n;
+                if (
+                  (resuming && value.type !== 'resumeAccept') ||
+                  (!resuming && value.type !== 'startAck')
+                ) {
+                  if (value.type === 'resumeReject') {
+                    throw new EncryptedUploadV2RuntimeError(
+                      'encrypted_upload_v2_checkpoint_mismatch',
+                      value.reason
+                    );
+                  }
+                  if (value.type === 'error') {
+                    throw new EncryptedUploadV2RuntimeError(
+                      'encrypted_upload_v2_device_error',
+                      value.result
+                    );
+                  }
+                  throw new EncryptedUploadV2RuntimeError(
+                    'encrypted_upload_v2_unexpected_message'
+                  );
+                }
+                if (value.type !== 'startAck' && value.type !== 'resumeAccept') {
+                  throw new EncryptedUploadV2RuntimeError(
+                    'encrypted_upload_v2_unexpected_message'
+                  );
+                }
+                validateEncryptedUploadV2Opening(value, request);
+                opened = true;
+                return;
+              }
+
+              const action = await receiver.receive(rawValue);
+              if (stopping || settled) return;
+              if (value.type === 'data') {
+                onProgress?.(
+                  Number(value.offset + BigInt(value.data.length)),
+                  Number(request.recording.ciphertextLength)
+                );
+              }
+              if (action.type === 'control') {
+                await this.bleManager.writeCharacteristic(
+                  deviceId,
+                  SERVICE_BOTA_STORAGE,
+                  CHAR_TRANSFER_CONTROL_V2,
+                  action.frame,
+                  true
+                );
+              } else if (action.type === 'complete') {
+                if (stopping || settled) return;
+                settled = true;
+                releaseOwnership();
+                resolve({ manifest: action.manifest, evidence: action.evidence });
+              }
+            }).then(() => {
+              pendingNotifications -= 1;
+              if (!stopping && !settled && pendingNotifications === 0) resetTimer();
+            }).catch((error) => {
+              pendingNotifications -= 1;
+              failTransfer(error);
+            });
+          },
+          (error) => failTransfer(error),
+          { logNotifications: false }
+        );
+        this.activeEncryptedUploadV2Transfers.set(
+          request.transportSessionId,
+          subscription
+        );
+        abortListener = () => failTransfer(
+          new EncryptedUploadV2RuntimeError('encrypted_upload_v2_cancelled')
+        );
+        request.signal?.addEventListener('abort', abortListener, { once: true });
+        if (request.signal?.aborted) {
+          abortListener();
+          return;
+        }
+        resetTimer();
+
+        const commonHeader = {
+          flags: 0,
+          transportSessionId: request.transportSessionId,
+        };
+        const frame = request.checkpoint.nextCiphertextOffset > 0n
+          ? encodeEncryptedUploadV2Transfer({
+              type: 'resumeRequest',
+              common: { ...commonHeader, messageType: 0x22 },
+              uploadSessionUuid: parseFullUuid(request.uploadSessionUuid),
+              recordingUuid: parseFullUuid(request.recording.uuid),
+              recordingGeneration: request.recording.generation,
+              checkpointRevision: request.checkpoint.revision,
+              nextCiphertextOffset: request.checkpoint.nextCiphertextOffset,
+              prefixSha256: request.checkpoint.prefixSha256,
+              windowPackets: request.windowPackets,
+              dataPayloadBytes: request.dataPayloadBytes,
+            })
+          : encodeEncryptedUploadV2Transfer({
+              type: 'start',
+              common: { ...commonHeader, messageType: 0x20 },
+              uploadSessionUuid: parseFullUuid(request.uploadSessionUuid),
+              recordingUuid: parseFullUuid(request.recording.uuid),
+              recordingGeneration: request.recording.generation,
+              authorizationSha256: request.authorizationSha256,
+              checkpointRevision: request.checkpoint.revision,
+              nextCiphertextOffset: request.checkpoint.nextCiphertextOffset,
+              prefixSha256: request.checkpoint.prefixSha256,
+              windowPackets: request.windowPackets,
+              dataPayloadBytes: request.dataPayloadBytes,
+            });
+        openingWrite = new Promise<void>((resolveOpening) => {
+          finishOpeningWrite = resolveOpening;
+        });
+        this.bleManager.writeCharacteristic(
+          deviceId,
+          SERVICE_BOTA_STORAGE,
+          CHAR_TRANSFER_CONTROL_V2,
+          frame,
+          true
+        ).then(
+          () => finishOpeningWrite(),
+          (error) => {
+            finishOpeningWrite();
+            failTransfer(error);
+          }
+        );
+      } catch (error) {
+        finishOpeningWrite();
+        failTransfer(error);
+      }
+    });
+  }
+
+  async abortEncryptedUploadV2(
+    deviceId: string,
+    transportSessionId: bigint,
+    reason: number = 0x00ff
+  ): Promise<void> {
+    const frame = encodeEncryptedUploadV2Transfer({
+      type: 'abort',
+      common: { messageType: 0x24, flags: 0, transportSessionId },
+      reason,
+    });
+    await this.bleManager.writeCharacteristic(
+      deviceId,
+      SERVICE_BOTA_STORAGE,
+      CHAR_TRANSFER_CONTROL_V2,
+      frame,
+      true
+    );
+    this.activeEncryptedUploadV2Transfers.get(transportSessionId)?.remove();
+    this.activeEncryptedUploadV2Transfers.delete(transportSessionId);
+  }
+
+  /** Deliver the exact receipt, then CONFIRM, then wait for device acceptance. */
+  async confirmEncryptedUploadV2(
+    deviceId: string,
+    request: EncryptedUploadV2ConfirmRequest
+  ): Promise<void> {
+    await this.sendEncryptedUploadV2Document(
+      deviceId,
+      2,
+      request.writeId,
+      request.receipt,
+      request.maximumSignedBlobBytes,
+      request.signal
+    );
+    throwIfEncryptedUploadV2Cancelled(request.signal);
+
+    let confirmationAttempted = false;
+    try {
+      await new Promise<void>((resolve, reject) => {
+      let subscription: Subscription | undefined;
+      let timer: number | undefined;
+      const cleanup = () => {
+        if (timer !== undefined) clearTimeout(timer);
+        subscription?.remove();
+      };
+      try {
+        subscription = this.bleManager.subscribeToCharacteristic(
+          deviceId,
+          SERVICE_BOTA_STORAGE,
+          CHAR_TRANSFER_STATUS_V2,
+          (status) => {
+            try {
+              const parsed = parseEncryptedUploadV2Status(status);
+              if (parsed.transportSessionId !== request.transportSessionId) return;
+              if (parsed.phase === 0x0a || parsed.result !== 0) {
+                cleanup();
+                reject(new EncryptedUploadV2RuntimeError(
+                  'encrypted_upload_v2_device_error',
+                  parsed.result
+                ));
+                return;
+              }
+              if (parsed.phase === 0x09) {
+                cleanup();
+                resolve();
+              }
+            } catch (error) {
+              cleanup();
+              reject(error);
+            }
+          },
+          (error) => {
+            cleanup();
+            reject(error);
+          }
+        );
+        const frame = encodeEncryptedUploadV2Transfer({
+          type: 'confirm',
+          common: {
+            messageType: 0x23,
+            flags: 0,
+            transportSessionId: request.transportSessionId,
+          },
+          uploadSessionUuid: parseFullUuid(request.uploadSessionUuid),
+          recordingUuid: parseFullUuid(request.recordingUuid),
+          recordingGeneration: request.recordingGeneration,
+          ownerRevision: request.ownerRevision,
+          receiptSha256: hashEncryptedUploadV2Bytes(request.receipt),
+        });
+        throwIfEncryptedUploadV2Cancelled(request.signal);
+        timer = setTimeout(() => {
+          cleanup();
+          reject(new TransferError(
+            'Timeout waiting for encrypted upload v2 confirmation',
+            'ENCRYPTED_UPLOAD_V2_CONFIRM_TIMEOUT'
+          ));
+        }, ENCRYPTED_UPLOAD_V2_TIMEOUT_MS);
+        confirmationAttempted = true;
+        this.bleManager.writeCharacteristic(
+          deviceId,
+          SERVICE_BOTA_STORAGE,
+          CHAR_TRANSFER_CONTROL_V2,
+          frame,
+          true
+        ).catch((error) => {
+          cleanup();
+          reject(error);
+        });
+      } catch (error) {
+        cleanup();
+        reject(error);
+      }
+      });
+    } catch (error) {
+      if (
+        !confirmationAttempted ||
+        (error instanceof EncryptedUploadV2RuntimeError &&
+          error.code === 'encrypted_upload_v2_device_error')
+      ) {
+        throw error;
+      }
+      throw new EncryptedUploadV2RuntimeError(
+        'encrypted_upload_v2_confirmation_uncertain',
+        undefined,
+        error
+      );
+    }
   }
 
   /**
@@ -1233,5 +1965,98 @@ export class ProtocolHandler {
       state.subscription?.remove();
     }
     this.activeTransfers.clear();
+    for (const subscription of this.activeEncryptedUploadV2Transfers.values()) {
+      subscription.remove();
+    }
+    this.activeEncryptedUploadV2Transfers.clear();
   }
+}
+
+function parseFullUuid(value: string): Buffer {
+  const canonical = value.toLowerCase();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(canonical)) {
+    throw new EncryptedUploadV2RuntimeError(
+      'encrypted_upload_v2_invalid_configuration'
+    );
+  }
+  return Buffer.from(canonical.replace(/-/g, ''), 'hex');
+}
+
+function validateEncryptedUploadV2Opening(
+  value: EncryptedUploadV2Transfer,
+  request: EncryptedUploadV2TransferRequest
+): void {
+  if (value.type !== 'startAck' && value.type !== 'resumeAccept') {
+    throw new EncryptedUploadV2RuntimeError(
+      'encrypted_upload_v2_unexpected_message'
+    );
+  }
+  if (
+    !constantTimeEqual(value.uploadSessionUuid, parseFullUuid(request.uploadSessionUuid)) ||
+    !constantTimeEqual(value.recordingUuid, parseFullUuid(request.recording.uuid)) ||
+    value.recordingGeneration !== request.recording.generation ||
+    value.windowPackets !== request.windowPackets ||
+    value.dataPayloadBytes !== request.dataPayloadBytes ||
+    value.checkpointRevision !== request.checkpoint.revision ||
+    value.nextCiphertextOffset !== request.checkpoint.nextCiphertextOffset ||
+    !constantTimeEqual(value.prefixSha256, request.checkpoint.prefixSha256) ||
+    (value.type === 'startAck' && (
+      value.ciphertextLength !== request.recording.ciphertextLength ||
+      !constantTimeEqual(value.ciphertextSha256, request.recording.ciphertextSha256) ||
+      value.checkpointIntervalBlocks !== request.checkpointIntervalBlocks
+    ))
+  ) {
+    throw new EncryptedUploadV2RuntimeError(
+      'encrypted_upload_v2_integrity_mismatch'
+    );
+  }
+}
+
+function formatFullUuid(value: Uint8Array): string {
+  if (value.length !== 16) {
+    throw new EncryptedUploadV2RuntimeError(
+      'encrypted_upload_v2_invalid_configuration'
+    );
+  }
+  const hex = Buffer.from(value).toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function constantTimeEqual(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.length !== right.length) return false;
+  let difference = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    difference |= left[index] ^ right[index];
+  }
+  return difference === 0;
+}
+
+function parseEncryptedUploadV2Status(value: Buffer): {
+  phase: number;
+  result: number;
+  transportSessionId: bigint;
+} {
+  const phase = value[1];
+  const transportSessionId = value.length >= 12
+    ? value.readBigUInt64LE(4)
+    : 0n;
+  const transportProfile = value[21];
+  if (
+    value.length !== 24 ||
+    value[0] !== 2 ||
+    value[20] > 100 ||
+    value.readUInt16LE(22) !== 0 ||
+    (phase === 0
+      ? transportSessionId !== 0n || transportProfile !== 0
+      : transportSessionId === 0n || transportProfile !== 3)
+  ) {
+    throw new EncryptedUploadV2RuntimeError(
+      'encrypted_upload_v2_unexpected_message'
+    );
+  }
+  return {
+    phase,
+    result: value.readUInt16LE(2),
+    transportSessionId,
+  };
 }

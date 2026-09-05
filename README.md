@@ -293,6 +293,25 @@ for await (const progress of BotaClient.recordings.syncAllRecordings(
   console.log(`Recording ${progress.recordingIndex}/${progress.totalRecordings}`);
 }
 
+// Encrypted Upload v2 source-preview path. This requires firmware that
+// explicitly advertises the dedicated v2 capability; released firmware does
+// not advertise it yet.
+const abortController = new AbortController();
+const encryptedRecordings = await BotaClient.recordings.listEncryptedUploadV2Recordings(device);
+for await (const progress of BotaClient.recordings.syncEncryptedRecordingV2(
+  device,
+  encryptedRecordings[0],
+  async ({ recording, capability, checkpoint }) => {
+    // Your app/backend selects v2 and returns the signed authorization, stable
+    // session/owner IDs, an opaque ciphertext sink, staging/finalization
+    // callbacks, and the signed completion receipt callback.
+    return yourBackend.prepareEncryptedUploadV2(recording, capability, checkpoint);
+  },
+  { signal: abortController.signal }
+)) {
+  console.log(progress.stage, progress.progress);
+}
+
 // Upload queue management
 BotaClient.recordings.getPendingUploads();
 BotaClient.recordings.cancelUpload(taskId);
@@ -311,6 +330,24 @@ BotaClient.recordings.on('uploadProgress', (taskId, progress) => {});
 upload may still be active. A busy response, Bluetooth disconnect, or
 unavailable status will not start a competing Bluetooth transfer. Bluetooth
 fallback requires a fresh device status with `syncActive: false`.
+
+The additive batch-v2 API uses only `B07A0406` through `B07A040B`. It reads a
+fresh capability before invoking `EncryptedUploadV2Provider`, persists only
+resume identifiers/digests/offsets/bounds, and deletes the device recording
+only after the exact receipt is accepted and v2 CONFIRM reaches the device's
+complete status. `EncryptedUploadV2CiphertextSink` implementations own opaque
+byte storage and staging; the SDK never decrypts or interprets ciphertext or
+the manifest. Pre-confirm failures and consumer cancellation at a yielded
+progress boundary ABORT best-effort, retain the device copy, and never call the
+legacy v1/P10 path. The optional `AbortSignal` also reaches provider callbacks,
+opaque sink work, signed-document delivery, and an in-flight BLE transfer. A
+lost result after CONFIRM is reported as
+`encrypted_upload_v2_confirmation_uncertain`; it preserves the checkpoint and
+finalized backend state for reconciliation instead of attempting rollback.
+After matching device-complete, checkpoint cleanup is best-effort and cannot
+reverse completion. Install `react-native-quick-crypto` when using v2. This
+source API is not a rollout signal: production firmware capability advertising
+and SDK publication remain separately gated.
 
 ### WiFi Scanning
 

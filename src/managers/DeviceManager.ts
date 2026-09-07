@@ -341,7 +341,22 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
    * Get list of connected devices
    */
   getConnectedDevices(): ConnectedDevice[] {
-    return Array.from(this.connectedDevices.values());
+    return Array.from(this.connectedDevices.values()).filter((device) => {
+      if (this.isConnected(device.id)) {
+        return true;
+      }
+      this.discardStaleConnectedDevice(device);
+      return false;
+    });
+  }
+
+  private discardStaleConnectedDevice(device: ConnectedDevice): void {
+    log.info('Discarding stale connected-device entry', {
+      deviceId: device.id,
+      serialNumber: device.serialNumber,
+    });
+    device.connectionState = 'disconnected';
+    this.connectedDevices.delete(device.id);
   }
 
   /**
@@ -393,8 +408,11 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     // peripheral-id mapping.
     const existing = this.connectedDevices.get(device.id);
     if (priority === 'background' && existing && existing.connectionState === 'connected') {
-      log.debug('Device already connected', { deviceId: device.id });
-      return existing;
+      if (this.isConnected(device.id)) {
+        log.debug('Device already connected', { deviceId: device.id });
+        return existing;
+      }
+      this.discardStaleConnectedDevice(existing);
     }
 
     // Emit connecting state
@@ -706,11 +724,10 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     options?: ReconnectOptions
   ): Promise<ConnectedDevice> {
     // Fast path: already connected — return immediately without taking the lock.
-    for (const device of this.connectedDevices.values()) {
-      if (device.serialNumber === serialNumber && device.connectionState === 'connected') {
-        log.debug('Device already connected', { serialNumber });
-        return device;
-      }
+    const connected = this.findLiveConnectedDevice(serialNumber);
+    if (connected) {
+      log.debug('Device already connected', { serialNumber });
+      return connected;
     }
 
     // Dedup: an attempt for this SN is already queued/running — share it.
@@ -746,11 +763,10 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
     // Re-check after acquiring the lock — a prior queued reconnect may have
     // already connected this SN.
-    for (const device of this.connectedDevices.values()) {
-      if (device.serialNumber === serialNumber && device.connectionState === 'connected') {
-        log.debug('Device already connected', { serialNumber });
-        return device;
-      }
+    const connected = this.findLiveConnectedDevice(serialNumber);
+    if (connected) {
+      log.debug('Device already connected', { serialNumber });
+      return connected;
     }
 
     // Look up stored reconnect info
@@ -881,6 +897,13 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
     log.warn('No matching device found for reconnection', { serialNumber });
     throw DeviceError.notFound(serialNumber);
+  }
+
+  private findLiveConnectedDevice(serialNumber: string): ConnectedDevice | undefined {
+    return this.getConnectedDevices().find(
+      (device) =>
+        device.serialNumber === serialNumber && device.connectionState === 'connected'
+    );
   }
 
   /**

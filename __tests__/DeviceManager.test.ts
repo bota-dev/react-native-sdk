@@ -436,6 +436,63 @@ describe('DeviceManager reconnect matching', () => {
     jest.useRealTimers();
   });
 
+  it('does not expose a stale manager entry as a connected device', () => {
+    const staleDevice = {
+      ...connectedDevice,
+      id: 'ios-peripheral-id',
+      serialNumber: 'GDPPSBZJN6',
+    };
+    const manager = Object.create(DeviceManager.prototype) as any;
+    manager.connectedDevices = new Map([[staleDevice.id, staleDevice]]);
+    manager.bleManager = { isConnected: jest.fn(() => false) };
+
+    expect(manager.getConnectedDevices()).toEqual([]);
+    expect(staleDevice.connectionState).toBe('disconnected');
+  });
+
+  it('does not return a stale manager entry after the BLE link is gone', async () => {
+    const staleDevice = {
+      ...connectedDevice,
+      id: 'ios-peripheral-id',
+      serialNumber: 'GDPPSBZJN6',
+    };
+    const discoveredDevice = {
+      id: staleDevice.id,
+      name: 'Bota Pin',
+      deviceType: 'bota_pin',
+      firmwareVersion: '0.0.0',
+      pairingState: 'paired',
+      rssi: -45,
+      discoveredAt: new Date(),
+    };
+    const freshDevice = { ...staleDevice };
+
+    const manager = Object.create(DeviceManager.prototype) as any;
+    manager.connectedDevices = new Map([[staleDevice.id, staleDevice]]);
+    manager.reconnectRegistry = {
+      GDPPSBZJN6: {
+        bleId: staleDevice.id,
+        bleName: 'Bota Pin',
+        deviceType: 'bota_pin',
+      },
+    };
+    manager.reconnectChain = Promise.resolve();
+    manager.reconnectInFlight = new Map();
+    manager.startScan = jest.fn().mockResolvedValue(undefined);
+    manager.stopScan = jest.fn();
+    manager.getDiscoveredDevices = jest.fn(() => [discoveredDevice]);
+    manager.connect = jest.fn().mockResolvedValue(freshDevice);
+    manager.bleManager = {
+      isConnected: jest.fn(() => false),
+      flushPeripheralConnection: jest.fn(),
+      isUserOpInFlight: jest.fn(() => false),
+    };
+
+    await expect(manager.reconnect('GDPPSBZJN6')).resolves.toBe(freshDevice);
+    expect(manager.bleManager.isConnected).toHaveBeenCalledWith(staleDevice.id);
+    expect(manager.connect).toHaveBeenCalledWith(discoveredDevice, 'background');
+  });
+
   it('keeps scanning for an advertised MAC match without probing same-name devices', async () => {
     const wanted = {
       id: 'new-id',

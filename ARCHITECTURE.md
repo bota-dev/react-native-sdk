@@ -327,7 +327,10 @@ This preserves reconnect without reintroducing pairing races. When none of those
 match, reconnect fails and the caller should let the user pair/select the device
 again. Reconnect attempts are **serialized**
 and **deduped per SN** so concurrent attempts for different SNs do not race over
-the single BLE adapter or each other's discovery results.
+the single BLE adapter or each other's discovery results. Connected-device
+enumeration and reconnect fast paths expose an existing `DeviceManager` entry
+only if `BleManager` still owns the live device handle; otherwise the stale
+logical entry is discarded and the normal identity-matched reconnect proceeds.
 
 **Radio arbitration (`BleManager`).** The reconnect-vs-reconnect serialisation
 above lives in `DeviceManager`, but the BLE adapter is also contended by the
@@ -346,8 +349,10 @@ adapter (observed as a 2A26-read disconnect mid-handshake),
   yields autonomously to user pairing instead of racing it.
 - User-priority connects re-read serial/device info from GATT even when the BLE
   id is already present in `connectedDevices`; only background reconnect can
-  return the existing connected entry. This keeps pairing from combining a
-  stale connected serial with a fresh PK_D read from another physical device.
+  return an existing connected entry, and only after validating the BLE-layer
+  handle. This keeps pairing from combining a stale connected serial with a
+  fresh PK_D read from another physical device and prevents false reconnect
+  success after the BLE-layer entry has already been removed.
 - Background connection failures are expected during reconnect candidate probes,
   so `BleManager` logs those at debug with the BLE reason. User-priority connect
   failures remain error-level.

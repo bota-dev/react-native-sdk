@@ -85,7 +85,7 @@ npm test            # Jest unit tests
 2. Run `npm run build` — must produce clean lib/ output (no type errors)
 3. **Test against physical device**: link into demo app (see Local Testing below) and run the affected flow:
    - **Bluetooth discovery changes** — scan for devices, verify Bota-* prefix filtering
-   - **Reconnect changes** — verify exact ID/MAC fast paths and guarded serial recovery after a flash changes the peripheral identity
+   - **Reconnect changes** — verify exact ID/MAC fast paths, guarded serial recovery after a flash changes the peripheral identity, and that a stale DeviceManager entry cannot report success after the BLE-layer handle is gone
    - **Time sync changes** — run `npm test -- --runInBand __tests__/DeviceManager.test.ts`; connect and reconnect to a physical device and verify the SDK writes `TIME_SYNC` before emitting `deviceConnected`, while unsupported legacy firmware still connects
    - **Recording transfer changes** — sync a recording end-to-end (list → transfer → confirm); while WiFi upload is active, force trigger-busy and BLE loss and confirm no competing BLE transfer starts
    - **Provisioning changes** — pair a fresh device, verify token write and pairing state

@@ -206,6 +206,11 @@ authorization/receipt bytes, stable backend session/owner IDs, a ciphertext
 sink, and staging/manifest/finalization callbacks. The receiver writes exact
 ciphertext offsets, repairs missing window sequences, persists a mutually
 verified checkpoint before sending a successful WINDOW_ACK, verifies the
+exact transmitted offset/length of short window-tail DATA (including repaired
+duplicates), and does not infer offsets from a fixed packet size. Host receiver
+regressions cover MTU185/247 over an opaque 8504-byte two-block-sized fixture;
+this is framing evidence, not device encryption or hardware-upload evidence.
+It verifies the
 complete ciphertext and 580-byte manifest evidence, and sends CONFIRM only
 after the exact 336-byte receipt is accepted. AsyncStorage contains only IDs,
 offsets, revisions, digests, counters, and negotiated bounds. Any v2 failure

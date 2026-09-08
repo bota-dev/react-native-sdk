@@ -53,6 +53,97 @@ const initialCheckpoint = (): EncryptedUploadV2Checkpoint => ({
 });
 
 describe('EncryptedUploadV2TransferReceiver', () => {
+  it.each([185, 247])('repairs short checkpoint tails across real-size windows at MTU %i', async (mtu) => {
+    // Opaque fixture with the size/boundaries of header + two full AEAD blocks
+    // + trailer. The SDK does not parse these bytes or require this structure.
+    const ciphertext = Buffer.from(Array.from({ length: 8504 }, (_, i) => i % 251));
+    const manifest = Buffer.alloc(580, 0xa5);
+    const frameLimit = mtu - 3;
+    const payloadLimit = Math.min(484, frameLimit - 28);
+    const windowLimit = Math.min(44, Math.floor((frameLimit - 68) / 4));
+    const persistCheckpoint = jest.fn(async (_checkpoint: EncryptedUploadV2Checkpoint) => {});
+    const sink = new TestSink();
+    const receiver = new EncryptedUploadV2TransferReceiver({
+      transportSessionId: 7n,
+      expectedCiphertextLength: BigInt(ciphertext.length),
+      expectedCiphertextSha256: digest(ciphertext),
+      maximumDataPayloadBytes: payloadLimit,
+      maximumWindowPackets: windowLimit,
+      maximumMissingSequences: windowLimit,
+      checkpoint: initialCheckpoint(),
+      sink,
+      persistCheckpoint,
+    });
+    await receiver.prepare();
+    let offset = 0;
+    let sequence = 0;
+    for (const [windowIndex, end] of [4244, 8504].entries()) {
+      const firstSequence = sequence;
+      const packets: Buffer[] = [];
+      while (offset < end) {
+        const next = Math.min(offset + payloadLimit, end);
+        const frame = encodeEncryptedUploadV2Transfer({
+          type: 'data', common: common(0x41), sequence,
+          offset: BigInt(offset), data: ciphertext.subarray(offset, next),
+        });
+        expect(frame.length).toBeLessThanOrEqual(frameLimit);
+        packets.push(frame);
+        offset = next;
+        sequence += 1;
+      }
+      expect(packets.length).toBeLessThanOrEqual(windowLimit);
+      const tail = packets[packets.length - 1]!;
+      expect(tail.length).toBeLessThan(28 + payloadLimit);
+      const windowEnd = encodeEncryptedUploadV2Transfer({
+        type: 'windowEnd', common: common(0x42), windowIndex,
+        firstSequence, lastSequence: sequence - 1,
+        nextCiphertextOffset: BigInt(end),
+        prefixSha256: digest(ciphertext.subarray(0, end)),
+        checkpointRevision: windowIndex + 1,
+      });
+      for (const packet of packets.slice(0, -1)) await receiver.receive(packet);
+      const missing = await receiver.receive(windowEnd);
+      expect(persistCheckpoint).toHaveBeenCalledTimes(windowIndex);
+      if (missing.type !== 'control') throw new Error('expected repair ACK');
+      expect(missing.frame.length).toBeLessThanOrEqual(frameLimit);
+      expect(decodeEncryptedUploadV2Transfer(missing.frame)).toMatchObject({
+        type: 'windowAck', checkpointRevision: windowIndex,
+        missingSequences: [sequence - 1],
+      });
+      // A repaired short tail and its exact duplicate retain transmitted
+      // offsets/lengths; neither is derived as sequence * negotiated payload.
+      await receiver.receive(tail);
+      await receiver.receive(tail);
+      const accepted = await receiver.receive(windowEnd);
+      expect(persistCheckpoint).toHaveBeenCalledTimes(windowIndex + 1);
+      expect(persistCheckpoint).toHaveBeenLastCalledWith(expect.objectContaining({
+        revision: windowIndex + 1, nextCiphertextOffset: BigInt(end),
+        highestContiguousSequence: sequence - 1,
+      }));
+      if (accepted.type !== 'control') throw new Error('expected durable ACK');
+      expect(decodeEncryptedUploadV2Transfer(accepted.frame)).toMatchObject({
+        type: 'windowAck', checkpointRevision: windowIndex + 1,
+        nextCiphertextOffset: BigInt(end), missingSequences: [],
+      });
+    }
+    expect(await sink.sha256Prefix(8504n)).toEqual(digest(ciphertext));
+    for (let chunkOffset = 0; chunkOffset < 580; chunkOffset += 100) {
+      const frame = encodeEncryptedUploadV2Transfer({
+        type: 'manifestChunk', common: common(0x43), totalManifestLength: 580,
+        chunkOffset, manifestSha256: digest(manifest),
+        chunk: manifest.subarray(chunkOffset, chunkOffset + 100),
+      });
+      expect(frame.length).toBeLessThanOrEqual(frameLimit);
+      await receiver.receive(frame);
+    }
+    const completed = await receiver.receive(encodeEncryptedUploadV2Transfer({
+      type: 'eof', common: common(0x44), finalSequence: sequence - 1,
+      blockCount: 2, ciphertextLength: 8504n,
+      ciphertextSha256: digest(ciphertext), manifestSha256: digest(manifest),
+    }));
+    expect(completed).toMatchObject({ type: 'complete', manifest });
+  });
+
   it('persists a complete window before returning its ACK and completes exact evidence', async () => {
     const ciphertext = Buffer.from('opaque ciphertext');
     const manifest = Buffer.alloc(580, 0x5a);

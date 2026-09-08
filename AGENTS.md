@@ -143,7 +143,11 @@ The September8 upload-only context amendment requires negotiated bit8 and
 proof exchange. SDK sequences device context acceptance before authorization
 and again before first receipt; one30-second deadline bounds the entire attempt,
 including hung provider work. It never accesses the installed token or verifies
-signatures. Pairing and Grant nonce remain unchanged. Baseline vectors are not
+signatures. Cancellation/deadline release must not outlive mutable context BLE
+I/O: retain per-device ownership through late BEGIN/document/ABORT completion,
+or until a verified reconnect, and suppress stale document listeners. Do not
+quarantine provider-only timeout after BLE writes are quiescent. Pairing and
+Grant nonce remain unchanged. Baseline vectors are not
 rewritten; the old bit8 negative case has an explicit amendment regression.
 The source-preview `listPendingRecordings` preserves legacy-only devices and
 merges mixed storage by suppressing known v1 filename aliases of full identities

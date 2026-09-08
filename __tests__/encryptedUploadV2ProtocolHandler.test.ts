@@ -91,6 +91,8 @@ describe('ProtocolHandler encrypted upload v2', () => {
     writes = [];
     mockGetBleManager.mockReset();
     mockGetBleManager.mockReturnValue({
+      on: jest.fn(),
+      off: jest.fn(),
       isConnected: jest.fn(() => true),
       hasCharacteristic: jest.fn(async () => true),
       getMtu: jest.fn(async () => 128),
@@ -254,6 +256,245 @@ describe('ProtocolHandler encrypted upload v2', () => {
     expect(writes.filter((write) => write.characteristic === CHAR_UPLOAD_CONTEXT_V2)).toHaveLength(1);
     expect(writes.filter((write) => write.data[0] === 0x62).map((write) => write.data[2])).toEqual([3, 4]);
     expect(ble.readCharacteristic).toHaveBeenCalledTimes(3);
+  });
+
+  it('rejects a replacement context exchange until a cancelled BEGIN write drains', async () => {
+    const ble = mockGetBleManager();
+    const controller = new AbortController();
+    let releaseBegin!: () => void;
+    let markBeginPending!: () => void;
+    const beginGate = new Promise<void>((resolve) => { releaseBegin = resolve; });
+    const beginPending = new Promise<void>((resolve) => { markBeginPending = resolve; });
+    let delayFirstBegin = true;
+    let attemptId = 0;
+    let state = 1;
+    const nonce = Buffer.alloc(16, 7);
+    const proof = Buffer.alloc(147, 8);
+    const challenge = document('BOTACTXQ', 196, 9); challenge.writeUInt16LE(1, 8);
+    const result = document('BOTACTXR', 264, 10); result.writeUInt16LE(1, 8);
+    ble.readCharacteristic.mockImplementation(async () => {
+      const payload = state === 1 ? nonce : state === 2 ? proof : Buffer.alloc(0);
+      const bytes = Buffer.alloc(12 + payload.length);
+      bytes[0] = 0x66; bytes[1] = 2; bytes[2] = state;
+      bytes.writeUInt32LE(attemptId, 4); bytes.writeUInt16LE(payload.length, 10);
+      payload.copy(bytes, 12);
+      return bytes;
+    });
+    ble.writeCharacteristic.mockImplementation(async (
+      _device: string, _service: string, characteristic: string, bytes: Buffer
+    ) => {
+      writes.push({ characteristic, data: bytes });
+      if (characteristic === CHAR_UPLOAD_CONTEXT_V2) {
+        attemptId = bytes.readUInt32LE(4);
+        if (delayFirstBegin) {
+          delayFirstBegin = false;
+          markBeginPending();
+          await beginGate;
+        }
+        return;
+      }
+      const packet = decodeEncryptedUploadV2SignedBlob(bytes);
+      if (packet.type === 'blobCommit') {
+        state = packet.kind === 3 ? 2 : 3;
+        subscriptions.get(characteristic)?.(encodeEncryptedUploadV2SignedBlob({
+          type: 'blobResult', kind: packet.kind, writeId: packet.writeId, result: 0,
+        }));
+      }
+    });
+    const provider = async () => ({
+      challenge,
+      exchangeProof: async () => result,
+    });
+    const handler = new ProtocolHandler();
+    const first = handler.refreshEncryptedUploadV2Context(
+      'device-1', provider, 1024, controller.signal
+    );
+    await beginPending;
+    controller.abort();
+    await expect(first).rejects.toMatchObject({ code: 'encrypted_upload_v2_cancelled' });
+
+    await expect(handler.refreshEncryptedUploadV2Context(
+      'device-1', provider, 1024
+    )).rejects.toMatchObject({ code: 'encrypted_upload_v2_operation_in_progress' });
+
+    releaseBegin();
+    await beginGate;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    state = 1;
+    await expect(handler.refreshEncryptedUploadV2Context(
+      'device-1', provider, 1024
+    )).resolves.toBeUndefined();
+    expect(writes.filter((write) => write.characteristic === CHAR_UPLOAD_CONTEXT_V2)).toHaveLength(2);
+  });
+
+  it('removes a cancelled signed-document listener and fences retry until ABORT drains', async () => {
+    const ble = mockGetBleManager();
+    const controller = new AbortController();
+    let signedBlobListener: ((data: Buffer) => void) | undefined;
+    let releaseAbort!: () => void;
+    let markCommitWritten!: () => void;
+    let markAbortPending!: () => void;
+    const abortGate = new Promise<void>((resolve) => { releaseAbort = resolve; });
+    const commitWritten = new Promise<void>((resolve) => { markCommitWritten = resolve; });
+    const abortPending = new Promise<void>((resolve) => { markAbortPending = resolve; });
+    let attemptId = 0;
+    const nonce = Buffer.alloc(16, 7);
+    const proof = Buffer.alloc(147, 8);
+    const challenge = document('BOTACTXQ', 196, 9); challenge.writeUInt16LE(1, 8);
+    const result = document('BOTACTXR', 264, 10); result.writeUInt16LE(1, 8);
+    ble.subscribeToCharacteristic.mockImplementation((
+      _device: string, _service: string, characteristic: string,
+      onData: (data: Buffer) => void
+    ) => {
+      subscriptions.set(characteristic, onData);
+      if (characteristic === CHAR_TRANSFER_SIGNED_BLOB_V2) signedBlobListener = onData;
+      return { remove: jest.fn(() => {
+        if (signedBlobListener === onData) signedBlobListener = undefined;
+      }) };
+    });
+    ble.readCharacteristic.mockImplementation(async () => {
+      const bytes = Buffer.alloc(28);
+      bytes[0] = 0x66; bytes[1] = 2; bytes[2] = 1;
+      bytes.writeUInt32LE(attemptId, 4); bytes.writeUInt16LE(16, 10);
+      nonce.copy(bytes, 12);
+      return bytes;
+    });
+    ble.writeCharacteristic.mockImplementation(async (
+      _device: string, _service: string, characteristic: string, bytes: Buffer
+    ) => {
+      writes.push({ characteristic, data: bytes });
+      if (characteristic === CHAR_UPLOAD_CONTEXT_V2) {
+        attemptId = bytes.readUInt32LE(4);
+        return;
+      }
+      const packet = decodeEncryptedUploadV2SignedBlob(bytes);
+      if (packet.type === 'blobCommit') markCommitWritten();
+      if (packet.type === 'blobAbort') {
+        markAbortPending();
+        await abortGate;
+      }
+    });
+    const handler = new ProtocolHandler();
+    const first = handler.refreshEncryptedUploadV2Context(
+      'device-1', async () => ({ challenge, exchangeProof: async () => result }),
+      1024, controller.signal
+    );
+    await commitWritten;
+    controller.abort();
+    await expect(first).rejects.toMatchObject({ code: 'encrypted_upload_v2_cancelled' });
+    await abortPending;
+    expect(signedBlobListener).toBeUndefined();
+
+    await expect(handler.refreshEncryptedUploadV2Context(
+      'device-1', async () => ({ challenge, exchangeProof: async () => result }), 1024
+    )).rejects.toMatchObject({ code: 'encrypted_upload_v2_operation_in_progress' });
+    releaseAbort();
+  });
+
+  it('allows retry after the context deadline expires during provider-only work', async () => {
+    jest.useFakeTimers();
+    try {
+      const ble = mockGetBleManager();
+      let attemptId = 0;
+      let state = 1;
+      let providerCalls = 0;
+      let markProviderPending!: () => void;
+      const providerPending = new Promise<void>((resolve) => { markProviderPending = resolve; });
+      const nonce = Buffer.alloc(16, 7);
+      const proof = Buffer.alloc(147, 8);
+      const challenge = document('BOTACTXQ', 196, 9); challenge.writeUInt16LE(1, 8);
+      const result = document('BOTACTXR', 264, 10); result.writeUInt16LE(1, 8);
+      ble.readCharacteristic.mockImplementation(async () => {
+        const payload = state === 1 ? nonce : state === 2 ? proof : Buffer.alloc(0);
+        const bytes = Buffer.alloc(12 + payload.length);
+        bytes[0] = 0x66; bytes[1] = 2; bytes[2] = state;
+        bytes.writeUInt32LE(attemptId, 4); bytes.writeUInt16LE(payload.length, 10);
+        payload.copy(bytes, 12);
+        return bytes;
+      });
+      ble.writeCharacteristic.mockImplementation(async (
+        _device: string, _service: string, characteristic: string, bytes: Buffer
+      ) => {
+        writes.push({ characteristic, data: bytes });
+        if (characteristic === CHAR_UPLOAD_CONTEXT_V2) {
+          attemptId = bytes.readUInt32LE(4);
+          return;
+        }
+        const packet = decodeEncryptedUploadV2SignedBlob(bytes);
+        if (packet.type === 'blobCommit') {
+          state = packet.kind === 3 ? 2 : 3;
+          subscriptions.get(characteristic)?.(encodeEncryptedUploadV2SignedBlob({
+            type: 'blobResult', kind: packet.kind, writeId: packet.writeId, result: 0,
+          }));
+        }
+      });
+      const provider = async () => {
+        providerCalls += 1;
+        if (providerCalls === 1) {
+          markProviderPending();
+          return await new Promise<never>(() => undefined);
+        }
+        return { challenge, exchangeProof: async () => result };
+      };
+      const handler = new ProtocolHandler();
+      const first = handler.refreshEncryptedUploadV2Context('device-1', provider, 1024);
+      await providerPending;
+      jest.advanceTimersByTime(30_000);
+      await expect(first).rejects.toMatchObject({ code: 'encrypted_upload_v2_context_timeout' });
+
+      state = 1;
+      await expect(handler.refreshEncryptedUploadV2Context(
+        'device-1', provider, 1024
+      )).resolves.toBeUndefined();
+      expect(providerCalls).toBe(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('clears an uncertain context fence only after a verified new connection event', async () => {
+    const ble = mockGetBleManager();
+    const controller = new AbortController();
+    let onConnected: ((deviceId: string) => void) | undefined;
+    let releaseBegin!: () => void;
+    let markBeginPending!: () => void;
+    const beginGate = new Promise<void>((resolve) => { releaseBegin = resolve; });
+    const beginPending = new Promise<void>((resolve) => { markBeginPending = resolve; });
+    let beginCount = 0;
+    ble.on.mockImplementation((event: string, listener: (deviceId: string) => void) => {
+      if (event === 'deviceConnected') onConnected = listener;
+    });
+    ble.writeCharacteristic.mockImplementation(async (
+      _device: string, _service: string, characteristic: string
+    ) => {
+      if (characteristic !== CHAR_UPLOAD_CONTEXT_V2) return;
+      beginCount += 1;
+      if (beginCount === 1) {
+        markBeginPending();
+        await beginGate;
+        return;
+      }
+      throw new Error('fresh connection reached');
+    });
+    const handler = new ProtocolHandler();
+    const provider = async () => await new Promise<never>(() => undefined);
+    const first = handler.refreshEncryptedUploadV2Context(
+      'device-1', provider, 1024, controller.signal
+    );
+    await beginPending;
+    controller.abort();
+    await expect(first).rejects.toMatchObject({ code: 'encrypted_upload_v2_cancelled' });
+    await expect(handler.refreshEncryptedUploadV2Context(
+      'device-1', provider, 1024
+    )).rejects.toMatchObject({ code: 'encrypted_upload_v2_operation_in_progress' });
+
+    expect(onConnected).toBeDefined();
+    onConnected?.('device-1');
+    await expect(handler.refreshEncryptedUploadV2Context(
+      'device-1', provider, 1024
+    )).rejects.toThrow('fresh connection reached');
+    expect(beginCount).toBe(2);
+    releaseBegin();
   });
 
   it('transfers ciphertext and manifest through 0409 and ACKs windows through 0408', async () => {

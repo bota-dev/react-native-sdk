@@ -168,9 +168,17 @@ export class ProtocolHandler {
   private bleManager: BleManager;
   private activeTransfers: Map<string, TransferState> = new Map();
   private activeEncryptedUploadV2Transfers: Map<bigint, Subscription> = new Map();
+  private activeEncryptedUploadV2Contexts = new Map<string, {
+    finished: boolean;
+    mutableOperations: Set<Promise<unknown>>;
+  }>();
+  private readonly clearEncryptedUploadV2ContextOnConnect = (deviceId: string) => {
+    this.activeEncryptedUploadV2Contexts.delete(deviceId);
+  };
 
   constructor() {
     this.bleManager = getBleManager();
+    this.bleManager.on('deviceConnected', this.clearEncryptedUploadV2ContextOnConnect);
   }
 
   /**
@@ -323,13 +331,44 @@ export class ProtocolHandler {
     maximumDocumentBytes: number, signal?: AbortSignal
   ): Promise<void> {
     if (!this.bleManager.isConnected(deviceId)) throw DeviceError.notConnected(deviceId);
-    await exchangeUploadContext({
-      begin: (bytes) => this.bleManager.writeCharacteristic(
-        deviceId, SERVICE_BOTA_STORAGE, CHAR_UPLOAD_CONTEXT_V2, bytes, true),
-      read: () => this.bleManager.readCharacteristic(deviceId, SERVICE_BOTA_STORAGE, CHAR_UPLOAD_CONTEXT_V2),
-      sendDocument: (kind, bytes, activeSignal) => this.sendEncryptedUploadV2Document(
-        deviceId, kind, randomEncryptedUploadV2WriteId(), bytes, maximumDocumentBytes, activeSignal),
-    }, provider, randomEncryptedUploadV2WriteId(), signal);
+    if (this.activeEncryptedUploadV2Contexts.has(deviceId)) {
+      throw new EncryptedUploadV2RuntimeError('encrypted_upload_v2_operation_in_progress');
+    }
+    const context = { finished: false, mutableOperations: new Set<Promise<unknown>>() };
+    this.activeEncryptedUploadV2Contexts.set(deviceId, context);
+    const releaseIfQuiescent = () => {
+      if (
+        context.finished &&
+        context.mutableOperations.size === 0 &&
+        this.activeEncryptedUploadV2Contexts.get(deviceId) === context
+      ) {
+        this.activeEncryptedUploadV2Contexts.delete(deviceId);
+      }
+    };
+    const trackMutable = <T>(operation: () => Promise<T>): Promise<T> => {
+      const pending = Promise.resolve().then(operation);
+      context.mutableOperations.add(pending);
+      void pending.finally(() => {
+        context.mutableOperations.delete(pending);
+        releaseIfQuiescent();
+      }).catch(() => undefined);
+      return pending;
+    };
+    try {
+      await exchangeUploadContext({
+        begin: (bytes) => trackMutable(() => this.bleManager.writeCharacteristic(
+          deviceId, SERVICE_BOTA_STORAGE, CHAR_UPLOAD_CONTEXT_V2, bytes, true)),
+        read: () => this.bleManager.readCharacteristic(
+          deviceId, SERVICE_BOTA_STORAGE, CHAR_UPLOAD_CONTEXT_V2),
+        sendDocument: (kind, bytes, activeSignal) => trackMutable(() =>
+          this.sendEncryptedUploadV2Document(
+            deviceId, kind, randomEncryptedUploadV2WriteId(), bytes,
+            maximumDocumentBytes, activeSignal)),
+      }, provider, randomEncryptedUploadV2WriteId(), signal);
+    } finally {
+      context.finished = true;
+      releaseIfQuiescent();
+    }
   }
 
   /** Deliver one exact signed v2 document over 0407. */
@@ -383,6 +422,7 @@ export class ProtocolHandler {
           SERVICE_BOTA_STORAGE,
           CHAR_TRANSFER_SIGNED_BLOB_V2,
           (rawValue) => {
+            if (resultFinished) return;
             try {
               const value = decodeEncryptedUploadV2SignedBlob(rawValue);
               if (
@@ -405,6 +445,7 @@ export class ProtocolHandler {
             }
           },
           (error) => {
+            if (resultFinished) return;
             cleanup();
             reject(error);
           }
@@ -467,10 +508,23 @@ export class ProtocolHandler {
           ));
         }, ENCRYPTED_UPLOAD_V2_TIMEOUT_MS);
       }
-      await result;
+      let rejectAbort: () => void = () => undefined;
+      const aborted = new Promise<never>((_resolve, reject) => {
+        rejectAbort = () => reject(
+          new EncryptedUploadV2RuntimeError('encrypted_upload_v2_cancelled')
+        );
+      });
+      signal?.addEventListener('abort', rejectAbort, { once: true });
+      if (signal?.aborted) rejectAbort();
+      try {
+        await Promise.race([result, aborted]);
+      } finally {
+        signal?.removeEventListener('abort', rejectAbort);
+      }
     } catch (error) {
       subscription?.remove();
       if (timer !== undefined) clearTimeout(timer);
+      resultFinished = true;
       if (began) {
         try {
           await this.bleManager.writeCharacteristic(
@@ -1993,6 +2047,8 @@ export class ProtocolHandler {
       subscription.remove();
     }
     this.activeEncryptedUploadV2Transfers.clear();
+    this.activeEncryptedUploadV2Contexts.clear();
+    this.bleManager.off('deviceConnected', this.clearEncryptedUploadV2ContextOnConnect);
   }
 }
 

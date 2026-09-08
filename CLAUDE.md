@@ -183,7 +183,11 @@ enter the legacy path. A lost post-CONFIRM result is surfaced as
 `encrypted_upload_v2_confirmation_uncertain` without rolling back the
 finalized backend session; its checkpoint remains for reconciliation.
 An optional `AbortSignal` reaches provider, sink, signed-document, and BLE
-transfer work but cannot roll back an attempted CONFIRM. Streaming-v2 is
+transfer work but cannot roll back an attempted CONFIRM. If cancellation or
+the context deadline abandons mutable native BLE I/O, the SDK keeps that
+device's context channel fenced until the write and any document ABORT drain;
+a verified new BLE connection also clears the fence. Provider-only timeout
+does not quarantine the connection. Streaming-v2 is
 undefined, and production firmware does not yet advertise the target
 characteristics. The owning design is
 [Encrypted Upload v2](../internal-docs/device/Encrypted-Upload-v2.md); never

@@ -252,6 +252,9 @@ Current implementation status:
 - Batch-v2 transfer: wired through additive list/sync methods, opaque sinks,
   durable checkpoint-before-WINDOW_ACK, exact manifest/evidence validation,
   application-owned staging/finalization, and receipt-gated CONFIRM.
+- Context cancellation containment: late native BEGIN/document/ABORT work keeps
+  per-device v2 context ownership until quiescence or verified reconnect;
+  provider-only timeout does not fence an otherwise idle BLE channel.
 - Streaming-v2: undefined.
 - Mixed catalog: `listPendingRecordings` reads legacy before v2, suppressing
   only known four-byte aliases of the full v2 catalog; no full UUID is inferred

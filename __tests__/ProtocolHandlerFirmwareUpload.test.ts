@@ -32,6 +32,8 @@ describe('ProtocolHandler firmware upload', () => {
 
     mockGetBleManager.mockReset();
     mockGetBleManager.mockReturnValue({
+      on: jest.fn(),
+      off: jest.fn(),
       isConnected: jest.fn(() => true),
       subscribeToCharacteristic: jest.fn(
         (

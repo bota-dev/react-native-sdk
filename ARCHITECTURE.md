@@ -223,7 +223,11 @@ bit8 and `material.uploadContext`. `encryptedUploadV2Context.ts` sequences a
 fresh device nonce on040C, opaque196-byte challenge and264-byte result via0407
 kinds3/4, and the device's116..366-byte proof. One30-second attempt deadline
 bounds reads, document delivery and provider work, including cancellation and
-late promises. SDK refreshes context before authorization and first receipt;
+late promises. Mutable BEGIN/document writes retain per-device ownership after
+the outer deadline or cancellation until native I/O and any document ABORT are
+quiescent; retries are rejected during that interval, while a verified new
+connection clears the old-link fence. Provider-only timeout remains retryable.
+SDK refreshes context before authorization and first receipt;
 firmware alone authenticates credential, signature and security-time interval.
 The pinned baseline vectors remain unchanged; only the formerly reserved bit8
 negative case is superseded by an explicit extension test. Firmware integration

@@ -349,7 +349,11 @@ called before authorization and again before receipt delivery. Firmware must
 advertise context bit8 as well as batch flags0x7f. A missing provider, rejected
 context, cancellation or30-second timeout retains the recording and never
 falls back to plaintext. Backend context calls belong to your authenticated
-backend; do not embed a secret API key in the app. See the
+backend; do not embed a secret API key in the app. A timed-out or cancelled
+mutable context write temporarily fences later v2 context attempts on that
+device until native I/O (including ABORT) drains or a new BLE connection is
+verified. Provider-only timeout remains immediately retryable once BLE is
+quiescent. See the
 [upload context API](https://docs.bota.dev/api-reference/uploads/encrypted-v2).
 
 The additive batch-v2 API uses only `B07A0406` through `B07A040C`. It reads a

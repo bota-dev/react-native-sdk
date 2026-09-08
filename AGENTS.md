@@ -161,7 +161,8 @@ That minimum only fits control frames; firmware must also fit a complete
 checkpoint boundary in the negotiated window. The receiver permits short DATA
 tails and checks transmitted offsets/lengths, not sequence × maximum payload.
 `encryptedUploadV2Runtime.test.ts` covers MTU185/247, two block-sized windows,
-short-tail loss/duplicate repair, and persist-before-ACK without parsing audio.
+short-tail loss/duplicate repair, and a deferred persistence gate proving that
+the ACK stays unresolved until checkpoint persistence completes, without parsing audio.
 Keep the legacy `syncRecording`/`syncAllRecordings` provider behavior unchanged.
 Persist only resumable IDs/digests/offsets/counters/bounds, persist before a
 successful WINDOW_ACK, require receipt plus device-complete status before

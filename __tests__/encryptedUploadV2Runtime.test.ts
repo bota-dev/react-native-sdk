@@ -61,7 +61,12 @@ describe('EncryptedUploadV2TransferReceiver', () => {
     const frameLimit = mtu - 3;
     const payloadLimit = Math.min(484, frameLimit - 28);
     const windowLimit = Math.min(44, Math.floor((frameLimit - 68) / 4));
-    const persistCheckpoint = jest.fn(async (_checkpoint: EncryptedUploadV2Checkpoint) => {});
+    let signalPersistenceStart = () => {};
+    let persistenceGate = Promise.resolve();
+    const persistCheckpoint = jest.fn(async (_checkpoint: EncryptedUploadV2Checkpoint) => {
+      signalPersistenceStart();
+      await persistenceGate;
+    });
     const sink = new TestSink();
     const receiver = new EncryptedUploadV2TransferReceiver({
       transportSessionId: 7n,
@@ -114,12 +119,27 @@ describe('EncryptedUploadV2TransferReceiver', () => {
       // offsets/lengths; neither is derived as sequence * negotiated payload.
       await receiver.receive(tail);
       await receiver.receive(tail);
-      const accepted = await receiver.receive(windowEnd);
+      let releasePersistence!: () => void;
+      persistenceGate = new Promise<void>((resolve) => { releasePersistence = resolve; });
+      const persistenceStarted = new Promise<void>((resolve) => { signalPersistenceStart = resolve; });
+      let ackResolved = false;
+      const acceptedPromise = receiver.receive(windowEnd).then((result) => {
+        ackResolved = true;
+        return result;
+      });
+      await persistenceStarted;
+      // Let all runnable promise continuations settle, without releasing the
+      // durability gate. A fire-and-forget persistence call must fail here.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(ackResolved).toBe(false);
       expect(persistCheckpoint).toHaveBeenCalledTimes(windowIndex + 1);
       expect(persistCheckpoint).toHaveBeenLastCalledWith(expect.objectContaining({
         revision: windowIndex + 1, nextCiphertextOffset: BigInt(end),
         highestContiguousSequence: sequence - 1,
       }));
+      releasePersistence();
+      const accepted = await acceptedPromise;
+      expect(ackResolved).toBe(true);
       if (accepted.type !== 'control') throw new Error('expected durable ACK');
       expect(decodeEncryptedUploadV2Transfer(accepted.frame)).toMatchObject({
         type: 'windowAck', checkpointRevision: windowIndex + 1,

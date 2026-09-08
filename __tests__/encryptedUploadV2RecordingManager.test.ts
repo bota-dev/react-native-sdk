@@ -449,6 +449,8 @@ describe('RecordingManager encrypted upload v2', () => {
     await sync.next();
     const pending = sync.next();
     await transferStarted;
+    expect(manager.protocolHandler.getEncryptedUploadV2Capabilities)
+      .toHaveBeenCalledWith(device.id, controller.signal);
     controller.abort();
 
     await expect(pending).resolves.toMatchObject({

@@ -148,6 +148,111 @@ describe('ProtocolHandler encrypted upload v2', () => {
     await expect(handler.getEncryptedUploadV2Capabilities('device-1')).rejects.toThrow('link failed');
   });
 
+  it('retries canonical zero flags and observes readiness on the same connection', async () => {
+    jest.useFakeTimers();
+    try {
+      const ble = mockGetBleManager();
+      const pending = capability(); pending.writeUInt32LE(0, 4);
+      ble.readCharacteristic.mockResolvedValueOnce(pending).mockResolvedValue(capability());
+      const result = new ProtocolHandler().getEncryptedUploadV2Capabilities('device-1');
+      await jest.advanceTimersByTimeAsync(100);
+      await expect(result).resolves.toMatchObject({ capabilities: { flags: 0x7f } });
+      expect(ble.readCharacteristic).toHaveBeenCalledTimes(2);
+    } finally { jest.useRealTimers(); }
+  });
+
+  it('bounds unavailable capability retries without returning legacy absence', async () => {
+    jest.useFakeTimers();
+    try {
+      const ble = mockGetBleManager();
+      const pending = capability(); pending.writeUInt32LE(0, 4);
+      ble.readCharacteristic.mockResolvedValue(pending);
+      const handler = new ProtocolHandler();
+      const result = expect(handler.getEncryptedUploadV2Capabilities('device-1'))
+        .rejects.toMatchObject({ code: 'encrypted_upload_v2_capability_unavailable' });
+      await jest.advanceTimersByTimeAsync(10000); await result;
+      expect(ble.readCharacteristic.mock.calls.length).toBeLessThanOrEqual(100);
+      ble.readCharacteristic.mockResolvedValue(capability());
+      await expect(handler.getEncryptedUploadV2Capabilities('device-1')).resolves.toBeDefined();
+    } finally { jest.useRealTimers(); }
+  });
+
+  it('times out hung reads and fences overlap until late read drains', async () => {
+    jest.useFakeTimers();
+    try {
+      const ble = mockGetBleManager(); let finish!: (value: Buffer) => void;
+      ble.readCharacteristic.mockReturnValueOnce(new Promise<Buffer>(resolve => { finish = resolve; }));
+      const handler = new ProtocolHandler();
+      const result = expect(handler.getEncryptedUploadV2Capabilities('device-1'))
+        .rejects.toMatchObject({ code: 'encrypted_upload_v2_capability_unavailable' });
+      await jest.advanceTimersByTimeAsync(10000); await result;
+      await expect(handler.getEncryptedUploadV2Capabilities('device-1'))
+        .rejects.toMatchObject({ code: 'encrypted_upload_v2_operation_in_progress' });
+      finish(capability()); await jest.advanceTimersByTimeAsync(0);
+      await expect(handler.getEncryptedUploadV2Capabilities('device-1')).resolves.toBeDefined();
+      expect(ble.readCharacteristic).toHaveBeenCalledTimes(2);
+    } finally { jest.useRealTimers(); }
+  });
+
+  it('includes hung characteristic discovery in the same deadline', async () => {
+    jest.useFakeTimers();
+    try {
+      const ble = mockGetBleManager(); let finish!: (value: boolean) => void;
+      ble.hasCharacteristic.mockReturnValueOnce(new Promise<boolean>(resolve => { finish = resolve; }));
+      const handler = new ProtocolHandler();
+      const result = expect(handler.getEncryptedUploadV2Capabilities('device-1'))
+        .rejects.toMatchObject({ code: 'encrypted_upload_v2_capability_unavailable' });
+      await jest.advanceTimersByTimeAsync(10000); await result;
+      finish(false); await jest.advanceTimersByTimeAsync(0);
+      expect(ble.readCharacteristic).not.toHaveBeenCalled();
+      await expect(handler.getEncryptedUploadV2Capabilities('device-1')).resolves.toBeDefined();
+    } finally { jest.useRealTimers(); }
+  });
+
+  it('does not retry malformed zero-filled capability data', async () => {
+    const ble = mockGetBleManager(); ble.readCharacteristic.mockResolvedValue(Buffer.alloc(24));
+    await expect(new ProtocolHandler().getEncryptedUploadV2Capabilities('device-1')).rejects.toBeDefined();
+    expect(ble.readCharacteristic).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let a late old-link read release the replacement read fence', async () => {
+    const ble = mockGetBleManager();
+    let finishOld!: (value: Buffer) => void; let finishNew!: (value: Buffer) => void;
+    ble.readCharacteristic
+      .mockReturnValueOnce(new Promise<Buffer>(resolve => { finishOld = resolve; }))
+      .mockReturnValueOnce(new Promise<Buffer>(resolve => { finishNew = resolve; }));
+    const handler = new ProtocolHandler();
+    const old = expect(handler.getEncryptedUploadV2Capabilities('device-1')).rejects.toBeDefined();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    for (const [event, listener] of ble.on.mock.calls)
+      if (event === 'deviceConnected') listener('device-1');
+    await old;
+    const replacement = handler.getEncryptedUploadV2Capabilities('device-1');
+    await new Promise<void>(resolve => setImmediate(resolve));
+    finishOld(capability()); await new Promise<void>(resolve => setImmediate(resolve));
+    await expect(handler.getEncryptedUploadV2Capabilities('device-1'))
+      .rejects.toMatchObject({ code: 'encrypted_upload_v2_operation_in_progress' });
+    finishNew(capability()); await expect(replacement).resolves.toBeDefined();
+    expect(ble.readCharacteristic).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['abort', 'disconnect', 'reconnect'])('stops pending capability work on %s without old-link retries', async (reason) => {
+    const ble = mockGetBleManager(); let finish!: (value: Buffer) => void;
+    ble.readCharacteristic.mockReturnValueOnce(new Promise<Buffer>(resolve => { finish = resolve; }));
+    const handler = new ProtocolHandler(); const controller = new AbortController();
+    const result = expect(handler.getEncryptedUploadV2Capabilities('device-1', controller.signal)).rejects.toBeDefined();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    if (reason === 'abort') controller.abort();
+    else for (const [event, listener] of ble.on.mock.calls) {
+      if (event === (reason === 'disconnect' ? 'deviceDisconnected' : 'deviceConnected')) listener('device-1');
+    }
+    await result;
+    const pending = capability(); pending.writeUInt32LE(0, 4);
+    finish(pending); await new Promise<void>(resolve => setImmediate(resolve));
+    expect(ble.readCharacteristic).toHaveBeenCalledTimes(1);
+    await expect(handler.getEncryptedUploadV2Capabilities('device-1')).resolves.toBeDefined();
+  });
+
   it('lists full v2 recording identities only through 040B/0408', async () => {
     const ble = mockGetBleManager();
     ble.writeCharacteristic.mockImplementation(async (

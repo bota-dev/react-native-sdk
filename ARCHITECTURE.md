@@ -201,6 +201,15 @@ It discovers the optional capability before reading it, uses only `0406..040C`,
 requires full UUID/generation plus committed storage format 3, and never joins
 the v2 list to a legacy four-byte file ID by list position.
 
+A present canonical0406 with support flags exactly zero is a readiness sentinel.
+The capability reader retries every100ms under one10-second deadline covering
+discovery and native reads, then throws `encrypted_upload_v2_capability_unavailable`
+without downgrading. Missing characteristics alone retain legacy absence behavior;
+malformed values and other read failures reject immediately. Captured connection
+revision and the sync AbortSignal stop old-link retries. Timed-out native reads
+retain a per-device read fence until settlement or verified reconnect; late results
+cannot clear a replacement read's ownership. Context-write quarantine is unchanged.
+
 The application-owned `EncryptedUploadV2Provider` supplies opaque
 authorization/receipt bytes, stable backend session/owner IDs, a ciphertext
 sink, and staging/manifest/finalization callbacks. The receiver writes exact

@@ -383,6 +383,12 @@ It returns legacy `DeviceRecording` or full-identity
 reads the legacy snapshot first, then suppresses its four-byte aliases of v2
 entries; it never reconstructs a full UUID from a legacy file ID. Missing
 capability uses the legacy catalog; a failed v2 read fails the operation.
+If the characteristic is present but its canonical support flags are zero, the
+SDK waits for firmware initialization by retrying every100ms for at most10seconds
+(including discovery/read awaits). Exhaustion reports
+`encrypted_upload_v2_capability_unavailable` without legacy fallback. Sync's
+`AbortSignal` also cancels this selection step. A timed-out native read must drain
+or a verified reconnect must replace the link before another capability read.
 
 `EncryptedUploadV2FileSink` supplies bounded-memory prefix hashing and
 checkpoint validation for a host-provided `EncryptedUploadV2File`. Its

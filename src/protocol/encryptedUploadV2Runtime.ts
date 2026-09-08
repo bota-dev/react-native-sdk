@@ -45,6 +45,7 @@ export type EncryptedUploadV2RuntimeErrorCode =
   | 'encrypted_upload_v2_operation_in_progress'
   | 'encrypted_upload_v2_cancelled'
   | 'encrypted_upload_v2_context_timeout'
+  | 'encrypted_upload_v2_capability_unavailable'
   | 'encrypted_upload_v2_not_prepared'
   | 'encrypted_upload_v2_session_mismatch'
   | 'encrypted_upload_v2_packet_conflict'

@@ -173,12 +173,14 @@ export class ProtocolHandler {
     mutableOperations: Set<Promise<unknown>>;
   }>();
   private encryptedUploadV2ConnectionRevisions = new Map<string, number>();
+  private activeEncryptedUploadV2CapabilityReads = new Map<string, object>();
   private readonly clearEncryptedUploadV2ContextOnConnect = (deviceId: string) => {
     this.encryptedUploadV2ConnectionRevisions.set(
       deviceId,
       (this.encryptedUploadV2ConnectionRevisions.get(deviceId) ?? 0) + 1
     );
     this.activeEncryptedUploadV2Contexts.delete(deviceId);
+    this.activeEncryptedUploadV2CapabilityReads.delete(deviceId);
   };
 
   constructor() {
@@ -205,27 +207,79 @@ export class ProtocolHandler {
 
   /** Read a fresh batch-v2 capability value from its dedicated characteristic. */
   async getEncryptedUploadV2Capabilities(
-    deviceId: string
+    deviceId: string,
+    signal?: AbortSignal
   ): Promise<EncryptedUploadV2CapabilitySnapshot | undefined> {
+    throwIfEncryptedUploadV2Cancelled(signal);
     if (!this.bleManager.isConnected(deviceId)) {
       throw DeviceError.notConnected(deviceId);
     }
-    const present = await this.bleManager.hasCharacteristic(
-      deviceId,
-      SERVICE_BOTA_STORAGE,
-      CHAR_STORAGE_TRANSFER_CAPABILITIES_V2
-    );
-    if (!present) return undefined;
-    const rawValue = await this.bleManager.readCharacteristic(
-      deviceId,
-      SERVICE_BOTA_STORAGE,
-      CHAR_STORAGE_TRANSFER_CAPABILITIES_V2
-    );
-    return {
-      rawValue: Buffer.from(rawValue),
-      sha256: hashEncryptedUploadV2Bytes(rawValue),
-      capabilities: decodeEncryptedUploadV2Capabilities(rawValue),
+    if (this.activeEncryptedUploadV2CapabilityReads.has(deviceId)) {
+      throw new EncryptedUploadV2RuntimeError('encrypted_upload_v2_operation_in_progress');
+    }
+    const owner = {};
+    const deadline = Date.now() + ENCRYPTED_UPLOAD_V2_TIMEOUT_MS;
+    const revision = this.encryptedUploadV2ConnectionRevisions.get(deviceId) ?? 0;
+    this.activeEncryptedUploadV2CapabilityReads.set(deviceId, owner);
+    let failure: Error | undefined;
+    let stop!: (error: Error) => void;
+    const stopped = new Promise<never>((_, reject) => {
+      stop = error => { failure ??= error; reject(failure); };
+    });
+    const assertCurrent = () => {
+      if (failure) throw failure;
+      throwIfEncryptedUploadV2Cancelled(signal);
+      if (Date.now() >= deadline)
+        throw new EncryptedUploadV2RuntimeError('encrypted_upload_v2_capability_unavailable');
+      if (!this.bleManager.isConnected(deviceId) ||
+          this.activeEncryptedUploadV2CapabilityReads.get(deviceId) !== owner ||
+          (this.encryptedUploadV2ConnectionRevisions.get(deviceId) ?? 0) !== revision) {
+        throw DeviceError.notConnected(deviceId);
+      }
     };
+    const onAbort = () => stop(new EncryptedUploadV2RuntimeError('encrypted_upload_v2_cancelled'));
+    const onLinkChanged = (id: string) => { if (id === deviceId) stop(DeviceError.notConnected(deviceId)); };
+    const timeout = setTimeout(() => stop(new EncryptedUploadV2RuntimeError(
+      'encrypted_upload_v2_capability_unavailable'
+    )), ENCRYPTED_UPLOAD_V2_TIMEOUT_MS);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    this.bleManager.on('deviceDisconnected', onLinkChanged);
+    this.bleManager.on('deviceConnected', onLinkChanged);
+    const operation = (async () => {
+      const present = await this.bleManager.hasCharacteristic(
+        deviceId, SERVICE_BOTA_STORAGE, CHAR_STORAGE_TRANSFER_CAPABILITIES_V2
+      );
+      assertCurrent();
+      if (!present) return undefined;
+      for (;;) {
+        const rawValue = await this.bleManager.readCharacteristic(
+          deviceId, SERVICE_BOTA_STORAGE, CHAR_STORAGE_TRANSFER_CAPABILITIES_V2
+        );
+        assertCurrent();
+        const capabilities = decodeEncryptedUploadV2Capabilities(rawValue);
+        if (capabilities.flags !== 0) return {
+          rawValue: Buffer.from(rawValue), sha256: hashEncryptedUploadV2Bytes(rawValue), capabilities,
+        };
+        // Present + canonical zero flags is not legacy absence. The worker may
+        // still be initializing; malformed values and ordinary read errors fail.
+        await Promise.race([new Promise<void>(resolve => setTimeout(resolve, 100)), stopped]);
+        assertCurrent();
+      }
+    })();
+    const release = () => {
+      if (this.activeEncryptedUploadV2CapabilityReads.get(deviceId) === owner)
+        this.activeEncryptedUploadV2CapabilityReads.delete(deviceId);
+    };
+    // A timed-out native read can settle late. Keep its per-device fence until
+    // it drains or a verified reconnect replaces the captured link; never retry it.
+    void operation.then(release, release);
+    try { return await Promise.race([operation, stopped]); }
+    finally {
+      clearTimeout(timeout);
+      signal?.removeEventListener('abort', onAbort);
+      this.bleManager.off('deviceDisconnected', onLinkChanged);
+      this.bleManager.off('deviceConnected', onLinkChanged);
+    }
   }
 
   /** List committed bota_enc_v2 recordings with full UUID and generation. */
@@ -2057,6 +2111,7 @@ export class ProtocolHandler {
     }
     this.activeEncryptedUploadV2Transfers.clear();
     this.activeEncryptedUploadV2Contexts.clear();
+    this.activeEncryptedUploadV2CapabilityReads.clear();
     this.encryptedUploadV2ConnectionRevisions.clear();
     this.bleManager.off('deviceConnected', this.clearEncryptedUploadV2ContextOnConnect);
   }

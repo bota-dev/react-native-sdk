@@ -329,7 +329,7 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
       };
       throwIfEncryptedUploadV2Cancelled(options.signal);
       const capability = await this.protocolHandler.getEncryptedUploadV2Capabilities(
-        device.id
+        device.id, options.signal
       );
       throwIfEncryptedUploadV2Cancelled(options.signal);
       if (!capability) {

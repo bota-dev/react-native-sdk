@@ -18,6 +18,12 @@
 
 See [AGENTS.md](AGENTS.md) for build commands and conventions. See [ARCHITECTURE.md](ARCHITECTURE.md) for module map and protocol details.
 
+> **V2 capability readiness:** A present, canonical0406 with zero support flags
+> retries every100ms within a single10-second discovery/read deadline. Exhaustion
+> throws `encrypted_upload_v2_capability_unavailable`; only characteristic absence
+> permits legacy selection. Sync cancellation and connection changes fence retries;
+> late native reads retain ownership until drained or replaced by verified reconnect.
+
 **Documentation rule:** Every public API change must include documentation updates — `CLAUDE.md`, `ARCHITECTURE.md`, `AGENTS.md`, `README.md`, public docs (`../docs/`) as needed, and `../internal-docs/` if the change implements or invalidates a design doc. See [`../internal-docs/CLAUDE.md`](../internal-docs/CLAUDE.md) for the downstream impact matrix.
 
 > **v5 target designs (not implemented):** SDK work for logical recording

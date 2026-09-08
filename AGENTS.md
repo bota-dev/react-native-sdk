@@ -163,6 +163,12 @@ tails and checks transmitted offsets/lengths, not sequence × maximum payload.
 `encryptedUploadV2Runtime.test.ts` covers MTU185/247, two block-sized windows,
 short-tail loss/duplicate repair, and a deferred persistence gate proving that
 the ACK stays unresolved until checkpoint persistence completes, without parsing audio.
+For a present `0406`, canonical zero flags mean unavailable/not-yet-ready:
+retry every100ms within one10-second discovery/read deadline, then throw
+`encrypted_upload_v2_capability_unavailable`, never legacy absence. Malformed
+values and ordinary read failures are not retried. Capability reads capture the
+connection revision and sync AbortSignal; abandoned native I/O fences overlap
+until it drains or verified reconnect replaces the link. No old-link retry.
 Keep the legacy `syncRecording`/`syncAllRecordings` provider behavior unchanged.
 Persist only resumable IDs/digests/offsets/counters/bounds, persist before a
 successful WINDOW_ACK, require receipt plus device-complete status before

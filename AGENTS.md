@@ -145,7 +145,9 @@ and again before first receipt; one30-second deadline bounds the entire attempt,
 including hung provider work. It never accesses the installed token or verifies
 signatures. Cancellation/deadline release must not outlive mutable context BLE
 I/O: retain per-device ownership through late BEGIN/document/ABORT completion,
-or until a verified reconnect, and suppress stale document listeners. Do not
+or until a verified reconnect, and bind cleanup to the captured connection so
+old document continuations cannot ABORT the replacement link. Suppress stale
+document listeners. Do not
 quarantine provider-only timeout after BLE writes are quiescent. Pairing and
 Grant nonce remain unchanged. Baseline vectors are not
 rewritten; the old bit8 negative case has an explicit amendment regression.

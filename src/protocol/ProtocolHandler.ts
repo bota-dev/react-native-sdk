@@ -172,7 +172,12 @@ export class ProtocolHandler {
     finished: boolean;
     mutableOperations: Set<Promise<unknown>>;
   }>();
+  private encryptedUploadV2ConnectionRevisions = new Map<string, number>();
   private readonly clearEncryptedUploadV2ContextOnConnect = (deviceId: string) => {
+    this.encryptedUploadV2ConnectionRevisions.set(
+      deviceId,
+      (this.encryptedUploadV2ConnectionRevisions.get(deviceId) ?? 0) + 1
+    );
     this.activeEncryptedUploadV2Contexts.delete(deviceId);
   };
 
@@ -335,6 +340,7 @@ export class ProtocolHandler {
       throw new EncryptedUploadV2RuntimeError('encrypted_upload_v2_operation_in_progress');
     }
     const context = { finished: false, mutableOperations: new Set<Promise<unknown>>() };
+    const connectionRevision = this.encryptedUploadV2ConnectionRevisions.get(deviceId) ?? 0;
     this.activeEncryptedUploadV2Contexts.set(deviceId, context);
     const releaseIfQuiescent = () => {
       if (
@@ -363,7 +369,9 @@ export class ProtocolHandler {
         sendDocument: (kind, bytes, activeSignal) => trackMutable(() =>
           this.sendEncryptedUploadV2Document(
             deviceId, kind, randomEncryptedUploadV2WriteId(), bytes,
-            maximumDocumentBytes, activeSignal)),
+            maximumDocumentBytes, activeSignal,
+            () => (this.encryptedUploadV2ConnectionRevisions.get(deviceId) ?? 0) ===
+              connectionRevision)),
       }, provider, randomEncryptedUploadV2WriteId(), signal);
     } finally {
       context.finished = true;
@@ -378,7 +386,8 @@ export class ProtocolHandler {
     writeId: number,
     document: Buffer,
     maximumDocumentBytes: number,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    canAbortCurrentConnection: () => boolean = () => true
   ): Promise<void> {
     if (!this.bleManager.isConnected(deviceId)) {
       throw DeviceError.notConnected(deviceId);
@@ -525,7 +534,7 @@ export class ProtocolHandler {
       subscription?.remove();
       if (timer !== undefined) clearTimeout(timer);
       resultFinished = true;
-      if (began) {
+      if (began && canAbortCurrentConnection()) {
         try {
           await this.bleManager.writeCharacteristic(
             deviceId,
@@ -2048,6 +2057,7 @@ export class ProtocolHandler {
     }
     this.activeEncryptedUploadV2Transfers.clear();
     this.activeEncryptedUploadV2Contexts.clear();
+    this.encryptedUploadV2ConnectionRevisions.clear();
     this.bleManager.off('deviceConnected', this.clearEncryptedUploadV2ContextOnConnect);
   }
 }

@@ -226,7 +226,9 @@ bounds reads, document delivery and provider work, including cancellation and
 late promises. Mutable BEGIN/document writes retain per-device ownership after
 the outer deadline or cancellation until native I/O and any document ABORT are
 quiescent; retries are rejected during that interval, while a verified new
-connection clears the old-link fence. Provider-only timeout remains retryable.
+connection clears the old-link fence and advances a connection revision that
+suppresses any late ABORT from the abandoned document continuation.
+Provider-only timeout remains retryable.
 SDK refreshes context before authorization and first receipt;
 firmware alone authenticates credential, signature and security-time interval.
 The pinned baseline vectors remain unchanged; only the formerly reserved bit8

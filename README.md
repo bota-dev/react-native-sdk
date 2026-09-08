@@ -352,7 +352,9 @@ falls back to plaintext. Backend context calls belong to your authenticated
 backend; do not embed a secret API key in the app. A timed-out or cancelled
 mutable context write temporarily fences later v2 context attempts on that
 device until native I/O (including ABORT) drains or a new BLE connection is
-verified. Provider-only timeout remains immediately retryable once BLE is
+verified. Reconnection invalidates old-link document cleanup, preventing a
+late continuation from sending ABORT into the replacement context.
+Provider-only timeout remains immediately retryable once BLE is
 quiescent. See the
 [upload context API](https://docs.bota.dev/api-reference/uploads/encrypted-v2).
 

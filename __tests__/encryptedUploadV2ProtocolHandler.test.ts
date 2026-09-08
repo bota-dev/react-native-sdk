@@ -497,6 +497,81 @@ describe('ProtocolHandler encrypted upload v2', () => {
     releaseBegin();
   });
 
+  it('does not send a stale document ABORT over a replacement connection', async () => {
+    const ble = mockGetBleManager();
+    const controller = new AbortController();
+    let onConnected: ((deviceId: string) => void) | undefined;
+    let releaseOldData!: () => void;
+    let markOldDataPending!: () => void;
+    const oldDataGate = new Promise<void>((resolve) => { releaseOldData = resolve; });
+    const oldDataPending = new Promise<void>((resolve) => { markOldDataPending = resolve; });
+    let attemptId = 0;
+    let state = 1;
+    let oldWriteId: number | undefined;
+    const nonce = Buffer.alloc(16, 7);
+    const proof = Buffer.alloc(147, 8);
+    const challenge = document('BOTACTXQ', 196, 9); challenge.writeUInt16LE(1, 8);
+    const result = document('BOTACTXR', 264, 10); result.writeUInt16LE(1, 8);
+    ble.on.mockImplementation((event: string, listener: (deviceId: string) => void) => {
+      if (event === 'deviceConnected') onConnected = listener;
+    });
+    ble.readCharacteristic.mockImplementation(async () => {
+      const payload = state === 1 ? nonce : state === 2 ? proof : Buffer.alloc(0);
+      const bytes = Buffer.alloc(12 + payload.length);
+      bytes[0] = 0x66; bytes[1] = 2; bytes[2] = state;
+      bytes.writeUInt32LE(attemptId, 4); bytes.writeUInt16LE(payload.length, 10);
+      payload.copy(bytes, 12);
+      return bytes;
+    });
+    ble.writeCharacteristic.mockImplementation(async (
+      _device: string, _service: string, characteristic: string, bytes: Buffer
+    ) => {
+      writes.push({ characteristic, data: bytes });
+      if (characteristic === CHAR_UPLOAD_CONTEXT_V2) {
+        attemptId = bytes.readUInt32LE(4);
+        state = 1;
+        return;
+      }
+      const packet = decodeEncryptedUploadV2SignedBlob(bytes);
+      if (packet.type === 'blobBegin' && oldWriteId === undefined) oldWriteId = packet.writeId;
+      if (packet.type === 'blobData' && packet.writeId === oldWriteId) {
+        markOldDataPending();
+        await oldDataGate;
+        return;
+      }
+      if (packet.type === 'blobCommit') {
+        state = packet.kind === 3 ? 2 : 3;
+        subscriptions.get(characteristic)?.(encodeEncryptedUploadV2SignedBlob({
+          type: 'blobResult', kind: packet.kind, writeId: packet.writeId, result: 0,
+        }));
+      }
+    });
+    const provider = async () => ({ challenge, exchangeProof: async () => result });
+    const handler = new ProtocolHandler();
+    const first = handler.refreshEncryptedUploadV2Context(
+      'device-1', provider, 1024, controller.signal
+    );
+    await oldDataPending;
+    controller.abort();
+    await expect(first).rejects.toMatchObject({ code: 'encrypted_upload_v2_cancelled' });
+
+    expect(onConnected).toBeDefined();
+    onConnected?.('device-1');
+    await expect(handler.refreshEncryptedUploadV2Context(
+      'device-1', provider, 1024
+    )).resolves.toBeUndefined();
+
+    releaseOldData();
+    await oldDataGate;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const staleAborts = writes.filter((write) => {
+      if (write.characteristic !== CHAR_TRANSFER_SIGNED_BLOB_V2) return false;
+      const packet = decodeEncryptedUploadV2SignedBlob(write.data);
+      return packet.type === 'blobAbort' && packet.writeId === oldWriteId;
+    });
+    expect(staleAborts).toHaveLength(0);
+  });
+
   it('transfers ciphertext and manifest through 0409 and ACKs windows through 0408', async () => {
     const ciphertext = Buffer.from('opaque');
     const manifest = document('BOTAMNF2', 580, 0x33);

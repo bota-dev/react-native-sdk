@@ -23,6 +23,7 @@ import {
   CHAR_RECORDING_TRANSFER_V2,
   CHAR_TRANSFER_STATUS_V2,
   CHAR_RECORDING_LIST_V2,
+  CHAR_UPLOAD_CONTEXT_V2,
   TRANSFER_PACKET_TIMEOUT,
   STREAMING_PAUSED_TIMEOUT,
 } from '../ble/constants';
@@ -57,7 +58,12 @@ import {
   type EncryptedUploadV2CiphertextSink,
   type EncryptedUploadV2TransferEvidence,
   throwIfEncryptedUploadV2Cancelled,
+  randomEncryptedUploadV2WriteId,
 } from './encryptedUploadV2Runtime';
+import {
+  decodeUploadContextDocument, exchangeUploadContext,
+  type EncryptedUploadV2ContextProvider,
+} from './encryptedUploadV2Context';
 
 const log = logger.tag('ProtocolHandler');
 
@@ -311,10 +317,25 @@ export class ProtocolHandler {
     });
   }
 
-  /** Deliver one exact signed authorization or receipt over 0407. */
+  /** Fresh, device-owned credential context; no API calls or token access. */
+  async refreshEncryptedUploadV2Context(
+    deviceId: string, provider: EncryptedUploadV2ContextProvider,
+    maximumDocumentBytes: number, signal?: AbortSignal
+  ): Promise<void> {
+    if (!this.bleManager.isConnected(deviceId)) throw DeviceError.notConnected(deviceId);
+    await exchangeUploadContext({
+      begin: (bytes) => this.bleManager.writeCharacteristic(
+        deviceId, SERVICE_BOTA_STORAGE, CHAR_UPLOAD_CONTEXT_V2, bytes, true),
+      read: () => this.bleManager.readCharacteristic(deviceId, SERVICE_BOTA_STORAGE, CHAR_UPLOAD_CONTEXT_V2),
+      sendDocument: (kind, bytes, activeSignal) => this.sendEncryptedUploadV2Document(
+        deviceId, kind, randomEncryptedUploadV2WriteId(), bytes, maximumDocumentBytes, activeSignal),
+    }, provider, randomEncryptedUploadV2WriteId(), signal);
+  }
+
+  /** Deliver one exact signed v2 document over 0407. */
   async sendEncryptedUploadV2Document(
     deviceId: string,
-    kind: 1 | 2,
+    kind: 1 | 2 | 3 | 4,
     writeId: number,
     document: Buffer,
     maximumDocumentBytes: number,
@@ -323,9 +344,12 @@ export class ProtocolHandler {
     if (!this.bleManager.isConnected(deviceId)) {
       throw DeviceError.notConnected(deviceId);
     }
-    const documentKind = kind === 1 ? 'authorization' : 'receipt';
     throwIfEncryptedUploadV2Cancelled(signal);
-    decodeEncryptedUploadV2Document(documentKind, document);
+    if (kind === 1 || kind === 2) {
+      decodeEncryptedUploadV2Document(kind === 1 ? 'authorization' : 'receipt', document);
+    } else {
+      decodeUploadContextDocument(kind, document);
+    }
     if (document.length > maximumDocumentBytes) {
       throw new EncryptedUploadV2RuntimeError(
         'encrypted_upload_v2_invalid_configuration'

@@ -304,7 +304,7 @@ for await (const progress of BotaClient.recordings.syncEncryptedRecordingV2(
   async ({ recording, capability, checkpoint }) => {
     // Your app/backend selects v2 and returns the signed authorization, stable
     // session/owner IDs, an opaque ciphertext sink, staging/finalization
-    // callbacks, and the signed completion receipt callback.
+    // callbacks, the signed completion receipt callback, and uploadContext.
     return yourBackend.prepareEncryptedUploadV2(recording, capability, checkpoint);
   },
   { signal: abortController.signal }
@@ -331,7 +331,28 @@ upload may still be active. A busy response, Bluetooth disconnect, or
 unavailable status will not start a competing Bluetooth transfer. Bluetooth
 fallback requires a fresh device status with `syncActive: false`.
 
-The additive batch-v2 API uses only `B07A0406` through `B07A040B`. It reads a
+V2 material must include `uploadContext: EncryptedUploadV2ContextProvider`:
+
+```typescript
+uploadContext: async (deviceNonce, signal) => {
+  const context = await yourBackend.createUploadContext(deviceNonce, signal);
+  return {
+    challenge: context.challenge,
+    exchangeProof: (opaqueProof, activeSignal) =>
+      yourBackend.submitAndPollUploadContext(context.id, opaqueProof, activeSignal),
+  };
+}
+```
+
+The callback returns exact opaque bytes, not a token or decoded claims. It is
+called before authorization and again before receipt delivery. Firmware must
+advertise context bit8 as well as batch flags0x7f. A missing provider, rejected
+context, cancellation or30-second timeout retains the recording and never
+falls back to plaintext. Backend context calls belong to your authenticated
+backend; do not embed a secret API key in the app. See the
+[upload context API](https://docs.bota.dev/api-reference/uploads/encrypted-v2).
+
+The additive batch-v2 API uses only `B07A0406` through `B07A040C`. It reads a
 fresh capability before invoking `EncryptedUploadV2Provider`, persists only
 resume identifiers/digests/offsets/bounds, and deletes the device recording
 only after the exact receipt is accepted and v2 CONFIRM reaches the device's

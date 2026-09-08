@@ -226,6 +226,21 @@ target allocation.
 | Recording transfer v2 | `B07A0004-0009-1000-8000-00805F9B34FB` |
 | Transfer status v2 | `B07A0004-000A-1000-8000-00805F9B34FB` |
 | Recording list v2 | `B07A0004-000B-1000-8000-00805F9B34FB` |
+| Upload context v2 (Read/Write/Notify) | `B07A0004-000C-1000-8000-00805F9B34FB` |
+
+September8 additive source contract: capability bit8 (0x100), in addition to
+batch0x7f, requires upload-only context before authorization and first receipt.
+BEGIN on040C is `65 02 00 00 || attempt_id_u32LE` (nonzero correlation ID).
+Read is `66 02 state 00 || attempt_id_u32LE || result_u16LE || length_u16LE ||
+payload`. States0pending/1nonce16/2proof116..366/3accepted/4failed; pending,
+accepted and failed have no payload, and only failed has nonzero result.
+Notify is a12-byte header hint to read. Reads/polls never renew the device's
+independent nonce or30-second attempt deadline.0407 signed-blob kind3 carries
+the196-byte `BOTACTXQ` challenge and kind4 the264-byte `BOTACTXR` result; both
+documents use version1, while their existing signed-blob frames still use2.
+Success means the device accepted the document, not merely assembled it.
+No pairing/Grant nonce changes. Exact crypto/time contract:
+[Upload context](../internal-docs/device/Encrypted-Upload-v2-Upload-Context.md).
 
 Current implementation status:
 

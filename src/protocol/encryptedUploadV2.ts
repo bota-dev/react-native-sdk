@@ -178,7 +178,7 @@ export type EncryptedUploadV2Transfer =
 const DOCUMENT_VERSION = 2;
 const TRANSFER_VERSION = 2;
 const MAX_FRAME_LENGTH = 512;
-const BLOB_DOCUMENT_LENGTHS: Readonly<Record<number, number>> = { 1: 408, 2: 336 };
+const BLOB_DOCUMENT_LENGTHS: Readonly<Record<number, number>> = { 1: 408, 2: 336, 3: 196, 4: 264 };
 const DOCUMENTS: Readonly<
   Record<EncryptedUploadV2DocumentKind, { magic: string; length: number }>
 > = {
@@ -357,7 +357,7 @@ export function decodeEncryptedUploadV2Capabilities(
     fail('invalid_length', 'capability declared length must be 24');
   }
   const flags = bytes.readUInt32LE(4);
-  if ((flags & ~0xff) !== 0) {
+  if ((flags & ~0x1ff) !== 0) {
     fail('noncanonical_encoding', 'capability flags contain unknown bits');
   }
   requireZero(bytes, 22, 2, 'capability reserved bytes');

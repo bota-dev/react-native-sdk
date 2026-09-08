@@ -197,7 +197,7 @@ The validator remains side-effect free. The additive runtime is separately
 wired through `ProtocolHandler`, `EncryptedUploadV2TransferReceiver`, and the
 explicit `RecordingManager.listEncryptedUploadV2Recordings`,
 `syncEncryptedRecordingV2`, and `syncAllEncryptedRecordingsV2` entry points.
-It discovers the optional capability before reading it, uses only `0406..040B`,
+It discovers the optional capability before reading it, uses only `0406..040C`,
 requires full UUID/generation plus committed storage format 3, and never joins
 the v2 list to a legacy four-byte file ID by list position.
 
@@ -217,6 +217,17 @@ device-complete makes subsequent checkpoint cleanup best-effort and
 non-rollback-capable. An optional `AbortSignal` propagates through provider,
 sink, signed-document, and transfer work; cancellation cannot roll back an
 attempted CONFIRM.
+
+The September8 upload-only context amendment additionally requires capability
+bit8 and `material.uploadContext`. `encryptedUploadV2Context.ts` sequences a
+fresh device nonce on040C, opaque196-byte challenge and264-byte result via0407
+kinds3/4, and the device's116..366-byte proof. One30-second attempt deadline
+bounds reads, document delivery and provider work, including cancellation and
+late promises. SDK refreshes context before authorization and first receipt;
+firmware alone authenticates credential, signature and security-time interval.
+The pinned baseline vectors remain unchanged; only the formerly reserved bit8
+negative case is superseded by an explicit extension test. Firmware integration
+and real-device proof remain separate, not implied by these host tests.
 
 Streaming-v2 remains undefined. Released `syncRecording`/`syncAllRecordings`
 plaintext v1 and historical P10 behavior are unchanged, and a stored

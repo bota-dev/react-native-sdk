@@ -1,5 +1,12 @@
 # CLAUDE.md - Bota React Native SDK
 
+> **Upload context source preview (2026-09-08):** v2 material now requires an
+> `uploadContext` provider. `040C` exchanges a device-owned nonce/proof and
+> `0407` kinds3/4 relay challenge/result. Capability bit8 gates this addition;
+> the SDK refreshes it before authorization and receipt, within one30-second
+> deadline. No credential decryption, app clock trust or pairing changes.
+> Firmware/live deployment remains a separate test gate.
+
 > **V2 source preview (2026-09-07):** `listPendingRecordings` safely merges
 > legacy/v2 catalogs without synthesizing full recording identities.
 > `EncryptedUploadV2FileSink` owns bounded incremental hashing and proved-prefix
@@ -168,7 +175,7 @@ normative behavior and System Design v5 for implementation conformance.
 This repository retains released v1/P10 runtime behavior. It now also carries
 a vector-pinned `encrypted_upload_v2` codec plus additive, explicit
 `RecordingManager` batch-v2 list/sync methods. The new path reads the optional
-capability by characteristic discovery, uses only `0406..040B`, writes opaque
+capability by characteristic discovery, uses only `0406..040C`, writes opaque
 ciphertext to an application sink, persists verified checkpoint metadata
 before WINDOW_ACK, and gates CONFIRM on the exact completion receipt plus
 device complete status. Pre-confirm failures retain the device copy and never

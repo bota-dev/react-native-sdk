@@ -9,6 +9,7 @@
 // Main client
 export { BotaClient } from './BotaClient';
 export type { BotaConfig, SdkState, BluetoothState } from './BotaClient';
+export type { EncryptedUploadV2ContextProvider } from './protocol/encryptedUploadV2Context';
 
 // Managers
 export { DeviceManager, RecordingManager, StreamingSession, OTAManager } from './managers';

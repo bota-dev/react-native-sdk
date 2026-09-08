@@ -137,7 +137,14 @@ cd app && npx expo start --clear
 **Public API surface** — everything exported from `src/index.ts` is public and semver-versioned. Be conservative about adding to it. Internal modules are not exported.
 
 **Encrypted Upload v2 boundary** — batch-v2 is exposed only through the
-additive explicit v2 list/sync methods and dedicated `0406..040B` runtime.
+additive explicit v2 list/sync methods and dedicated `0406..040C` runtime.
+The September8 upload-only context amendment requires negotiated bit8 and
+`EncryptedUploadV2Material.uploadContext`: an application-owned opaque challenge/
+proof exchange. SDK sequences device context acceptance before authorization
+and again before first receipt; one30-second deadline bounds the entire attempt,
+including hung provider work. It never accesses the installed token or verifies
+signatures. Pairing and Grant nonce remain unchanged. Baseline vectors are not
+rewritten; the old bit8 negative case has an explicit amendment regression.
 The source-preview `listPendingRecordings` preserves legacy-only devices and
 merges mixed storage by suppressing known v1 filename aliases of full identities
 read from `040B` (never by list position). Read the legacy snapshot first to
@@ -169,6 +176,7 @@ the target characteristics.
 | `src/protocol/encryptedUploadV2.ts` | Internal v2 framing codec; not a runtime workflow or root export |
 | `src/protocol/encryptedUploadV2Selection.ts` | Internal side-effect-free three-profile policy/capability validator |
 | `src/protocol/encryptedUploadV2Runtime.ts` | Stateful opaque sink, window repair, checkpoint-before-ACK, manifest/evidence verification |
+| `src/protocol/encryptedUploadV2Context.ts` | Bounded opaque upload-only context sequence and040C snapshot codec |
 | `src/managers/DeviceManager.ts` | Device discovery, connection, bonding, provisioning, authenticated factory-reset receipt/replay, diagnostics subscriptions |
 | `src/managers/RecordingManager.ts` | Recording list, Bluetooth transfer, upload orchestration |
 | `src/sync/deviceUploadHandoff.ts` | Direct-upload ownership and safe BLE-fallback policy |

@@ -36,7 +36,7 @@ const capabilityValue = (() => {
   value[0] = 1;
   value[1] = 2;
   value.writeUInt16LE(24, 2);
-  value.writeUInt32LE(0x7f, 4);
+  value.writeUInt32LE(0x17f, 4);
   value.writeUInt16LE(1024, 8);
   value.writeUInt16LE(1024, 10);
   value.writeUInt16LE(64, 12);
@@ -48,7 +48,7 @@ const capabilityValue = (() => {
 
 const capabilities = {
   highestTransferProfileVersion: 2,
-  flags: 0x7f,
+  flags: 0x17f,
   maximumSignedBlobBytes: 1024,
   maximumManifestBytes: 1024,
   maximumDataPayloadBytes: 64,
@@ -87,6 +87,7 @@ describe('RecordingManager encrypted upload v2', () => {
         capabilities,
       })),
       sendEncryptedUploadV2Document: jest.fn(async () => { operations.push('authorization'); }),
+      refreshEncryptedUploadV2Context: jest.fn(async () => { operations.push('context'); }),
       transferEncryptedUploadV2: jest.fn(async (_deviceId, request) => {
         operations.push('transfer');
         await request.persistCheckpoint({
@@ -133,6 +134,7 @@ describe('RecordingManager encrypted upload v2', () => {
       uploadSessionUuid: 'ffeeddcc-bbaa-9988-7766-554433221100',
       ownerRevision: 4,
       authorization: document('BOTAAUT2', 408),
+      uploadContext: jest.fn(),
       sink,
       stageCiphertext: async () => { operations.push('stage'); },
       submitManifest: async () => { operations.push('manifest'); },
@@ -193,6 +195,7 @@ describe('RecordingManager encrypted upload v2', () => {
       'preparing', 'transferring', 'uploading', 'completing', 'completed',
     ]);
     expect(operations).toEqual([
+      'context',
       'authorization',
       'transfer',
       'checkpoint',
@@ -200,6 +203,7 @@ describe('RecordingManager encrypted upload v2', () => {
       'manifest',
       'finalize',
       'receipt',
+      'context',
       'confirm',
       'delete-checkpoint',
     ]);
@@ -208,6 +212,27 @@ describe('RecordingManager encrypted upload v2', () => {
       checkpoint: undefined,
       capability: expect.objectContaining({ rawValue: capabilityValue }),
     }));
+  });
+
+  it('requires the context capability and provider before authorization delivery', async () => {
+    const manager = createManager([]);
+    const uploadProvider = provider([]);
+    manager.protocolHandler.getEncryptedUploadV2Capabilities.mockResolvedValueOnce({
+      rawValue: capabilityValue, sha256: digest(capabilityValue), capabilities: { ...capabilities, flags: 0x7f },
+    });
+    await expect(collect(manager.syncEncryptedRecordingV2(device, recording, uploadProvider))).rejects.toThrow('encrypted_upload_v2_unsupported');
+    expect(uploadProvider).not.toHaveBeenCalled();
+    const material = await uploadProvider(); delete (material as any).uploadContext;
+    await expect(collect(manager.syncEncryptedRecordingV2(device, recording, async () => material))).rejects.toThrow('encrypted_upload_v2_invalid_configuration');
+    expect(manager.protocolHandler.sendEncryptedUploadV2Document).not.toHaveBeenCalled();
+  });
+
+  it('retains the file and never CONFIRMs if fresh receipt context fails', async () => {
+    const operations: string[] = []; const manager = createManager(operations);
+    manager.protocolHandler.refreshEncryptedUploadV2Context.mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('context rejected'));
+    await expect(collect(manager.syncEncryptedRecordingV2(device, recording, provider(operations)))).rejects.toThrow('context rejected');
+    expect(operations).not.toContain('confirm'); expect(operations).not.toContain('delete-checkpoint');
   });
 
   it('never confirms or downgrades after a v2 finalization failure', async () => {

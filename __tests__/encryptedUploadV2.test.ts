@@ -94,7 +94,6 @@ describe('Encrypted Upload v2 internal contract codecs', () => {
       'ble-truncated-capability',
       'ble-capability-trailing-byte',
       'ble-capability-unknown-version',
-      'ble-capability-unknown-flag',
       'ble-capability-nonzero-reserved',
       'ble-truncated-blob-begin',
       'ble-blob-nonzero-reserved',
@@ -118,6 +117,17 @@ describe('Encrypted Upload v2 internal contract codecs', () => {
       const operation = operations[vector.operation as keyof typeof operations];
       expect(thrownCode(() => operation(bytes(vector)))).toBe(vector.expectedError);
     }
+  });
+
+  it('amends only previously reserved bit8 for the upload-context preview and still rejects unknown bits', () => {
+    // Keep the pinned baseline vectors unchanged; the September8 additive
+    // contract assigns this old negative vector's formerly reserved flag.
+    const vector = cases.find((item) => item.name === 'ble-capability-unknown-flag');
+    if (!vector) throw new Error('baseline capability vector missing');
+    const value = bytes(vector);
+    expect(decodeEncryptedUploadV2Capabilities(value).flags).toBe(0x17f);
+    value.writeUInt32LE(0x27f, 4);
+    expect(thrownCode(() => decodeEncryptedUploadV2Capabilities(value))).toBe('noncanonical_encoding');
   });
 
   it('requires explicit batch capabilities 0 through 6 and ignores streaming bit 7', () => {

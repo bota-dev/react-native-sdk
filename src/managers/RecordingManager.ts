@@ -66,6 +66,8 @@ import {
   type EncryptedUploadV2TransferEvidence,
 } from '../protocol/encryptedUploadV2Runtime';
 
+import type { EncryptedUploadV2ContextProvider } from '../protocol/encryptedUploadV2Context';
+
 const log = logger.tag('RecordingManager');
 
 /**
@@ -93,6 +95,7 @@ export interface EncryptedUploadV2Material {
   uploadSessionUuid: string;
   ownerRevision: number;
   authorization: Buffer;
+  uploadContext: EncryptedUploadV2ContextProvider;
   sink: EncryptedUploadV2CiphertextSink;
   stageCiphertext: (
     evidence: EncryptedUploadV2TransferEvidence,
@@ -335,6 +338,9 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
         );
       }
       const bounds = capability.capabilities;
+      if ((bounds.flags & 0x100) === 0) {
+        throw new EncryptedUploadProfileSelectionError('encrypted_upload_v2_unsupported');
+      }
       const negotiatedMtu = await getBleManager().getMtu(device.id);
       throwIfEncryptedUploadV2Cancelled(options.signal);
       const maximumFrameBytes = Math.min(512, negotiatedMtu - 3);
@@ -387,6 +393,9 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
         }
       );
       decodeEncryptedUploadV2Document('authorization', material.authorization);
+      if (typeof material.uploadContext !== 'function') {
+        throw new EncryptedUploadV2RuntimeError('encrypted_upload_v2_invalid_configuration');
+      }
 
       const checkpoint = compatibleEncryptedUploadV2Checkpoint(
         storedCheckpoint,
@@ -398,6 +407,9 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
       );
       transportSessionId = randomEncryptedUploadV2TransportSessionId();
 
+      await this.protocolHandler.refreshEncryptedUploadV2Context(
+        device.id, material.uploadContext, bounds.maximumSignedBlobBytes, options.signal);
+      throwIfEncryptedUploadV2Cancelled(options.signal);
       await this.protocolHandler.sendEncryptedUploadV2Document(
         device.id,
         1,
@@ -472,6 +484,9 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
       );
       throwIfEncryptedUploadV2Cancelled(options.signal);
       decodeEncryptedUploadV2Document('receipt', receipt);
+      await this.protocolHandler.refreshEncryptedUploadV2Context(
+        device.id, material.uploadContext, bounds.maximumSignedBlobBytes, options.signal);
+      throwIfEncryptedUploadV2Cancelled(options.signal);
 
       yield { stage: 'completing', progress: 0.5 };
       throwIfEncryptedUploadV2Cancelled(options.signal);

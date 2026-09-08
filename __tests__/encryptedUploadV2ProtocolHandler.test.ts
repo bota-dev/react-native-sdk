@@ -15,6 +15,7 @@ import {
   CHAR_TRANSFER_CONTROL_V2,
   CHAR_TRANSFER_SIGNED_BLOB_V2,
   CHAR_TRANSFER_STATUS_V2,
+  CHAR_UPLOAD_CONTEXT_V2,
 } from '../src/ble/constants';
 import { ProtocolHandler } from '../src/protocol/ProtocolHandler';
 import {
@@ -221,6 +222,38 @@ describe('ProtocolHandler encrypted upload v2', () => {
     expect(decodeEncryptedUploadV2SignedBlob(writes[0].data)).toMatchObject({
       type: 'blobBegin', kind: 1, writeId: 11, totalLength: 408,
     });
+  });
+
+  it('runs the context exchange through 040C and signed-blob kinds3/4 without touching Grant nonce', async () => {
+    const ble = mockGetBleManager(); let attemptId = 0; let state = 1;
+    const nonce = Buffer.alloc(16, 7); const proof = Buffer.alloc(147, 8);
+    const challenge = document('BOTACTXQ', 196, 9); challenge.writeUInt16LE(1, 8);
+    const result = document('BOTACTXR', 264, 10); result.writeUInt16LE(1, 8);
+    ble.readCharacteristic.mockImplementation(async (_device, _service, characteristic) => {
+      expect(characteristic).toBe(CHAR_UPLOAD_CONTEXT_V2);
+      const payload = state === 1 ? nonce : state === 2 ? proof : Buffer.alloc(0);
+      const bytes = Buffer.alloc(12 + payload.length); bytes[0] = 0x66; bytes[1] = 2; bytes[2] = state;
+      bytes.writeUInt32LE(attemptId, 4); bytes.writeUInt16LE(payload.length, 10); payload.copy(bytes, 12); return bytes;
+    });
+    ble.writeCharacteristic.mockImplementation(async (_device, _service, characteristic, bytes) => {
+      writes.push({ characteristic, data: bytes });
+      if (characteristic === CHAR_UPLOAD_CONTEXT_V2) { attemptId = bytes.readUInt32LE(4); return; }
+      expect(characteristic).toBe(CHAR_TRANSFER_SIGNED_BLOB_V2);
+      const packet = decodeEncryptedUploadV2SignedBlob(bytes);
+      if (packet.type === 'blobCommit') {
+        state = packet.kind === 3 ? 2 : 3;
+        subscriptions.get(characteristic)?.(encodeEncryptedUploadV2SignedBlob({ type: 'blobResult', kind: packet.kind, writeId: packet.writeId, result: 0 }));
+      }
+    });
+    const provider = jest.fn(async (bytes) => {
+      expect(bytes).toEqual(nonce);
+      return { challenge, exchangeProof: async (value: Buffer) => { expect(value).toEqual(proof); return result; } };
+    });
+    await new ProtocolHandler().refreshEncryptedUploadV2Context('device-1', provider, 1024);
+    expect(attemptId).not.toBe(0);
+    expect(writes.filter((write) => write.characteristic === CHAR_UPLOAD_CONTEXT_V2)).toHaveLength(1);
+    expect(writes.filter((write) => write.data[0] === 0x62).map((write) => write.data[2])).toEqual([3, 4]);
+    expect(ble.readCharacteristic).toHaveBeenCalledTimes(3);
   });
 
   it('transfers ciphertext and manifest through 0409 and ACKs windows through 0408', async () => {

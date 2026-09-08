@@ -238,6 +238,12 @@ Current implementation status:
   durable checkpoint-before-WINDOW_ACK, exact manifest/evidence validation,
   application-owned staging/finalization, and receipt-gated CONFIRM.
 - Streaming-v2: undefined.
+- Mixed catalog: `listPendingRecordings` reads legacy before v2, suppressing
+  only known four-byte aliases of the full v2 catalog; no full UUID is inferred
+  from a filename or list position. Ambiguous aliases fail closed.
+- Host file durability: `EncryptedUploadV2FileSink` synchronizes native file
+  writes before returning the prefix proof used by WINDOW_ACK. The 140-byte
+  START_ACK requires ATT MTU >= 143 before any v2 START is sent.
 - Legacy v1/P10: unchanged.
 - `BACKEND_PUBKEY` selection: prohibited. Its presence never enables v2.
 

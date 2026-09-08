@@ -138,6 +138,12 @@ cd app && npx expo start --clear
 
 **Encrypted Upload v2 boundary** — batch-v2 is exposed only through the
 additive explicit v2 list/sync methods and dedicated `0406..040B` runtime.
+The source-preview `listPendingRecordings` preserves legacy-only devices and
+merges mixed storage by suppressing known v1 filename aliases of full identities
+read from `040B` (never by list position). Read the legacy snapshot first to
+avoid offering a newly committed v2 object as legacy. `EncryptedUploadV2FileSink`
+requires a host-private file with real durable flush; it incrementally hashes
+bounded reads before checkpoint ACK. Require MTU ≥143 for the 140-byte START_ACK.
 Keep the legacy `syncRecording`/`syncAllRecordings` provider behavior unchanged.
 Persist only resumable IDs/digests/offsets/counters/bounds, persist before a
 successful WINDOW_ACK, require receipt plus device-complete status before

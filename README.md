@@ -344,10 +344,29 @@ opaque sink work, signed-document delivery, and an in-flight BLE transfer. A
 lost result after CONFIRM is reported as
 `encrypted_upload_v2_confirmation_uncertain`; it preserves the checkpoint and
 finalized backend state for reconciliation instead of attempting rollback.
-After matching device-complete, checkpoint cleanup is best-effort and cannot
-reverse completion. Install `react-native-quick-crypto` when using v2. This
+After matching device-complete, checkpoint cleanup and last-sync timestamp
+bookkeeping are best-effort and cannot reverse completion. Install
+`react-native-quick-crypto` when using v2. This
 source API is not a rollout signal: production firmware capability advertising
 and SDK publication remain separately gated.
+
+For a mixed device catalog, use the additive `listPendingRecordings(device)`.
+It returns legacy `DeviceRecording` or full-identity
+`EncryptedUploadV2Recording` entries (distinguished by `storageFormat`). It
+reads the legacy snapshot first, then suppresses its four-byte aliases of v2
+entries; it never reconstructs a full UUID from a legacy file ID. Missing
+capability uses the legacy catalog; a failed v2 read fails the operation.
+
+`EncryptedUploadV2FileSink` supplies bounded-memory prefix hashing and
+checkpoint validation for a host-provided `EncryptedUploadV2File`. Its
+`flush()` adapter must perform real native durable synchronization, such as
+`FileHandle.synchronize()` or `FileDescriptor.sync()`, before a checkpoint can
+be acknowledged. Closing a JavaScript stream is insufficient. The sink checks
+the saved prefix before truncating an unacknowledged tail, hashes in 64 KiB
+chunks, and retains incremental hash state between windows. Keep the file
+app-private and excluded from backups; retain it on failure or uncertain
+confirmation. The fixed 140-byte START_ACK requires an ATT MTU of at least
+143. These additions are source-preview APIs, not part of published `0.0.65`.
 
 ### WiFi Scanning
 

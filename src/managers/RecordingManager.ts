@@ -212,6 +212,27 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
     return recordings;
   }
 
+  /** Migration catalog. Full v2 identity comes ONLY from 040B, never from a
+   * legacy filename. Suppress its known four-byte legacy alias so callers cannot
+   * accidentally select plaintext transfer of the same v2 object. */
+  async listPendingRecordings(device: ConnectedDevice): Promise<Array<DeviceRecording | EncryptedUploadV2Recording>> {
+    const capability = await this.getEncryptedUploadV2Capabilities(device);
+    if (!capability) return this.listRecordings(device);
+    // Read legacy first: a v2 file committed while listing must be included in
+    // the later full-identity catalog before exposing any legacy candidates.
+    const legacy = await this.listRecordings(device);
+    const encrypted = await this.listEncryptedUploadV2Recordings(device);
+    const aliases = new Set<string>();
+    for (const recording of encrypted) {
+      const alias = `${recording.uuid.slice(0, 8).toLowerCase()}-0000-0000-0000-000000000000`;
+      if (aliases.has(alias)) {
+        throw new EncryptedUploadV2RuntimeError('encrypted_upload_v2_integrity_mismatch');
+      }
+      aliases.add(alias);
+    }
+    return [...encrypted, ...legacy.filter(recording => !aliases.has(recording.uuid.toLowerCase()))];
+  }
+
   /** Read the explicit v2 capability. Undefined means the characteristic is
    * absent; GATT read failures still reject and must not trigger downgrade. */
   async getEncryptedUploadV2Capabilities(
@@ -317,7 +338,8 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
       const negotiatedMtu = await getBleManager().getMtu(device.id);
       throwIfEncryptedUploadV2Cancelled(options.signal);
       const maximumFrameBytes = Math.min(512, negotiatedMtu - 3);
-      if (maximumFrameBytes < 128) {
+      // START fits in 128 bytes, but its mandatory START_ACK is 140 bytes.
+      if (maximumFrameBytes < 140) {
         throw new EncryptedUploadProfileSelectionError(
           'encrypted_upload_v2_unsupported'
         );
@@ -478,7 +500,16 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
           error: (error as Error).message,
         });
       }
-      await this.storage.setLastSyncTime(device.id);
+      try {
+        await this.storage.setLastSyncTime(device.id);
+      } catch {
+        // The device already committed CONFIRM. Local UI bookkeeping must not
+        // prevent the caller from observing completion and cleaning its file.
+        log.warn('Encrypted upload v2 last-sync bookkeeping remains pending', {
+          deviceId: device.id,
+          recordingUuid: recording.uuid,
+        });
+      }
 
       yield {
         stage: 'completed',

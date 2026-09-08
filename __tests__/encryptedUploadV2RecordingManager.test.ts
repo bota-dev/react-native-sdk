@@ -148,6 +148,38 @@ describe('RecordingManager encrypted upload v2', () => {
     }));
   }
 
+  it('requires room for the 140-byte START_ACK before calling the provider', async () => {
+    const manager = createManager([]);
+    const uploadProvider = provider([]);
+    mockBleManager.getMtu.mockResolvedValueOnce(142);
+    await expect(collect(manager.syncEncryptedRecordingV2(device, recording, uploadProvider)))
+      .rejects.toThrow('encrypted_upload_v2_unsupported');
+    expect(uploadProvider).not.toHaveBeenCalled();
+    expect(manager.protocolHandler.sendEncryptedUploadV2Document).not.toHaveBeenCalled();
+  });
+
+  it('lists mixed storage without exposing a v2 object as a second legacy choice', async () => {
+    const manager = createManager([]);
+    const legacy = { uuid: 'aabbccdd-0000-0000-0000-000000000000' };
+    manager.protocolHandler.listRecordings = jest.fn(async () => [
+      { uuid: '00112233-0000-0000-0000-000000000000' }, legacy,
+    ]);
+    manager.protocolHandler.listEncryptedUploadV2Recordings = jest.fn(async () => [recording]);
+    expect(await manager.listPendingRecordings(device)).toEqual([recording, legacy]);
+    manager.protocolHandler.getEncryptedUploadV2Capabilities.mockResolvedValue(undefined);
+    manager.protocolHandler.listEncryptedUploadV2Recordings.mockClear();
+    expect(await manager.listPendingRecordings(device)).toHaveLength(2);
+    expect(manager.protocolHandler.listEncryptedUploadV2Recordings).not.toHaveBeenCalled();
+  });
+
+  it('does not silently use the legacy catalog when reading v2 capability fails', async () => {
+    const manager = createManager([]);
+    manager.protocolHandler.getEncryptedUploadV2Capabilities.mockRejectedValue(new Error('GATT read failed'));
+    manager.protocolHandler.listRecordings = jest.fn();
+    await expect(manager.listPendingRecordings(device)).rejects.toThrow('GATT read failed');
+    expect(manager.protocolHandler.listRecordings).not.toHaveBeenCalled();
+  });
+
   it('stages, submits, finalizes, receives a receipt, and only then confirms deletion', async () => {
     const operations: string[] = [];
     const manager = createManager(operations);
@@ -221,6 +253,21 @@ describe('RecordingManager encrypted upload v2', () => {
     expect(progress.at(-1)?.stage).toBe('completed');
     expect(operations).toContain('confirm');
     expect(operations).toContain('delete-checkpoint');
+    expect(operations).not.toContain('abort');
+    expect(operations).not.toContain('cancel');
+  });
+
+  it('reports device-confirmed completion when last-sync bookkeeping fails', async () => {
+    const operations: string[] = [];
+    const manager = createManager(operations);
+    manager.storage.setLastSyncTime.mockRejectedValue(new Error('local storage unavailable'));
+
+    const progress = await collect(
+      manager.syncEncryptedRecordingV2(device, recording, provider(operations))
+    );
+
+    expect(progress.at(-1)).toMatchObject({ stage: 'completed', recordingId: 'rec_123' });
+    expect(operations).toContain('confirm');
     expect(operations).not.toContain('abort');
     expect(operations).not.toContain('cancel');
   });
@@ -316,7 +363,7 @@ describe('RecordingManager encrypted upload v2', () => {
         maximumMissingSequences: 100,
       },
     });
-    mockBleManager.getMtu.mockResolvedValueOnce(131);
+    mockBleManager.getMtu.mockResolvedValueOnce(143);
 
     await collect(manager.syncEncryptedRecordingV2(
       device,
@@ -327,8 +374,8 @@ describe('RecordingManager encrypted upload v2', () => {
     expect(manager.protocolHandler.transferEncryptedUploadV2).toHaveBeenCalledWith(
       device.id,
       expect.objectContaining({
-        windowPackets: 15,
-        maximumMissingSequences: 15,
+        windowPackets: 18,
+        maximumMissingSequences: 18,
         dataPayloadBytes: 64,
       })
     );

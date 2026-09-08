@@ -88,6 +88,8 @@ export type {
   EncryptedUploadV2CapabilitySnapshot,
   EncryptedUploadV2Recording,
 } from './protocol/ProtocolHandler';
+export { EncryptedUploadV2FileSink } from './storage/EncryptedUploadV2FileSink';
+export type { EncryptedUploadV2File } from './storage/EncryptedUploadV2FileSink';
 export {
   EncryptedUploadV2RuntimeError,
 } from './protocol/encryptedUploadV2Runtime';

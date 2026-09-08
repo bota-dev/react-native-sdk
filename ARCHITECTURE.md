@@ -171,6 +171,16 @@ transfer active until this final app result.
 
 ### Encrypted Upload v2 capability-gated batch runtime
 
+The additive `listPendingRecordings` reads legacy before the v2 snapshot and
+suppresses only the known four-byte aliases of full v2 identities supplied by
+the v2 catalog. Missing capability uses the unchanged legacy list; failed reads
+do not downgrade. `EncryptedUploadV2FileSink` verifies a saved prefix before
+truncating its unacknowledged tail, hashes with bounded 64 KiB reads and an
+incremental digest, and requires native durable flush before returning the
+checkpoint hash. It does not own backend credentials, filesystem paths, or
+post-CONFIRM file cleanup. Negotiation requires room for START_ACK (140 bytes,
+MTU at least 143), not just the smaller START request.
+
 `src/protocol/encryptedUploadV2.ts` is the frozen contract codec.
 It validates and round-trips the capability, signed-blob, signed-document, and
 transfer framing while leaving ciphertext, manifests, authorizations, and

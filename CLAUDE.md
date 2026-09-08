@@ -1,5 +1,12 @@
 # CLAUDE.md - Bota React Native SDK
 
+> **V2 source preview (2026-09-07):** `listPendingRecordings` safely merges
+> legacy/v2 catalogs without synthesizing full recording identities.
+> `EncryptedUploadV2FileSink` owns bounded incremental hashing and proved-prefix
+> truncation over a host file adapter that must implement real fsync. The minimum
+> ATT MTU is 143. These additions are not in published `0.0.65`; use the local
+> standalone SDK link until its next maintenance release, never `app-sdk` beta.
+
 > **Updated 2026-07:** DEVICE_SETTINGS byte 9 carries the explicit direct-heartbeat mask; legacy payloads parse as WiFi and cellular enabled. Each missing/null radio idle timeout independently defaults to 180 seconds during serialization, and legacy 1-9 second values round up to the 10-second wire minimum.
 
 See [AGENTS.md](AGENTS.md) for build commands and conventions. See [ARCHITECTURE.md](ARCHITECTURE.md) for module map and protocol details.

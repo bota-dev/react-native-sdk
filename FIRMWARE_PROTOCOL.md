@@ -251,6 +251,14 @@ No pairing/Grant nonce changes. Exact crypto/time contract:
 
 Current implementation status:
 
+September9 expiry recovery adds capability bit9 (`0x200`; known capability
+mask `0x3ff`) and `BOTAAUT2` flag `0x0008` at byte30. Recovery requires mask
+`0x37f`. SDK structural validation requires exact session/revision and
+recording/ciphertext identity; a changed checkpoint owner must advance revision
+and change session. Admission precedes transfer from zero; old checkpoint
+evidence is retained until a new durable ACK checkpoint. The device/backend
+verify signatures. See [expiry recovery](../internal-docs/device/Encrypted-Upload-v2-Expired-Session-Recovery.md).
+
 - Contract parser/serializer: present, internal.
 - Canonical vectors: vendored byte-for-byte from the recorded `app-sdk` Git
   revision in `protocol/vendor/app-sdk/encrypted-upload-v2.source.json`.

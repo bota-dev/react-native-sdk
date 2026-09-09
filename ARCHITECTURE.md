@@ -272,6 +272,17 @@ The pinned baseline vectors remain unchanged; only the formerly reserved bit8
 negative case is superseded by an explicit extension test. Firmware integration
 and real-device proof remain separate, not implied by these host tests.
 
+Expired pre-manifest recovery additionally recognizes bit9 (`0x200`) and
+`BOTAAUT2` flag `0x0008`. The provider selects a successor; SDK structural
+validation compares its session/revision, policy, recording UUID/generation,
+ciphertext length/hash and any stored checkpoint identity. Changed ownership
+requires mask `0x37f`, a different session and a strictly greater bounded owner
+revision. After device authorization admission, transfer starts from zero;
+old checkpoint evidence remains until new durable persistence. Replacement
+failure cannot invoke the ordinary checkpoint-mismatch deletion shortcut.
+Backend/device signatures remain the authority and receipt-confirmed deletion
+is unchanged. These are source/host checks, not physical recovery evidence.
+
 Streaming-v2 remains undefined. Released `syncRecording`/`syncAllRecordings`
 plaintext v1 and historical P10 behavior are unchanged, and a stored
 `BACKEND_PUBKEY` never selects v2. Production firmware still does not register

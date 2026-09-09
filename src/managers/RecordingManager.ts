@@ -49,6 +49,7 @@ import {
 } from '../sync/deviceUploadHandoff';
 import {
   decodeEncryptedUploadV2Document,
+  decodeEncryptedUploadV2AuthorizationIdentity,
 } from '../protocol/encryptedUploadV2';
 import {
   EncryptedUploadProfileSelectionError,
@@ -296,6 +297,7 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
     let confirmed = false;
     let confirmationUncertain = false;
     let cleanupAttempted = false;
+    let replacementAttempt = false;
     let phase = 'capability';
     const enterPhase = (next: string) => {
       phase = next;
@@ -392,6 +394,10 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
       });
       throwIfEncryptedUploadV2Cancelled(options.signal);
       enterPhase('material-validation');
+      replacementAttempt = storedCheckpoint !== undefined && (
+        storedCheckpoint.uploadSessionUuid.toLowerCase() !== material.uploadSessionUuid.toLowerCase() ||
+        storedCheckpoint.ownerRevision !== material.ownerRevision
+      );
       validateEncryptedUploadProfileSelection(
         { policy: material.policy, profile: material.profile },
         {
@@ -401,7 +407,7 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
           historicalP10HeaderObserved: false,
         }
       );
-      decodeEncryptedUploadV2Document('authorization', material.authorization);
+      validateEncryptedUploadV2Material(material, recording, capability, storedCheckpoint);
       if (typeof material.uploadContext !== 'function') {
         throw new EncryptedUploadV2RuntimeError('encrypted_upload_v2_invalid_configuration');
       }
@@ -562,7 +568,7 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
         error.code === 'encrypted_upload_v2_confirmation_uncertain';
       if (
         error instanceof EncryptedUploadV2RuntimeError &&
-        error.code === 'encrypted_upload_v2_checkpoint_mismatch'
+        error.code === 'encrypted_upload_v2_checkpoint_mismatch' && !replacementAttempt
       ) {
         try {
           await this.storage.deleteEncryptedUploadV2Checkpoint(
@@ -1262,6 +1268,42 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
     this.removeAllListeners();
     this.activeEncryptedUploadV2Devices.clear();
     this.isInitialized = false;
+  }
+}
+
+function validateEncryptedUploadV2Material(
+  material: EncryptedUploadV2Material,
+  recording: EncryptedUploadV2Recording,
+  capability: EncryptedUploadV2CapabilitySnapshot,
+  stored: PersistedEncryptedUploadV2Checkpoint | undefined
+): void {
+  const auth = decodeEncryptedUploadV2AuthorizationIdentity(material.authorization);
+  const uuidBytes = (value: string) => {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) {
+      throw new EncryptedUploadV2RuntimeError('encrypted_upload_v2_invalid_configuration');
+    }
+    return Buffer.from(value.replace(/-/g, ''), 'hex');
+  };
+  const replacement = (auth.flags & 8) !== 0;
+  const ownerChanged = stored !== undefined && (
+    stored.uploadSessionUuid.toLowerCase() !== material.uploadSessionUuid.toLowerCase() ||
+    stored.ownerRevision !== material.ownerRevision
+  );
+  if (!Number.isSafeInteger(material.ownerRevision) || material.ownerRevision <= 0 || material.ownerRevision > 2147483647 ||
+      auth.ownerRevision !== material.ownerRevision || auth.profile !== 2 || auth.storageFormat !== recording.storageFormat ||
+      auth.policy !== { legacy_allowed: 0, v2_preferred: 1, v2_required: 2 }[material.policy] ||
+      (auth.channels & 1) === 0 || (auth.flags & ~0xf) !== 0 || (auth.flags & 1) === 0 ||
+      !auth.uploadSessionUuid.equals(uuidBytes(material.uploadSessionUuid)) ||
+      !auth.recordingUuid.equals(uuidBytes(recording.uuid)) || auth.recordingGeneration !== recording.generation ||
+      auth.minimumCiphertextLength !== recording.ciphertextLength || auth.maximumCiphertextLength !== recording.ciphertextLength ||
+      !auth.ciphertextSha256.equals(Buffer.from(recording.ciphertextSha256)) ||
+      (replacement && (capability.capabilities.flags & 0x37f) !== 0x37f) ||
+      (ownerChanged && (!replacement || stored!.ownerRevision >= material.ownerRevision ||
+        stored!.uploadSessionUuid.toLowerCase() === material.uploadSessionUuid.toLowerCase() ||
+        stored!.recordingUuid.toLowerCase() !== recording.uuid.toLowerCase() || stored!.recordingGeneration !== recording.generation ||
+        stored!.ciphertextLength !== recording.ciphertextLength ||
+        !Buffer.from(stored!.ciphertextSha256).equals(Buffer.from(recording.ciphertextSha256))))) {
+    throw new EncryptedUploadV2RuntimeError('encrypted_upload_v2_invalid_configuration');
   }
 }
 

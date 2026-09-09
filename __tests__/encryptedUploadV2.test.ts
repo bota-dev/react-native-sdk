@@ -119,14 +119,16 @@ describe('Encrypted Upload v2 internal contract codecs', () => {
     }
   });
 
-  it('amends only previously reserved bit8 for the upload-context preview and still rejects unknown bits', () => {
+  it('recognizes upload-context and expired-session recovery while rejecting unknown capability bits', () => {
     // Keep the pinned baseline vectors unchanged; the September8 additive
     // contract assigns this old negative vector's formerly reserved flag.
     const vector = cases.find((item) => item.name === 'ble-capability-unknown-flag');
     if (!vector) throw new Error('baseline capability vector missing');
     const value = bytes(vector);
     expect(decodeEncryptedUploadV2Capabilities(value).flags).toBe(0x17f);
-    value.writeUInt32LE(0x27f, 4);
+    value.writeUInt32LE(0x37f, 4);
+    expect(supportsEncryptedUploadV2Batch(decodeEncryptedUploadV2Capabilities(value))).toBe(true);
+    value.writeUInt32LE(0x47f, 4);
     expect(thrownCode(() => decodeEncryptedUploadV2Capabilities(value))).toBe('noncanonical_encoding');
   });
 

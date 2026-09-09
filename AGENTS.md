@@ -143,6 +143,14 @@ Phase entry is not completion evidence.
 
 **Encrypted Upload v2 boundary** — batch-v2 is exposed only through the
 additive explicit v2 list/sync methods and dedicated `0406..040C` runtime.
+The September9 expiry amendment recognizes capability bit9 (`0x200`, known
+mask `0x3ff`). Replacement authorization flag `0x0008` requires batch/context/
+recovery mask `0x37f`; structural session, owner, recording and ciphertext
+identity must match provider material. A different stored owner requires a
+different session and strictly greater revision (at most `2147483647`). Keep
+its checkpoint through failed admission/transfer; only a new durable checkpoint
+supersedes it. Signature authority stays on the device/backend. See
+[expiry recovery](../internal-docs/device/Encrypted-Upload-v2-Expired-Session-Recovery.md).
 The September8 upload-only context amendment requires negotiated bit8 and
 `EncryptedUploadV2Material.uploadContext`: an application-owned opaque challenge/
 proof exchange. SDK sequences device context acceptance before authorization

@@ -13,6 +13,7 @@ jest.mock('react-native-quick-crypto', () => require('node:crypto'), { virtual: 
 
 import { createHash } from 'node:crypto';
 import { Buffer } from 'buffer';
+import vectors from '../protocol/vendor/app-sdk/encrypted-upload-v2.json';
 
 import { RecordingManager } from '../src/managers/RecordingManager';
 import { logger } from '../src/utils/logger';
@@ -25,10 +26,22 @@ const digest = (value: Uint8Array): Buffer => createHash('sha256').update(value)
 const emptyDigest = digest(Buffer.alloc(0));
 
 function document(magic: string, length: number): Buffer {
-  const value = Buffer.alloc(length);
+  // Start with a complete canonical envelope; identity mutations below are
+  // structural test fixtures, not claims of valid signatures.
+  const value = magic === 'BOTAAUT2'
+    ? Buffer.from(vectors.cases.find(item => item.name === 'authorization-development')!.inputHex, 'hex')
+    : Buffer.alloc(length);
   value.write(magic, 0, 'ascii');
   value.writeUInt16LE(2, 8);
   value.writeUInt16LE(length, 10);
+  if (magic === 'BOTAAUT2') {
+    value[13] = 2; value[14] = 3; value[15] = 1; value[16] = 1;
+    value.writeUInt16LE(1, 30); value.writeUInt32LE(4, 32);
+    value.writeUInt32LE(3, 40); value.writeBigUInt64LE(144n, 72); value.writeBigUInt64LE(144n, 80);
+    Buffer.from('ffeeddccbbaa99887766554433221100', 'hex').copy(value, 88);
+    Buffer.from('00112233445566778899aabbccddeeff', 'hex').copy(value, 120);
+    value.fill(0xaa, 312, 344);
+  }
   return value;
 }
 
@@ -465,6 +478,75 @@ describe('RecordingManager encrypted upload v2', () => {
 
     expect(operations).toContain('delete-checkpoint');
     expect(operations).toContain('cancel');
+  });
+
+  function replacement(operations: string[]) {
+    const manager = createManager(operations);
+    const stored = { uploadSessionUuid: '11223344-5566-7788-9900-aabbccddeeff', ownerRevision: 3,
+      recordingUuid: recording.uuid, recordingGeneration: 3, ciphertextLength: 144n,
+      ciphertextSha256: recording.ciphertextSha256, revision: 7, nextCiphertextOffset: 100n,
+      prefixSha256: emptyDigest, windowPackets: 2, dataPayloadBytes: 64, checkpointIntervalBlocks: 1 };
+    manager.storage.getEncryptedUploadV2Checkpoint.mockReturnValue(stored);
+    manager.protocolHandler.getEncryptedUploadV2Capabilities.mockResolvedValue({
+      rawValue: capabilityValue, capabilities: { ...capabilities, flags: 0x37f }, sha256: digest(capabilityValue),
+    });
+    return { manager, stored };
+  }
+
+  it.each(['context', 'authorization', 'transfer'])('retains the old owner checkpoint on replacement %s failure', async (phase) => {
+    const operations: string[] = []; const { manager, stored } = replacement(operations);
+    const material = await provider(operations)(); material.authorization.writeUInt16LE(9, 30);
+    const method = { context: 'refreshEncryptedUploadV2Context', authorization: 'sendEncryptedUploadV2Document', transfer: 'transferEncryptedUploadV2' }[phase];
+    manager.protocolHandler[method!].mockRejectedValue(new EncryptedUploadV2RuntimeError('encrypted_upload_v2_checkpoint_mismatch'));
+    await expect(collect(manager.syncEncryptedRecordingV2(device, recording, async () => material))).rejects.toThrow('checkpoint_mismatch');
+    expect(manager.storage.getEncryptedUploadV2Checkpoint()).toBe(stored);
+    expect(operations).not.toContain('delete-checkpoint'); expect(operations).not.toContain('checkpoint');
+  });
+
+  it.each(['flag', 'capability', 'revision', 'session', 'recording', 'generation', 'length', 'digest', 'stored-identity', 'owner-bound', 'stored-higher', 'same-session']) (
+    'rejects replacement with mismatched %s before device delivery', async (field) => {
+      const operations: string[] = []; const { manager, stored } = replacement(operations);
+      const material = await provider(operations)(); material.authorization.writeUInt16LE(9, 30);
+      if (field === 'flag') material.authorization.writeUInt16LE(1, 30);
+      if (field === 'capability') manager.protocolHandler.getEncryptedUploadV2Capabilities.mockResolvedValue({ capabilities, rawValue: capabilityValue });
+      if (field === 'revision') material.authorization.writeUInt32LE(3, 32);
+      if (field === 'session') material.authorization[88] ^= 1;
+      if (field === 'recording') material.authorization[120] ^= 1;
+      if (field === 'generation') material.authorization.writeUInt32LE(4, 40);
+      if (field === 'length') material.authorization.writeBigUInt64LE(145n, 80);
+      if (field === 'digest') material.authorization[312] ^= 1;
+      if (field === 'stored-identity') stored.ciphertextLength = 145n;
+      if (field === 'owner-bound') { material.ownerRevision = 2147483648; material.authorization.writeUInt32LE(2147483648, 32); }
+      if (field === 'stored-higher') stored.ownerRevision = 5;
+      if (field === 'same-session') stored.uploadSessionUuid = material.uploadSessionUuid;
+      await expect(collect(manager.syncEncryptedRecordingV2(device, recording, async () => material))).rejects.toThrow();
+      expect(operations).not.toContain('authorization'); expect(operations).not.toContain('delete-checkpoint');
+    }
+  );
+
+  it('starts a validated replacement at zero and supersedes old evidence only through durable persistence', async () => {
+    const operations: string[] = []; const { manager } = replacement(operations);
+    const material = await provider(operations)(); material.authorization.writeUInt16LE(9, 30);
+    await collect(manager.syncEncryptedRecordingV2(device, recording, async () => material));
+    expect(manager.protocolHandler.transferEncryptedUploadV2).toHaveBeenCalledWith(device.id, expect.objectContaining({ checkpoint: expect.objectContaining({ revision: 0, nextCiphertextOffset: 0n }) }));
+    expect(manager.storage.saveEncryptedUploadV2Checkpoint).toHaveBeenCalledWith(expect.objectContaining({ ownerRevision: 4, revision: 1 }));
+    expect(operations.indexOf('authorization')).toBeLessThan(operations.indexOf('checkpoint'));
+    expect(operations.indexOf('confirm')).toBeLessThan(operations.indexOf('delete-checkpoint'));
+  });
+
+  it('resumes the same accepted replacement checkpoint without resetting its offset', async () => {
+    const operations: string[] = []; const { manager, stored } = replacement(operations);
+    const material = await provider(operations)(); material.authorization.writeUInt16LE(9, 30);
+    stored.ownerRevision = material.ownerRevision; stored.uploadSessionUuid = material.uploadSessionUuid;
+    await collect(manager.syncEncryptedRecordingV2(device, recording, async () => material));
+    expect(manager.protocolHandler.transferEncryptedUploadV2).toHaveBeenCalledWith(device.id, expect.objectContaining({ checkpoint: expect.objectContaining({ revision: 7, nextCiphertextOffset: 100n }) }));
+  });
+
+  it('checks the replacement capability even when there is no old app checkpoint', async () => {
+    const operations: string[] = []; const manager = createManager(operations);
+    const material = await provider(operations)(); material.authorization.writeUInt16LE(9, 30);
+    await expect(collect(manager.syncEncryptedRecordingV2(device, recording, async () => material))).rejects.toThrow('invalid_configuration');
+    expect(operations).not.toContain('authorization');
   });
 
   it('propagates AbortSignal through an in-flight v2 transfer', async () => {

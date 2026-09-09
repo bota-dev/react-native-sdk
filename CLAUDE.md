@@ -1,5 +1,13 @@
 # CLAUDE.md - Bota React Native SDK
 
+> **Expiry recovery source preview (2026-09-09):** Capability bit9 (`0x200`)
+> and authorization flag `0x0008` permit a structurally validated higher owner
+> for the same recording/ciphertext. The provider supplies the recovered session;
+> SDK admission precedes transfer from zero. Old checkpoints survive failed
+> admission and transfer until a new durable checkpoint supersedes them.
+> Signature verification remains device/backend work; host tests are not a
+> physical recovery pass.
+
 > **Upload context source preview (2026-09-08):** v2 material now requires an
 > `uploadContext` provider. `040C` exchanges a device-owned nonce/proof and
 > `0407` kinds3/4 relay challenge/result. Capability bit8 gates this addition;

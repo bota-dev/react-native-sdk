@@ -358,6 +358,15 @@ Provider-only timeout remains immediately retryable once BLE is
 quiescent. See the
 [upload context API](https://docs.bota.dev/api-reference/uploads/encrypted-v2).
 
+Providers may recover expired pre-manifest sessions through their backend when
+capability bit9 (`0x200`) is advertised alongside batch/context (`0x37f`). Save
+the returned successor ID/revision before supplying its authorization. The SDK
+checks replacement flag `0x0008`, document/material recording and ciphertext
+identity, and strictly increasing checkpoint ownership before device admission.
+The old checkpoint survives failures until a new durable checkpoint supersedes
+it. Never rotate a still-live child merely because its nonce is stale; retain
+it until expiry. Receipt and device-confirmed deletion requirements still apply.
+
 The additive batch-v2 API uses only `B07A0406` through `B07A040C`. It reads a
 fresh capability before invoking `EncryptedUploadV2Provider`, persists only
 resume identifiers/digests/offsets/bounds, and deletes the device recording

@@ -357,7 +357,7 @@ export function decodeEncryptedUploadV2Capabilities(
     fail('invalid_length', 'capability declared length must be 24');
   }
   const flags = bytes.readUInt32LE(4);
-  if ((flags & ~0x1ff) !== 0) {
+  if ((flags & ~0x3ff) !== 0) {
     fail('noncanonical_encoding', 'capability flags contain unknown bits');
   }
   requireZero(bytes, 22, 2, 'capability reserved bytes');
@@ -412,6 +412,19 @@ export function decodeEncryptedUploadV2Document(
     fail('invalid_length', `${kind} document declared length is not canonical`);
   }
   return { kind, version: 2, byteLength: bytes.length, bytes };
+}
+
+/** Structural comparison only. Device/backend verification owns signatures. */
+export function decodeEncryptedUploadV2AuthorizationIdentity(value: Uint8Array) {
+  const { bytes } = decodeEncryptedUploadV2Document('authorization', value);
+  return {
+    profile: bytes[13], storageFormat: bytes[14], policy: bytes[15], channels: bytes[16],
+    flags: bytes.readUInt16LE(30), ownerRevision: bytes.readUInt32LE(32),
+    recordingGeneration: bytes.readUInt32LE(40),
+    minimumCiphertextLength: bytes.readBigUInt64LE(72), maximumCiphertextLength: bytes.readBigUInt64LE(80),
+    uploadSessionUuid: fixed(bytes, 88, 16), recordingUuid: fixed(bytes, 120, 16),
+    ciphertextSha256: fixed(bytes, 312, 32),
+  };
 }
 
 export function decodeEncryptedUploadV2SignedBlob(

@@ -15,6 +15,7 @@ import { createHash } from 'node:crypto';
 import { Buffer } from 'buffer';
 
 import { RecordingManager } from '../src/managers/RecordingManager';
+import { logger } from '../src/utils/logger';
 import {
   EncryptedUploadV2RuntimeError,
   type EncryptedUploadV2CiphertextSink,
@@ -77,6 +78,9 @@ async function collect(generator: AsyncGenerator<any>): Promise<any[]> {
 }
 
 describe('RecordingManager encrypted upload v2', () => {
+  beforeEach(() => logger.setHandler(() => {}));
+  afterEach(() => logger.setHandler(null));
+
   function createManager(operations: string[]) {
     const manager = Object.create(RecordingManager.prototype) as any;
     manager.activeEncryptedUploadV2Devices = new Set();
@@ -158,6 +162,48 @@ describe('RecordingManager encrypted upload v2', () => {
       .rejects.toThrow('encrypted_upload_v2_unsupported');
     expect(uploadProvider).not.toHaveBeenCalled();
     expect(manager.protocolHandler.sendEncryptedUploadV2Document).not.toHaveBeenCalled();
+  });
+
+  it.each(['provider', 'authorization', 'context', 'transfer'])(
+    'reports the failing %s phase without exposing error payloads', async (phase) => {
+      const manager = createManager([]);
+      const uploadProvider = provider([]);
+      const failure = new TypeError('secret signed-document or URL payload');
+      if (phase === 'provider') uploadProvider.mockRejectedValueOnce(failure);
+      if (phase === 'authorization') manager.protocolHandler.sendEncryptedUploadV2Document.mockRejectedValueOnce(failure);
+      if (phase === 'context') manager.protocolHandler.refreshEncryptedUploadV2Context.mockRejectedValueOnce(failure);
+      if (phase === 'transfer') manager.protocolHandler.transferEncryptedUploadV2.mockRejectedValueOnce(failure);
+      const entries: unknown[] = [];
+      logger.setHandler(entry => entries.push(entry));
+      try {
+        await expect(collect(manager.syncEncryptedRecordingV2(device, recording, uploadProvider)))
+          .rejects.toBe(failure);
+        const output = JSON.stringify(entries);
+        expect(output).toContain(`Encrypted v2 sync failed at ${phase}`);
+        expect(output).not.toContain('secret signed-document or URL payload');
+      } finally {
+        logger.setHandler(null);
+      }
+    }
+  );
+
+  it('does not cancel an uncertain CONFIRM when the diagnostic handler throws', async () => {
+    const operations: string[] = [];
+    const manager = createManager(operations);
+    const failure = new EncryptedUploadV2RuntimeError('encrypted_upload_v2_confirmation_uncertain');
+    manager.protocolHandler.confirmEncryptedUploadV2.mockRejectedValueOnce(failure);
+    const previousLevel = logger.getLevel();
+    logger.setLevel('debug');
+    logger.setHandler(() => { throw new Error('broken host logger'); });
+    try {
+      await expect(collect(manager.syncEncryptedRecordingV2(device, recording, provider(operations))))
+        .rejects.toBe(failure);
+      expect(operations).not.toContain('abort');
+      expect(operations).not.toContain('cancel');
+    } finally {
+      logger.setLevel(previousLevel);
+      logger.setHandler(null);
+    }
   });
 
   it('lists mixed storage without exposing a v2 object as a second legacy choice', async () => {

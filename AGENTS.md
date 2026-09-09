@@ -120,6 +120,11 @@ cd app && npx expo start --clear
 
 **Event-driven async** — public APIs use async/await. Internal Bluetooth event handling uses EventEmitter. Never block the Bluetooth callback thread.
 
+**V2 sync diagnostics** — `RecordingManager` logs static phase names before each
+boundary and on failure. Preserve the original error for callers, but never add
+provider payloads, signed URLs, documents or nonce bytes to these diagnostic logs.
+Phase entry is not completion evidence.
+
 **Bluetooth OTA flow control** — keep one TRANSFER_STATUS subscription for the full upload and retain ACK sequence state outside individual waits, because firmware notifications may arrive before the SDK reaches `waitForAck()`. A nonzero READY result after upload acceptance and a missing 8-packet window ACK are terminal; never continue sending after either condition.
 
 **Upload queue** — recordings are queued in `UploadQueue` (persistent SQLite). Never upload synchronously in the Bluetooth transfer callback.

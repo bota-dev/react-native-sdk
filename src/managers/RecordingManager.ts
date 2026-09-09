@@ -296,6 +296,13 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
     let confirmed = false;
     let confirmationUncertain = false;
     let cleanupAttempted = false;
+    let phase = 'capability';
+    const enterPhase = (next: string) => {
+      phase = next;
+      try { log.debug(`Encrypted v2 sync phase: ${phase}`); } catch {
+        // Host diagnostics must not alter transfer or cleanup behavior.
+      }
+    };
 
     const cleanupUnconfirmed = async () => {
       if (cleanupAttempted || confirmationUncertain || confirmed) return;
@@ -376,6 +383,7 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
         recording.uuid,
         recording.generation
       );
+      enterPhase('provider');
       material = await provider({
         recording,
         capability,
@@ -383,6 +391,7 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
         signal: options.signal,
       });
       throwIfEncryptedUploadV2Cancelled(options.signal);
+      enterPhase('material-validation');
       validateEncryptedUploadProfileSelection(
         { policy: material.policy, profile: material.profile },
         {
@@ -407,9 +416,11 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
       );
       transportSessionId = randomEncryptedUploadV2TransportSessionId();
 
+      enterPhase('context');
       await this.protocolHandler.refreshEncryptedUploadV2Context(
         device.id, material.uploadContext, bounds.maximumSignedBlobBytes, options.signal);
       throwIfEncryptedUploadV2Cancelled(options.signal);
+      enterPhase('authorization');
       await this.protocolHandler.sendEncryptedUploadV2Document(
         device.id,
         1,
@@ -419,6 +430,7 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
         options.signal
       );
       throwIfEncryptedUploadV2Cancelled(options.signal);
+      enterPhase('transfer');
       const transfer = await this.protocolHandler.transferEncryptedUploadV2(
         device.id,
         {
@@ -468,28 +480,34 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
         totalBytes: safeProgressBytes(transfer.evidence.ciphertextLength),
       };
       throwIfEncryptedUploadV2Cancelled(options.signal);
+      enterPhase('staging');
       await material.stageCiphertext(transfer.evidence, options.signal);
       throwIfEncryptedUploadV2Cancelled(options.signal);
+      enterPhase('manifest');
       await material.submitManifest(
         transfer.manifest,
         transfer.evidence,
         options.signal
       );
       throwIfEncryptedUploadV2Cancelled(options.signal);
+      enterPhase('finalization');
       await material.finalize(transfer.evidence, options.signal);
       throwIfEncryptedUploadV2Cancelled(options.signal);
+      enterPhase('receipt');
       const receipt = await material.completionReceipt(
         transfer.evidence,
         options.signal
       );
       throwIfEncryptedUploadV2Cancelled(options.signal);
       decodeEncryptedUploadV2Document('receipt', receipt);
+      enterPhase('receipt-context');
       await this.protocolHandler.refreshEncryptedUploadV2Context(
         device.id, material.uploadContext, bounds.maximumSignedBlobBytes, options.signal);
       throwIfEncryptedUploadV2Cancelled(options.signal);
 
       yield { stage: 'completing', progress: 0.5 };
       throwIfEncryptedUploadV2Cancelled(options.signal);
+      enterPhase('confirmation');
       await this.protocolHandler.confirmEncryptedUploadV2(device.id, {
         transportSessionId,
         uploadSessionUuid: material.uploadSessionUuid,
@@ -534,6 +552,11 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
       this.emit('syncCompleted', recording.uuid, material.recordingId);
     } catch (error) {
       if (confirmed) throw error;
+      // Only static phase labels: provider errors can contain signed URLs or
+      // credential-bearing payloads. Preserve the original error for callers.
+      try { log.error(`Encrypted v2 sync failed at ${phase}`); } catch {
+        // In particular, do not turn uncertain CONFIRM into cancellation.
+      }
       confirmationUncertain =
         error instanceof EncryptedUploadV2RuntimeError &&
         error.code === 'encrypted_upload_v2_confirmation_uncertain';

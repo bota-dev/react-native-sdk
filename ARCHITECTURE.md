@@ -249,6 +249,12 @@ non-rollback-capable. An optional `AbortSignal` propagates through provider,
 sink, signed-document, and transfer work; cancellation cannot roll back an
 attempted CONFIRM.
 
+V2 sync diagnostics identify the active phase (provider, material validation,
+context, authorization, transfer, staging, manifest, finalization, receipt or
+confirmation). The failure log contains only a static phase label, not provider
+error payloads, signed documents, nonce values or storage URLs. The original
+error still reaches the caller; a phase log is not proof that the phase completed.
+
 The September8 upload-only context amendment additionally requires capability
 bit8 and `material.uploadContext`. `encryptedUploadV2Context.ts` sequences a
 fresh device nonce on040C, opaque196-byte challenge and264-byte result via0407

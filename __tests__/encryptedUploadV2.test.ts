@@ -175,6 +175,31 @@ describe('Encrypted Upload v2 internal contract codecs', () => {
     );
   });
 
+  it('validates document magic when Hermes returns plain Uint8Array subviews', () => {
+    const kinds = {
+      verifyUploadAuthorization: 'authorization',
+      verifyUploadManifest: 'manifest',
+      verifyCompletionReceipt: 'receipt',
+    } as const;
+    const subarray = jest.spyOn(Buffer.prototype, 'subarray').mockImplementation(function (
+      this: Buffer, start?: number, end?: number
+    ) {
+      return new Uint8Array(this.buffer, this.byteOffset, this.byteLength)
+        .subarray(start, end) as Buffer;
+    });
+    try {
+      for (const vector of cases.filter((item) => item.category === 'signed-document')) {
+        const kind = kinds[vector.operation as keyof typeof kinds];
+        const input = bytes(vector);
+        expect(decodeEncryptedUploadV2Document(kind, input).bytes.toString('hex')).toBe(vector.inputHex);
+        input[0] ^= 0xff;
+        expect(thrownCode(() => decodeEncryptedUploadV2Document(kind, input))).toBe('unsupported_version');
+      }
+    } finally {
+      subarray.mockRestore();
+    }
+  });
+
   it('keeps v2 characteristic UUIDs out of BLE runtime call sites', () => {
     const repositoryRoot = join(__dirname, '..');
     const allowed = [

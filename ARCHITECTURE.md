@@ -171,6 +171,13 @@ transfer active until this final app result.
 
 ### Encrypted Upload v2 capability-gated batch runtime
 
+Signed-document framing normalizes the eight-byte magic view through `fixed()`
+before invoking Buffer-only comparison. Hermes can return a plain `Uint8Array`
+from `Buffer.subarray()`; calling `.equals()` directly then throws before device
+authorization. The codec test exercises this boundary for authorization,
+manifest and receipt, including rejection of corrupted magic. Wire formats and
+signature-verification ownership are unchanged.
+
 The additive `listPendingRecordings` reads legacy before the v2 snapshot and
 suppresses only the known four-byte aliases of full v2 identities supplied by
 the v2 catalog. Missing capability uses the unchanged legacy list; failed reads

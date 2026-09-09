@@ -24,6 +24,12 @@ See [AGENTS.md](AGENTS.md) for build commands and conventions. See [ARCHITECTURE
 > permits legacy selection. Sync cancellation and connection changes fence retries;
 > late native reads retain ownership until drained or replaced by verified reconnect.
 
+> **Hermes document framing:** Normalize signed-document magic subviews with
+> `fixed()` before `.equals()`. Hermes may return a plain `Uint8Array` from
+> `Buffer.subarray()`, causing a TypeError before authorization is sent. The
+> codec regression covers valid and corrupted document headers with that view
+> behavior. This is source-preview validation, not a physical-upload pass.
+
 **Documentation rule:** Every public API change must include documentation updates — `CLAUDE.md`, `ARCHITECTURE.md`, `AGENTS.md`, `README.md`, public docs (`../docs/`) as needed, and `../internal-docs/` if the change implements or invalidates a design doc. See [`../internal-docs/CLAUDE.md`](../internal-docs/CLAUDE.md) for the downstream impact matrix.
 
 > **v5 target designs (not implemented):** SDK work for logical recording

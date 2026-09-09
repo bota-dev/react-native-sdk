@@ -402,7 +402,7 @@ export function decodeEncryptedUploadV2Document(
   const bytes = asBuffer(value);
   const format = DOCUMENTS[kind];
   requireExact(bytes, format.length, `${kind} document`);
-  if (!bytes.subarray(0, 8).equals(Buffer.from(format.magic, 'ascii'))) {
+  if (!fixed(bytes, 0, 8).equals(Buffer.from(format.magic, 'ascii'))) {
     fail('unsupported_version', `${kind} document magic is not recognized`);
   }
   if (bytes.readUInt16LE(8) !== DOCUMENT_VERSION) {

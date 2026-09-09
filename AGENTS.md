@@ -116,7 +116,7 @@ cd app && npx expo start --clear
 
 **Binary parsing** — device data is binary (packed C structs). Use the typed parsers in `src/ble/parsers.ts`. Never parse binary inline in handlers. DEVICE_SETTINGS serialization must default each missing/null idle-timeout field independently to 180 seconds because backend configuration objects may be partial. Accept legacy 1-9 second values without failing sync, but encode them as the minimum representable timeout of 10 seconds.
 
-**React Native byte views** — Hermes may expose a `Buffer.subarray()` result as a plain `Uint8Array`. Normalize byte views with `Buffer.from(view)` before text decoding; calling `Uint8Array.toString('utf8')` produces comma-separated decimal bytes rather than UTF-8 text.
+**React Native byte views** — Hermes may expose a `Buffer.subarray()` result as a plain `Uint8Array`. Normalize byte views with `Buffer.from(view)` before text decoding or Buffer-only methods such as `.equals()`. Calling `Uint8Array.toString('utf8')` produces comma-separated decimal bytes; `.equals()` is absent. V2 signed-document magic checks use the normalized `fixed()` helper; regression tests exercise valid and corrupted authorization/manifest/receipt headers with plain subviews.
 
 **Event-driven async** — public APIs use async/await. Internal Bluetooth event handling uses EventEmitter. Never block the Bluetooth callback thread.
 

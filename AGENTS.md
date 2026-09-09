@@ -154,7 +154,12 @@ rewritten; the old bit8 negative case has an explicit amendment regression.
 The source-preview `listPendingRecordings` preserves legacy-only devices and
 merges mixed storage by suppressing known v1 filename aliases of full identities
 read from `040B` (never by list position). Read the legacy snapshot first to
-avoid offering a newly committed v2 object as legacy. `EncryptedUploadV2FileSink`
+avoid offering a newly committed v2 object as legacy. V2 LIST must subscribe to
+both `040B` (entries/end) and `0409` (ERROR) before writing `0408`. Surface the
+matching LIST error's `protocolStatus` immediately; drain/ignore older-session
+errors. Settle before removing both monitors so native cancellation callbacks
+cannot recurse or replace the result. Never turn list failure into legacy fallback.
+`EncryptedUploadV2FileSink`
 requires a host-private file with real durable flush; it incrementally hashes
 bounded reads before checkpoint ACK. Require MTU ≥143 for the 140-byte START_ACK.
 That minimum only fits control frames; firmware must also fit a complete

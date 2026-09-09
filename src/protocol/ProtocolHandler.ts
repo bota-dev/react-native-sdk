@@ -300,23 +300,46 @@ export class ProtocolHandler {
       const recordings: EncryptedUploadV2Recording[] = [];
       const entryBodies: Buffer[] = [];
       let subscription: Subscription | undefined;
+      let errorSubscription: Subscription | undefined;
       let timer: number | undefined;
+      let settled = false;
 
       const cleanup = () => {
         if (timer !== undefined) clearTimeout(timer);
-        subscription?.remove();
+        const list = subscription;
+        const errors = errorSubscription;
+        subscription = undefined;
+        errorSubscription = undefined;
+        list?.remove();
+        errors?.remove();
       };
       const failList = (error: unknown) => {
+        if (settled) return;
+        settled = true;
         cleanup();
+        const protocolStatus = error instanceof EncryptedUploadV2RuntimeError ? error.protocolStatus : undefined;
+        const status = protocolStatus === undefined ? '' : ` (status=0x${protocolStatus.toString(16).padStart(4, '0')})`;
+        log.error(`Encrypted v2 recording list failed${status}`, error instanceof Error ? error : new Error(String(error)), {
+          deviceId, transportSessionId: transportSessionId.toString(),
+          protocolStatus,
+        });
         reject(error);
       };
 
       try {
+        log.debug('Encrypted v2 recording list start', { deviceId, transportSessionId: transportSessionId.toString() });
+        timer = setTimeout(() => {
+          failList(new TransferError(
+            'Timeout waiting for encrypted upload v2 recording list',
+            'ENCRYPTED_UPLOAD_V2_LIST_TIMEOUT'
+          ));
+        }, ENCRYPTED_UPLOAD_V2_TIMEOUT_MS);
         subscription = this.bleManager.subscribeToCharacteristic(
           deviceId,
           SERVICE_BOTA_STORAGE,
           CHAR_RECORDING_LIST_V2,
           (rawValue) => {
+            if (settled) return;
             try {
               const value = decodeEncryptedUploadV2Transfer(rawValue);
               if (value.common.transportSessionId !== transportSessionId) {
@@ -352,7 +375,9 @@ export class ProtocolHandler {
                   'encrypted_upload_v2_integrity_mismatch'
                 );
               }
+              settled = true;
               cleanup();
+              log.debug('Encrypted v2 recording list complete', { deviceId, count: recordings.length });
               resolve(recordings);
             } catch (error) {
               failList(error);
@@ -360,17 +385,33 @@ export class ProtocolHandler {
           },
           (error) => failList(error)
         );
+        if (settled) { cleanup(); return; }
+        // LIST entries/end use 040B, but command rejections use ERROR on 0409.
+        // Subscribe before LIST so a rejection cannot remain queued in firmware.
+        errorSubscription = this.bleManager.subscribeToCharacteristic(
+          deviceId,
+          SERVICE_BOTA_STORAGE,
+          CHAR_RECORDING_TRANSFER_V2,
+          (rawValue) => {
+            if (settled) return;
+            try {
+              const value = decodeEncryptedUploadV2Transfer(rawValue);
+              // Enabling this CCC may drain a previous timed-out LIST error.
+              if (value.common.transportSessionId !== transportSessionId) return;
+              if (value.type !== 'error' || value.failedMessageType !== 0x25) {
+                throw new EncryptedUploadV2RuntimeError('encrypted_upload_v2_unexpected_message');
+              }
+              failList(new EncryptedUploadV2RuntimeError('encrypted_upload_v2_device_error', value.result));
+            } catch (error) { failList(error); }
+          },
+          failList
+        );
+        if (settled) { cleanup(); return; }
         const frame = encodeEncryptedUploadV2Transfer({
           type: 'list',
           common: { messageType: 0x25, flags: 0, transportSessionId },
           requestFlags: 0,
         });
-        timer = setTimeout(() => {
-          failList(new TransferError(
-            'Timeout waiting for encrypted upload v2 recording list',
-            'ENCRYPTED_UPLOAD_V2_LIST_TIMEOUT'
-          ));
-        }, ENCRYPTED_UPLOAD_V2_TIMEOUT_MS);
         this.bleManager.writeCharacteristic(
           deviceId,
           SERVICE_BOTA_STORAGE,

@@ -228,6 +228,13 @@ target allocation.
 | Recording list v2 | `B07A0004-000B-1000-8000-00805F9B34FB` |
 | Upload context v2 (Read/Write/Notify) | `B07A0004-000C-1000-8000-00805F9B34FB` |
 
+Before sending LIST (`0x25`) on `0408`, subscribe to `040B` for entries/end
+**and** `0409` for ERROR (`0x4F`). A matching LIST rejection fails immediately
+with `encrypted_upload_v2_device_error` and its numeric `protocolStatus`, not a
+list timeout or legacy fallback. Older-session ERROR notifications may drain
+when `0409` is enabled; they do not belong to the new request. Release both
+subscriptions on success, error, or the existing ten-second deadline.
+
 September8 additive source contract: capability bit8 (0x100), in addition to
 batch0x7f, requires upload-only context before authorization and first receipt.
 BEGIN on040C is `65 02 00 00 || attempt_id_u32LE` (nonzero correlation ID).

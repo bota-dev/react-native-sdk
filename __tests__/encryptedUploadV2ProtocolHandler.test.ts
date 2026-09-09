@@ -18,6 +18,7 @@ import {
   CHAR_UPLOAD_CONTEXT_V2,
 } from '../src/ble/constants';
 import { ProtocolHandler } from '../src/protocol/ProtocolHandler';
+import { logger } from '../src/utils/logger';
 import {
   decodeEncryptedUploadV2SignedBlob,
   decodeEncryptedUploadV2Transfer,
@@ -299,6 +300,94 @@ describe('ProtocolHandler encrypted upload v2', () => {
     expect(writes).toHaveLength(1);
     expect(writes[0].characteristic).toBe(CHAR_TRANSFER_CONTROL_V2);
     expect(subscriptions.has(CHAR_RECORDING_LIST_V2)).toBe(true);
+  });
+
+  it('reports a LIST rejection on 0409 immediately and permits a later list', async () => {
+    jest.useFakeTimers();
+    const messages: string[] = [];
+    logger.setHandler(entry => { messages.push(entry.message); });
+    try {
+      const ble = mockGetBleManager();
+      // ERROR, session 7, BUSY (0x000e), failed LIST (0x25).
+      const busy = Buffer.from('4f02000007000000000000000e00250000000000', 'hex');
+      let first = true;
+      ble.writeCharacteristic.mockImplementation(async () => {
+        if (first) {
+          first = false;
+          subscriptions.get(CHAR_RECORDING_TRANSFER_V2)?.(busy);
+        } else {
+          subscriptions.get(CHAR_RECORDING_LIST_V2)?.(encodeEncryptedUploadV2Transfer({
+            type: 'recordingListEnd', common: common(0x49),
+            count: 0, listRevision: 2, listSha256: digest(Buffer.alloc(0)),
+          }));
+        }
+      });
+      const handler = new ProtocolHandler();
+      let failure: unknown;
+      const rejected = handler.listEncryptedUploadV2Recordings('device-1', 7n)
+        .catch(error => { failure = error; });
+      await jest.advanceTimersByTimeAsync(0);
+      expect(failure).toMatchObject({
+        code: 'encrypted_upload_v2_device_error', protocolStatus: 0x0e,
+      });
+      // Metro may show only the message and stack, not structured context.
+      expect(messages.some(message => message.includes('status=0x000e'))).toBe(true);
+      await rejected;
+      await expect(handler.listEncryptedUploadV2Recordings('device-1', 7n)).resolves.toEqual([]);
+      expect(jest.getTimerCount()).toBe(0);
+    } finally { logger.setHandler(null); jest.useRealTimers(); }
+  });
+
+  it('ignores drained errors from an older LIST session', async () => {
+    const ble = mockGetBleManager();
+    ble.writeCharacteristic.mockImplementation(async () => {
+      subscriptions.get(CHAR_RECORDING_TRANSFER_V2)?.(
+        Buffer.from('4f02000006000000000000000e00250000000000', 'hex')
+      );
+      subscriptions.get(CHAR_RECORDING_LIST_V2)?.(encodeEncryptedUploadV2Transfer({
+        type: 'recordingListEnd', common: common(0x49),
+        count: 0, listRevision: 2, listSha256: digest(Buffer.alloc(0)),
+      }));
+    });
+    await expect(new ProtocolHandler().listEncryptedUploadV2Recordings('device-1', 7n))
+      .resolves.toEqual([]);
+  });
+
+  it.each(['success', 'error', 'timeout'])('releases both LIST monitors exactly once on %s', async (outcome) => {
+    jest.useFakeTimers();
+    try {
+      const ble = mockGetBleManager();
+      const removals: string[] = [];
+      ble.subscribeToCharacteristic.mockImplementation((_device, _service, characteristic, onData, onError) => {
+        subscriptions.set(characteristic, onData);
+        return { remove: () => {
+          removals.push(characteristic);
+          subscriptions.delete(characteristic);
+          // Native cancellation can synchronously call the error callback.
+          onError?.(new Error('Operation was cancelled'));
+        } };
+      });
+      const pending = new ProtocolHandler().listEncryptedUploadV2Recordings('device-1', 7n);
+      const observed = pending.then(value => ({ value }), error => ({ error }));
+      if (outcome === 'success') {
+        subscriptions.get(CHAR_RECORDING_LIST_V2)?.(encodeEncryptedUploadV2Transfer({
+          type: 'recordingListEnd', common: common(0x49),
+          count: 0, listRevision: 2, listSha256: digest(Buffer.alloc(0)),
+        }));
+      } else if (outcome === 'error') {
+        subscriptions.get(CHAR_RECORDING_TRANSFER_V2)?.(
+          Buffer.from('4f02000007000000000000000e00250000000000', 'hex')
+        );
+      }
+      await jest.advanceTimersByTimeAsync(10000);
+      const result = await observed;
+      if (outcome === 'success') expect(result).toEqual({ value: [] });
+      else expect(result).toMatchObject({ error: {
+        code: outcome === 'error' ? 'encrypted_upload_v2_device_error' : 'ENCRYPTED_UPLOAD_V2_LIST_TIMEOUT',
+      } });
+      expect(removals.sort()).toEqual([CHAR_RECORDING_LIST_V2, CHAR_RECORDING_TRANSFER_V2].sort());
+      expect(jest.getTimerCount()).toBe(0);
+    } finally { jest.useRealTimers(); }
   });
 
   it('delivers a signed document through 0407 and waits for its matching result', async () => {

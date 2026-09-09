@@ -200,6 +200,12 @@ characteristics. The owning design is
 [Encrypted Upload v2](../internal-docs/device/Encrypted-Upload-v2.md); never
 infer v2 support from the recording-list flag or a stored `BACKEND_PUBKEY`.
 
+V2 LIST listens on both `040B` (catalog) and `0409` (ERROR) before writing
+`0408`. Missing the ERROR subscription can strand firmware output and make
+every list appear to time out. Matching LIST errors retain `protocolStatus`;
+older-session errors are ignored. Settle before subscription cleanup so its
+native cancellation callback cannot reject a successful list or recurse.
+
 End-to-end: device computes SHA over SD bytes at `recording_stop` → emits over BLE after EOF → SDK forwards in upload-complete body → backend integrity-verify worker (P9.B) compares against a server-side SHA of the assembled S3 object → mismatch sets `status=integrity_failure`. This closes the BLE gap and gives parity with the WiFi/4G direct-upload path.
 
 ### Firmware Updates (OTA)

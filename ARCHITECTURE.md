@@ -201,6 +201,16 @@ It discovers the optional capability before reading it, uses only `0406..040C`,
 requires full UUID/generation plus committed storage format 3, and never joins
 the v2 list to a legacy four-byte file ID by list position.
 
+LIST owns two notification subscriptions: `040B` for entries/end and `0409`
+for command ERROR, both established before its `0408` write. A matching LIST
+rejection immediately raises `encrypted_upload_v2_device_error` with the device's
+`protocolStatus`; an older-session error is drained without failing the new list.
+Cleanup settles first and removes both monitors exactly once, including when
+native cancellation calls back synchronously. List start/completion/failure logs
+contain correlation/result metadata only. A list failure never permits downgrade.
+The numeric device result is also included in the error message (`status=0x…`)
+because Metro's error-stack rendering may hide structured log context.
+
 A present canonical0406 with support flags exactly zero is a readiness sentinel.
 The capability reader retries every100ms under one10-second deadline covering
 discovery and native reads, then throws `encrypted_upload_v2_capability_unavailable`

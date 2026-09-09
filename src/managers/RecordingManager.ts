@@ -1290,7 +1290,7 @@ function validateEncryptedUploadV2Material(
     stored.ownerRevision !== material.ownerRevision
   );
   if (!Number.isSafeInteger(material.ownerRevision) || material.ownerRevision <= 0 || material.ownerRevision > 2147483647 ||
-      auth.ownerRevision !== material.ownerRevision || auth.profile !== 2 || auth.storageFormat !== recording.storageFormat ||
+      auth.ownerRevision !== material.ownerRevision || auth.profile !== 3 || auth.storageFormat !== recording.storageFormat ||
       auth.policy !== { legacy_allowed: 0, v2_preferred: 1, v2_required: 2 }[material.policy] ||
       (auth.channels & 1) === 0 || (auth.flags & ~0xf) !== 0 || (auth.flags & 1) === 0 ||
       !auth.uploadSessionUuid.equals(uuidBytes(material.uploadSessionUuid)) ||

@@ -253,7 +253,11 @@ Current implementation status:
 
 September9 expiry recovery adds capability bit9 (`0x200`; known capability
 mask `0x3ff`) and `BOTAAUT2` flag `0x0008` at byte30. Recovery requires mask
-`0x37f`. SDK structural validation requires exact session/revision and
+`0x37f`. Both ordinary and replacement `BOTAAUT2` authorizations use document
+version `2` at bytes8–9, transport profile `3` at byte13, and storage format
+`3` at byte14. The SDK rejects transport profile `2` before context or
+authorization delivery. Canonical vector fixtures preserve byte13 unchanged.
+SDK structural validation requires exact session/revision and
 recording/ciphertext identity; a changed checkpoint owner must advance revision
 and change session. Admission precedes transfer from zero; old checkpoint
 evidence is retained until a new durable ACK checkpoint. The device/backend

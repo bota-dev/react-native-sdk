@@ -35,7 +35,7 @@ function document(magic: string, length: number): Buffer {
   value.writeUInt16LE(2, 8);
   value.writeUInt16LE(length, 10);
   if (magic === 'BOTAAUT2') {
-    value[13] = 2; value[14] = 3; value[15] = 1; value[16] = 1;
+    value[14] = 3; value[15] = 1; value[16] = 1;
     value.writeUInt16LE(1, 30); value.writeUInt32LE(4, 32);
     value.writeUInt32LE(3, 40); value.writeBigUInt64LE(144n, 72); value.writeBigUInt64LE(144n, 80);
     Buffer.from('ffeeddccbbaa99887766554433221100', 'hex').copy(value, 88);
@@ -241,10 +241,13 @@ describe('RecordingManager encrypted upload v2', () => {
     expect(manager.protocolHandler.listRecordings).not.toHaveBeenCalled();
   });
 
-  it('stages, submits, finalizes, receives a receipt, and only then confirms deletion', async () => {
+  it('accepts canonical profile 3 for an ordinary upload through receipt-confirmed deletion', async () => {
     const operations: string[] = [];
     const manager = createManager(operations);
     const uploadProvider = provider(operations);
+    const material = await uploadProvider();
+    expect(material.authorization[13]).toBe(3);
+    uploadProvider.mockResolvedValue(material);
 
     const progress = await collect(
       manager.syncEncryptedRecordingV2(device, recording, uploadProvider)
@@ -493,6 +496,25 @@ describe('RecordingManager encrypted upload v2', () => {
     return { manager, stored };
   }
 
+  it.each(['ordinary', 'replacement'])('rejects wire profile 2 for %s uploads before context or authorization delivery', async (kind) => {
+    const operations: string[] = [];
+    const { manager, stored } = kind === 'replacement'
+      ? replacement(operations)
+      : { manager: createManager(operations), stored: undefined };
+    const material = await provider(operations)();
+    if (kind === 'replacement') material.authorization.writeUInt16LE(9, 30);
+    material.authorization[13] = 2;
+
+    await expect(collect(manager.syncEncryptedRecordingV2(device, recording, async () => material)))
+      .rejects.toMatchObject({ code: 'encrypted_upload_v2_invalid_configuration' });
+    expect(operations).not.toContain('context');
+    expect(operations).not.toContain('authorization');
+    expect(operations).not.toContain('transfer');
+    expect(operations).not.toContain('checkpoint');
+    expect(operations).not.toContain('delete-checkpoint');
+    expect(manager.storage.getEncryptedUploadV2Checkpoint()).toBe(stored);
+  });
+
   it.each(['context', 'authorization', 'transfer'])('retains the old owner checkpoint on replacement %s failure', async (phase) => {
     const operations: string[] = []; const { manager, stored } = replacement(operations);
     const material = await provider(operations)(); material.authorization.writeUInt16LE(9, 30);
@@ -524,10 +546,12 @@ describe('RecordingManager encrypted upload v2', () => {
     }
   );
 
-  it('starts a validated replacement at zero and supersedes old evidence only through durable persistence', async () => {
+  it('accepts canonical profile 3 for a replacement upload and supersedes old evidence only through durable persistence', async () => {
     const operations: string[] = []; const { manager } = replacement(operations);
     const material = await provider(operations)(); material.authorization.writeUInt16LE(9, 30);
-    await collect(manager.syncEncryptedRecordingV2(device, recording, async () => material));
+    expect(material.authorization[13]).toBe(3);
+    const progress = await collect(manager.syncEncryptedRecordingV2(device, recording, async () => material));
+    expect(progress.at(-1)).toMatchObject({ stage: 'completed', recordingId: 'rec_123' });
     expect(manager.protocolHandler.transferEncryptedUploadV2).toHaveBeenCalledWith(device.id, expect.objectContaining({ checkpoint: expect.objectContaining({ revision: 0, nextCiphertextOffset: 0n }) }));
     expect(manager.storage.saveEncryptedUploadV2Checkpoint).toHaveBeenCalledWith(expect.objectContaining({ ownerRevision: 4, revision: 1 }));
     expect(operations.indexOf('authorization')).toBeLessThan(operations.indexOf('checkpoint'));

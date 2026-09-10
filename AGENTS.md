@@ -164,6 +164,13 @@ document listeners. Do not
 quarantine provider-only timeout after BLE writes are quiescent. Pairing and
 Grant nonce remain unchanged. Baseline vectors are not
 rewritten; the old bit8 negative case has an explicit amendment regression.
+Firmware consumes BEGIN and signed-document writes asynchronously, so context
+polling must ignore snapshots from older attempt IDs and continue through lower
+states of the current attempt; only matching terminal device errors or forward
+state jumps fail immediately. Diagnostics may log state/result/length metadata,
+never nonce or proof bytes. Do not allocate a transfer session until START is
+about to run, and never send transfer ABORT for a context/authorization failure
+that created no transfer.
 The source-preview `listPendingRecordings` preserves legacy-only devices and
 merges mixed storage by suppressing known v1 filename aliases of full identities
 read from `040B` (never by list position). Read the legacy snapshot first to

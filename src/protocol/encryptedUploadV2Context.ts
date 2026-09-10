@@ -84,12 +84,13 @@ export async function exchangeUploadContext(
   async function waitFor(state: 1 | 2 | 3): Promise<Buffer> {
     for (;;) {
       const snapshot = decodeUploadContextSnapshot(await bounded(() => io.read(controller.signal)));
-      if (snapshot.attemptId !== attemptId) invalid();
-      if (snapshot.state === 4) {
-        throw new EncryptedUploadV2RuntimeError('encrypted_upload_v2_device_error', snapshot.result);
+      if (snapshot.attemptId === attemptId) {
+        if (snapshot.state === 4) {
+          throw new EncryptedUploadV2RuntimeError('encrypted_upload_v2_device_error', snapshot.result);
+        }
+        if (snapshot.state === state) return snapshot.payload;
+        if (snapshot.state > state) invalid();
       }
-      if (snapshot.state === state) return snapshot.payload;
-      if (snapshot.state !== 0) invalid();
       await bounded(() => new Promise<void>((resolve) => { pollTimer = setTimeout(resolve, 150); }));
     }
   }

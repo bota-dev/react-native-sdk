@@ -12,7 +12,10 @@
 > `uploadContext` provider. `040C` exchanges a device-owned nonce/proof and
 > `0407` kinds3/4 relay challenge/result. Capability bit8 gates this addition;
 > the SDK refreshes it before authorization and receipt, within one30-second
-> deadline. No credential decryption, app clock trust or pairing changes.
+> deadline. Because firmware applies GATT writes on its worker, polling ignores
+> snapshots from an older attempt and accepts earlier states from the current
+> attempt until the requested phase arrives. No credential decryption, app clock
+> trust or pairing changes.
 > Firmware/live deployment remains a separate test gate.
 
 > **V2 source preview (2026-09-07):** `listPendingRecordings` safely merges
@@ -218,6 +221,11 @@ undefined, and production firmware does not yet advertise the target
 characteristics. The owning design is
 [Encrypted Upload v2](../internal-docs/device/Encrypted-Upload-v2.md); never
 infer v2 support from the recording-list flag or a stored `BACKEND_PUBKEY`.
+
+Context polling logs only snapshot length, state, result and declared payload
+length. Transfer cleanup allocates its transport session immediately before
+START, so context/authorization failures do not emit an ABORT for a session that
+never existed or strand a firmware ERROR ahead of later v2 traffic.
 
 V2 LIST listens on both `040B` (catalog) and `0409` (ERROR) before writing
 `0408`. Missing the ERROR subscription can strand firmware output and make

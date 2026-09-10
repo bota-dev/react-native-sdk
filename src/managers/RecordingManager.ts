@@ -420,7 +420,6 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
         dataPayloadBytes,
         bounds.durableCheckpointIntervalBlocks
       );
-      transportSessionId = randomEncryptedUploadV2TransportSessionId();
 
       enterPhase('context');
       await this.protocolHandler.refreshEncryptedUploadV2Context(
@@ -437,6 +436,7 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
       );
       throwIfEncryptedUploadV2Cancelled(options.signal);
       enterPhase('transfer');
+      transportSessionId = randomEncryptedUploadV2TransportSessionId();
       const transfer = await this.protocolHandler.transferEncryptedUploadV2(
         device.id,
         {

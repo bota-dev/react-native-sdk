@@ -51,12 +51,33 @@ describe('opaque upload context exchange', () => {
     expect(f.io.read).toHaveBeenCalledTimes(3);
   });
 
+  it('polls past stale attempts and earlier phases until each expected state arrives', async () => {
+    const f = fixture();
+    f.io.read.mockReset()
+      .mockResolvedValueOnce(snapshot(3, Buffer.alloc(0), 6))
+      .mockResolvedValueOnce(snapshot(0))
+      .mockResolvedValueOnce(snapshot(1, f.nonce))
+      .mockResolvedValueOnce(snapshot(1, f.nonce))
+      .mockResolvedValueOnce(snapshot(2, f.proof))
+      .mockResolvedValueOnce(snapshot(2, f.proof))
+      .mockResolvedValueOnce(snapshot(3));
+
+    await exchangeUploadContext(f.io, f.provider, 7);
+
+    expect(f.events).toEqual(['begin', 'challenge', 'document3', 'proof', 'document4']);
+    expect(f.io.read).toHaveBeenCalledTimes(7);
+  });
+
   it('does not send a result after a device proof rejection or wrong attempt', async () => {
     const f = fixture(); f.io.read.mockReset().mockResolvedValueOnce(snapshot(1, f.nonce)).mockResolvedValueOnce(snapshot(4, Buffer.alloc(0), 7, 4));
     await expect(exchangeUploadContext(f.io, f.provider, 7)).rejects.toMatchObject({ code: 'encrypted_upload_v2_device_error', protocolStatus: 4 });
     expect(f.exchangeProof).not.toHaveBeenCalled();
+    const controller = new AbortController();
     const g = fixture(); g.io.read.mockReset().mockResolvedValue(snapshot(1, g.nonce, 8));
-    await expect(exchangeUploadContext(g.io, g.provider, 7)).rejects.toThrow();
+    const pending = exchangeUploadContext(g.io, g.provider, 7, controller.signal);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ code: 'encrypted_upload_v2_cancelled' });
     expect(g.provider).not.toHaveBeenCalled();
   });
 

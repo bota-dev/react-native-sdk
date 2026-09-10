@@ -459,8 +459,19 @@ export class ProtocolHandler {
       await exchangeUploadContext({
         begin: (bytes) => trackMutable(() => this.bleManager.writeCharacteristic(
           deviceId, SERVICE_BOTA_STORAGE, CHAR_UPLOAD_CONTEXT_V2, bytes, true)),
-        read: () => this.bleManager.readCharacteristic(
-          deviceId, SERVICE_BOTA_STORAGE, CHAR_UPLOAD_CONTEXT_V2),
+        read: async () => {
+          const snapshot = await this.bleManager.readCharacteristic(
+            deviceId, SERVICE_BOTA_STORAGE, CHAR_UPLOAD_CONTEXT_V2);
+          log.debug('Encrypted v2 context snapshot', {
+            deviceId,
+            rawLength: snapshot.length,
+            state: snapshot.length > 2 ? snapshot[2] : undefined,
+            result: snapshot.length >= 10 ? snapshot.readUInt16LE(8) : undefined,
+            declaredPayloadLength:
+              snapshot.length >= 12 ? snapshot.readUInt16LE(10) : undefined,
+          });
+          return snapshot;
+        },
         sendDocument: (kind, bytes, activeSignal) => trackMutable(() =>
           this.sendEncryptedUploadV2Document(
             deviceId, kind, randomEncryptedUploadV2WriteId(), bytes,

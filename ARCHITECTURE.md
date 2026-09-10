@@ -266,6 +266,14 @@ quiescent; retries are rejected during that interval, while a verified new
 connection clears the old-link fence and advances a connection revision that
 suppresses any late ABORT from the abandoned document continuation.
 Provider-only timeout remains retryable.
+The firmware worker can acknowledge a GATT write before publishing the resulting
+durable040C snapshot. Polling therefore ignores older-attempt snapshots and
+continues through lower states of the current attempt until the requested state
+arrives; a matching state4 or a forward jump remains an immediate failure. Debug
+output is limited to snapshot state/result/length metadata and excludes attempt,
+nonce and proof bytes. A transfer session ID is allocated only immediately before
+START, so failures in context or authorization cannot issue ABORT for a transfer
+that was never created or leave an undeliverable ERROR blocking later v2 work.
 SDK refreshes context before authorization and first receipt;
 firmware alone authenticates credential, signature and security-time interval.
 The pinned baseline vectors remain unchanged; only the formerly reserved bit8

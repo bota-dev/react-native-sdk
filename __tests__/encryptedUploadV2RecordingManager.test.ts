@@ -200,6 +200,24 @@ describe('RecordingManager encrypted upload v2', () => {
     }
   );
 
+  it('does not send a transfer ABORT when context fails before a transfer exists', async () => {
+    const operations: string[] = [];
+    const manager = createManager(operations);
+    const failure = new EncryptedUploadV2RuntimeError(
+      'encrypted_upload_v2_unexpected_message'
+    );
+    manager.protocolHandler.refreshEncryptedUploadV2Context.mockRejectedValueOnce(
+      failure
+    );
+
+    await expect(collect(
+      manager.syncEncryptedRecordingV2(device, recording, provider(operations))
+    )).rejects.toBe(failure);
+
+    expect(manager.protocolHandler.abortEncryptedUploadV2).not.toHaveBeenCalled();
+    expect(operations).toEqual(['cancel']);
+  });
+
   it('does not cancel an uncertain CONFIRM when the diagnostic handler throws', async () => {
     const operations: string[] = [];
     const manager = createManager(operations);

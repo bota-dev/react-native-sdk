@@ -545,6 +545,10 @@ export class ProtocolHandler {
                 value.kind !== kind ||
                 value.writeId !== writeId
               ) return;
+              log.debug('Encrypted v2 signed blob result', {
+                kind: value.kind,
+                result: value.result,
+              });
               cleanup();
               if (value.result !== 0) {
                 reject(new EncryptedUploadV2RuntimeError(

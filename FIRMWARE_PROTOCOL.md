@@ -1,5 +1,21 @@
 # Firmware Protocol Reference — @bota.dev/react-native-sdk
 
+### Encrypted v2 CONFIRM completion and recovery
+
+The source-preview v2 client subscribes to both 040A (completion status) and
+0409 (command ERROR) before sending CONFIRM 0x23. Replies must match the active
+transport session. It settles before removing monitors, because native
+cancellation callbacks can run synchronously. Firmware completion must retain
+the original session ID, durable bytes, profile 3 and 100% progress even after
+its admission owner is cleared.
+
+Every failure after CONFIRM is attempted, including an explicit device error,
+surfaces as `encrypted_upload_v2_confirmation_uncertain`. Numeric `protocolStatus`
+and `underlyingError` retain the device failure for diagnosis. The manager keeps
+the checkpoint/finalized session and must not send ABORT or cancel the upload:
+local deletion may already be partial. This does not change the receipt checks
+or permit legacy fallback. Run the ProtocolHandler and RecordingManager v2 tests.
+
 DEVICE_SETTINGS v0x02 byte 9 is `heartbeat_enabled_mask`: bit 7 marks an explicit value, bit 1 enables cellular direct heartbeat, and bit 0 enables WiFi direct heartbeat. Values without bit 7 retain the legacy both-enabled default.
 
 DEVICE_SETTINGS bytes 5 and 6 encode cellular and WiFi idle timeouts in 10-second units (`0` = immediate, `1-254` = 10-2540 seconds, `255` = always on). A missing or `null` individual API value serializes as byte `18` (180 seconds). For backward compatibility, an SDK input of 1-9 seconds serializes as byte `1` (10 seconds); exact sub-10-second values are not representable.

@@ -218,10 +218,10 @@ describe('RecordingManager encrypted upload v2', () => {
     expect(operations).toEqual(['cancel']);
   });
 
-  it('does not cancel an uncertain CONFIRM when the diagnostic handler throws', async () => {
+  it.each([undefined, 0xff])('does not cancel an uncertain CONFIRM (status %s) when the diagnostic handler throws', async (protocolStatus) => {
     const operations: string[] = [];
     const manager = createManager(operations);
-    const failure = new EncryptedUploadV2RuntimeError('encrypted_upload_v2_confirmation_uncertain');
+    const failure = new EncryptedUploadV2RuntimeError('encrypted_upload_v2_confirmation_uncertain', protocolStatus);
     manager.protocolHandler.confirmEncryptedUploadV2.mockRejectedValueOnce(failure);
     const previousLevel = logger.getLevel();
     logger.setLevel('debug');

@@ -948,10 +948,21 @@ export class ProtocolHandler {
     try {
       await new Promise<void>((resolve, reject) => {
       let subscription: Subscription | undefined;
+      let errorSubscription: Subscription | undefined;
       let timer: number | undefined;
+      let settled = false;
       const cleanup = () => {
         if (timer !== undefined) clearTimeout(timer);
-        subscription?.remove();
+        const monitors = [subscription, errorSubscription];
+        subscription = undefined;
+        errorSubscription = undefined;
+        monitors.forEach((monitor) => monitor?.remove());
+      };
+      const fail = (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
       };
       try {
         subscription = this.bleManager.subscribeToCharacteristic(
@@ -959,31 +970,46 @@ export class ProtocolHandler {
           SERVICE_BOTA_STORAGE,
           CHAR_TRANSFER_STATUS_V2,
           (status) => {
+            if (settled) return;
             try {
               const parsed = parseEncryptedUploadV2Status(status);
               if (parsed.transportSessionId !== request.transportSessionId) return;
               if (parsed.phase === 0x0a || parsed.result !== 0) {
-                cleanup();
-                reject(new EncryptedUploadV2RuntimeError(
+                fail(new EncryptedUploadV2RuntimeError(
                   'encrypted_upload_v2_device_error',
                   parsed.result
                 ));
                 return;
               }
               if (parsed.phase === 0x09) {
+                settled = true;
                 cleanup();
                 resolve();
               }
             } catch (error) {
-              cleanup();
-              reject(error);
+              fail(error);
             }
           },
-          (error) => {
-            cleanup();
-            reject(error);
-          }
+          fail
         );
+        if (settled) { cleanup(); return; }
+        // CONFIRM succeeds on 040A, but command ERROR packets use 0409.
+        errorSubscription = this.bleManager.subscribeToCharacteristic(
+          deviceId, SERVICE_BOTA_STORAGE, CHAR_RECORDING_TRANSFER_V2,
+          (bytes) => {
+            if (settled) return;
+            try {
+              const message = decodeEncryptedUploadV2Transfer(bytes);
+              if (message.common.transportSessionId !== request.transportSessionId) return;
+              if (message.type !== 'error' || message.failedMessageType !== 0x23) {
+                throw new EncryptedUploadV2RuntimeError('encrypted_upload_v2_unexpected_message');
+              }
+              fail(new EncryptedUploadV2RuntimeError('encrypted_upload_v2_device_error', message.result));
+            } catch (error) { fail(error); }
+          },
+          fail
+        );
+        if (settled) { cleanup(); return; }
         const frame = encodeEncryptedUploadV2Transfer({
           type: 'confirm',
           common: {
@@ -999,8 +1025,7 @@ export class ProtocolHandler {
         });
         throwIfEncryptedUploadV2Cancelled(request.signal);
         timer = setTimeout(() => {
-          cleanup();
-          reject(new TransferError(
+          fail(new TransferError(
             'Timeout waiting for encrypted upload v2 confirmation',
             'ENCRYPTED_UPLOAD_V2_CONFIRM_TIMEOUT'
           ));
@@ -1012,26 +1037,20 @@ export class ProtocolHandler {
           CHAR_TRANSFER_CONTROL_V2,
           frame,
           true
-        ).catch((error) => {
-          cleanup();
-          reject(error);
-        });
+        ).catch(fail);
       } catch (error) {
-        cleanup();
-        reject(error);
+        fail(error);
       }
       });
     } catch (error) {
-      if (
-        !confirmationAttempted ||
-        (error instanceof EncryptedUploadV2RuntimeError &&
-          error.code === 'encrypted_upload_v2_device_error')
-      ) {
+      if (!confirmationAttempted) {
         throw error;
       }
+      // Even an explicit device error can follow partial local deletion.
+      // Preserve the finalized session/checkpoint; never ABORT/cancel CONFIRM.
       throw new EncryptedUploadV2RuntimeError(
         'encrypted_upload_v2_confirmation_uncertain',
-        undefined,
+        error instanceof EncryptedUploadV2RuntimeError ? error.protocolStatus : undefined,
         error
       );
     }

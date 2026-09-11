@@ -1082,7 +1082,51 @@ describe('ProtocolHandler encrypted upload v2', () => {
     expect(commitIndex).toBeGreaterThanOrEqual(0);
     expect(confirmIndex).toBeGreaterThan(commitIndex);
     expect(subscriptions.has(CHAR_TRANSFER_STATUS_V2)).toBe(true);
-    expect(subscriptions.has(CHAR_RECORDING_TRANSFER_V2)).toBe(false);
+    expect(subscriptions.has(CHAR_RECORDING_TRANSFER_V2)).toBe(true);
+  });
+
+  it('surfaces CONFIRM errors from 0409 and settles before cancelling both monitors', async () => {
+    jest.useFakeTimers();
+    try {
+      const ble = mockGetBleManager();
+      const removed: string[] = [];
+      ble.subscribeToCharacteristic.mockImplementation((
+        _device: string, _service: string, characteristic: string,
+        onData: (data: Buffer) => void, onError: (error: Error) => void
+      ) => {
+        subscriptions.set(characteristic, onData);
+        return { remove: () => { removed.push(characteristic); onError(new Error('cancelled')); } };
+      });
+      ble.writeCharacteristic.mockImplementation(async (
+        _device: string, _service: string, characteristic: string
+      ) => {
+        if (characteristic !== CHAR_TRANSFER_CONTROL_V2) return;
+        const notify = subscriptions.get(CHAR_RECORDING_TRANSFER_V2);
+        // Drained errors from an earlier transport must not settle this CONFIRM.
+        notify?.(encodeEncryptedUploadV2Transfer({
+          type: 'error', common: { ...common(0x4f), transportSessionId: 6n },
+          result: 0x0e, failedMessageType: 0x23, checkpointRevision: 0,
+        }));
+        notify?.(encodeEncryptedUploadV2Transfer({
+          type: 'error', common: common(0x4f), result: 0xff,
+          failedMessageType: 0x23, checkpointRevision: 1,
+        }));
+      });
+      const handler = new ProtocolHandler();
+      jest.spyOn(handler, 'sendEncryptedUploadV2Document').mockResolvedValue(undefined);
+      const pending = handler.confirmEncryptedUploadV2('device-1', {
+        transportSessionId: 7n, uploadSessionUuid: sessionUuid,
+        recordingUuid: uuid, recordingGeneration: 3, ownerRevision: 4,
+        receipt: document('BOTARCPT', 336, 0x24), maximumSignedBlobBytes: 1024, writeId: 14,
+      });
+      const assertion = expect(pending).rejects.toMatchObject({
+        code: 'encrypted_upload_v2_confirmation_uncertain', protocolStatus: 0xff,
+        underlyingError: { code: 'encrypted_upload_v2_device_error', protocolStatus: 0xff },
+      });
+      await jest.advanceTimersByTimeAsync(10_000);
+      await assertion;
+      expect(removed.sort()).toEqual([CHAR_TRANSFER_STATUS_V2, CHAR_RECORDING_TRANSFER_V2].sort());
+    } finally { jest.useRealTimers(); }
   });
 
   it('rejects a matching completion status for a non-v2 upload profile', async () => {

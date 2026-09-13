@@ -1,8 +1,12 @@
 # CLAUDE.md - Bota React Native SDK
 
-Source version `0.0.66` is release preparation only. npm `latest` remains
-`0.0.65`; follow `PUBLISHING.md` for the exact CI candidate and interactive
-publication gates before updating app registry pins.
+The immutable `0.0.66` candidate failed release verification because archive
+parsing ran before integrity validation and was not portable across tar
+implementations. Source version `0.0.67` is release preparation only; its
+candidate verifier checks basename, byte length, SHA-1, and SHA-256 before
+archive extraction. npm `latest` remains `0.0.65`; follow `PUBLISHING.md` for
+the exact new CI candidate and interactive publication gates before updating
+app registry pins.
 
 **V2 resume packet accounting:** Keep transport-local packet numbering separate
 from a persisted checkpoint's prior `highestContiguousSequence`. A fresh resume

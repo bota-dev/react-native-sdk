@@ -112,7 +112,45 @@ test('detects a tarball changed after the inventory was written', () => {
   assert.throws(() => verifyCandidateInventory({
     inventoryPath: fixture.inventoryPath,
     tarballPath: fixture.tarballPath,
-  }), /tarball (byte length|SHA-1|SHA-256)/);
+  }), /tarball byte length does not match the candidate inventory/);
+});
+
+test('checks SHA-1 before extracting a same-length corrupted archive', () => {
+  const fixture = makeFixture();
+  writeCandidateInventory({
+    outputPath: fixture.inventoryPath,
+    packageJsonPath: fixture.packageJsonPath,
+    sourceRevision: SOURCE_REVISION,
+    tag: `v${VERSION}`,
+    tarballPath: fixture.tarballPath,
+  });
+  const corrupted = readFileSync(fixture.tarballPath);
+  corrupted[0] ^= 0xff;
+  writeFileSync(fixture.tarballPath, corrupted);
+
+  assert.throws(() => verifyCandidateInventory({
+    inventoryPath: fixture.inventoryPath,
+    tarballPath: fixture.tarballPath,
+  }), /tarball SHA-1 does not match the candidate inventory/);
+});
+
+test('rejects a SHA-256 mismatch after SHA-1 matches', () => {
+  const fixture = makeFixture();
+  writeCandidateInventory({
+    outputPath: fixture.inventoryPath,
+    packageJsonPath: fixture.packageJsonPath,
+    sourceRevision: SOURCE_REVISION,
+    tag: `v${VERSION}`,
+    tarballPath: fixture.tarballPath,
+  });
+  const inventory = JSON.parse(readFileSync(fixture.inventoryPath, 'utf8'));
+  inventory.tarball.sha256 = '0'.repeat(64);
+  writeFileSync(fixture.inventoryPath, `${JSON.stringify(inventory, null, 2)}\n`);
+
+  assert.throws(() => verifyCandidateInventory({
+    inventoryPath: fixture.inventoryPath,
+    tarballPath: fixture.tarballPath,
+  }), /tarball SHA-256 does not match the candidate inventory/);
 });
 
 test('rejects an unsupported candidate inventory schema', () => {

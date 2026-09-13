@@ -6,7 +6,6 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
-  statSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname, basename, resolve } from 'node:path';
@@ -131,19 +130,12 @@ export function verifyCandidateInventory({ inventoryPath, tarballPath }) {
   }
   validateReleaseMetadata(inventory, 'candidate inventory');
 
-  const packedPackage = readPackedPackageJson(tarballPath);
-  if (packedPackage.name !== inventory.packageName) {
-    throw new Error(`packed package name must equal ${inventory.packageName}; got ${packedPackage.name}`);
-  }
-  if (packedPackage.version !== inventory.version) {
-    throw new Error(`packed package version must equal ${inventory.version}; got ${packedPackage.version}`);
-  }
   if (basename(tarballPath) !== inventory.tarball.fileName) {
     throw new Error(`tarball file name must equal ${inventory.tarball.fileName}`);
   }
 
   const bytes = readFileSync(tarballPath);
-  if (statSync(tarballPath).size !== inventory.tarball.byteLength) {
+  if (bytes.byteLength !== inventory.tarball.byteLength) {
     throw new Error('tarball byte length does not match the candidate inventory');
   }
   if (digest(bytes, 'sha1') !== inventory.tarball.sha1) {
@@ -151,6 +143,14 @@ export function verifyCandidateInventory({ inventoryPath, tarballPath }) {
   }
   if (digest(bytes, 'sha256') !== inventory.tarball.sha256) {
     throw new Error('tarball SHA-256 does not match the candidate inventory');
+  }
+
+  const packedPackage = readPackedPackageJson(tarballPath);
+  if (packedPackage.name !== inventory.packageName) {
+    throw new Error(`packed package name must equal ${inventory.packageName}; got ${packedPackage.name}`);
+  }
+  if (packedPackage.version !== inventory.version) {
+    throw new Error(`packed package version must equal ${inventory.version}; got ${packedPackage.version}`);
   }
 
   return inventory;

@@ -66,8 +66,11 @@ The development toolchain uses Jest 30 and ESLint 10 with flat configuration.
 
 ## Release Ownership
 
-Source `0.0.66` is pending release; npm `latest` remains `0.0.65` until
-the candidate and registry verification in `PUBLISHING.md` completes.
+The immutable `0.0.66` candidate failed release verification because archive
+parsing preceded integrity checks and behaved differently across tar
+implementations. Source `0.0.67` is pending a new candidate; npm `latest`
+remains `0.0.65` until the candidate and registry verification in
+`PUBLISHING.md` completes.
 
 - This repository publishes only `0.0.x`, which owns npm `latest`.
 - GitHub Actions creates a checksum-bound candidate but cannot publish it.

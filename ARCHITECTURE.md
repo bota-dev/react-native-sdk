@@ -24,9 +24,13 @@ Native package and preserve its `BotaClient` entry point during migration.
 
 ## Release Ownership
 
-The `0.0.66` source candidate includes the v2 runtime described below, but is
-not yet a published package. Apps retain `0.0.65` registry pins and use the
-standalone sibling source only for local validation. See `PUBLISHING.md`.
+The immutable `0.0.66` candidate failed its release gate because candidate
+verification parsed the archive before checking its bound length and hashes,
+making tamper rejection depend on the host tar implementation. The `0.0.67`
+source candidate checks basename, byte length, SHA-1, and SHA-256 before archive
+extraction and includes the v2 runtime described below, but is not yet a
+published package. Apps retain `0.0.65` registry pins and use the standalone
+sibling source only for local validation. See `PUBLISHING.md`.
 
 | SDK line | Source | Version | Distribution channel |
 | --- | --- | --- | --- |

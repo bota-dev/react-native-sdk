@@ -53,6 +53,82 @@ const initialCheckpoint = (): EncryptedUploadV2Checkpoint => ({
 });
 
 describe('EncryptedUploadV2TransferReceiver', () => {
+  it.each([[8, 37], [4, 0]])('rejects premature or old-transport EOF after resuming %i bytes (sequence %i)', async (prefixLength, finalSequence) => {
+    const ciphertext = Buffer.from([1, 2, 3, 4, 5, 6, 7, 8]);
+    const manifest = Buffer.alloc(580, 0xa5);
+    const sink = new TestSink();
+    await sink.write(0n, ciphertext.subarray(0, prefixLength));
+    const receiver = new EncryptedUploadV2TransferReceiver({
+      transportSessionId: 7n, expectedCiphertextLength: 8n,
+      expectedCiphertextSha256: digest(ciphertext), maximumDataPayloadBytes: 4,
+      maximumWindowPackets: 2, maximumMissingSequences: 2,
+      checkpoint: { revision: 3, nextCiphertextOffset: BigInt(prefixLength),
+        prefixSha256: digest(ciphertext.subarray(0, prefixLength)), highestContiguousSequence: 37 },
+      sink, persistCheckpoint: async () => {},
+    });
+    await receiver.prepare();
+    for (let offset = 0; offset < manifest.length; offset += 200) {
+      await receiver.receive(encodeEncryptedUploadV2Transfer({
+        type: 'manifestChunk', common: common(0x43), totalManifestLength: 580,
+        chunkOffset: offset, manifestSha256: digest(manifest), chunk: manifest.subarray(offset, offset + 200),
+      }));
+    }
+    await expect(receiver.receive(encodeEncryptedUploadV2Transfer({
+      type: 'eof', common: common(0x44), finalSequence,
+      blockCount: 1, ciphertextLength: 8n,
+      ciphertextSha256: digest(ciphertext), manifestSha256: digest(manifest),
+    }))).rejects.toThrow('encrypted_upload_v2_integrity_mismatch');
+  });
+
+  it.each([4, 8])('resumes a durable %i-byte prefix with transport-local sequence numbers', async (prefixLength) => {
+    const ciphertext = Buffer.from([1, 2, 3, 4, 5, 6, 7, 8]);
+    const manifest = Buffer.alloc(580, 0xa5);
+    const sink = new TestSink();
+    await sink.write(0n, ciphertext.subarray(0, prefixLength));
+    const checkpoint = {
+      revision: 3, nextCiphertextOffset: BigInt(prefixLength),
+      prefixSha256: digest(ciphertext.subarray(0, prefixLength)),
+      highestContiguousSequence: 37, // Previous transport, not this attempt.
+    };
+    const persistCheckpoint = jest.fn(async () => {});
+    const receiver = new EncryptedUploadV2TransferReceiver({
+      transportSessionId: 7n, expectedCiphertextLength: 8n,
+      expectedCiphertextSha256: digest(ciphertext), maximumDataPayloadBytes: 4,
+      maximumWindowPackets: 2, maximumMissingSequences: 2,
+      checkpoint, sink, persistCheckpoint,
+    });
+    await receiver.prepare();
+    if (prefixLength < ciphertext.length) {
+      await receiver.receive(encodeEncryptedUploadV2Transfer({
+        type: 'data', common: common(0x41), sequence: 1,
+        offset: 4n, data: ciphertext.subarray(4),
+      }));
+      const ack = await receiver.receive(encodeEncryptedUploadV2Transfer({
+        type: 'windowEnd', common: common(0x42), windowIndex: 0,
+        firstSequence: 1, lastSequence: 1, nextCiphertextOffset: 8n,
+        prefixSha256: digest(ciphertext), checkpointRevision: 4,
+      }));
+      expect(ack.type).toBe('control');
+      expect(persistCheckpoint).toHaveBeenCalledWith({
+        revision: 4, nextCiphertextOffset: 8n, prefixSha256: digest(ciphertext),
+        highestContiguousSequence: 1,
+      });
+    }
+    for (let offset = 0; offset < manifest.length; offset += 200) {
+      await receiver.receive(encodeEncryptedUploadV2Transfer({
+        type: 'manifestChunk', common: common(0x43), totalManifestLength: 580,
+        chunkOffset: offset, manifestSha256: digest(manifest), chunk: manifest.subarray(offset, offset + 200),
+      }));
+    }
+    const result = await receiver.receive(encodeEncryptedUploadV2Transfer({
+      type: 'eof', common: common(0x44), finalSequence: prefixLength === 8 ? 0 : 1,
+      blockCount: 1, ciphertextLength: 8n,
+      ciphertextSha256: digest(ciphertext), manifestSha256: digest(manifest),
+    }));
+    expect(result.type).toBe('complete');
+    expect(checkpoint.highestContiguousSequence).toBe(37);
+  });
+
   it.each([185, 247])('repairs short checkpoint tails across real-size windows at MTU %i', async (mtu) => {
     // Opaque fixture with the size/boundaries of header + two full AEAD blocks
     // + trailer. The SDK does not parse these bytes or require this structure.

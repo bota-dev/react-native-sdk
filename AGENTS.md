@@ -187,8 +187,12 @@ That minimum only fits control frames; firmware must also fit a complete
 checkpoint boundary in the negotiated window. The receiver permits short DATA
 tails and checks transmitted offsets/lengths, not sequence × maximum payload.
 `encryptedUploadV2Runtime.test.ts` covers MTU185/247, two block-sized windows,
+partial/completed-prefix resume with transport-local packet numbering,
 short-tail loss/duplicate repair, and a deferred persistence gate proving that
 the ACK stays unresolved until checkpoint persistence completes, without parsing audio.
+The saved `highestContiguousSequence` describes the prior transport; it must
+not seed a new receiver's packet counter. Resume retains the verified byte
+offset/digest/revision, while a no-new-DATA completion uses EOF sequence zero.
 For a present `0406`, canonical zero flags mean unavailable/not-yet-ready:
 retry every100ms within one10-second discovery/read deadline, then throw
 `encrypted_upload_v2_capability_unavailable`, never legacy absence. Malformed

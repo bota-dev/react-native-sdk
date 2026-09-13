@@ -1,5 +1,12 @@
 # CLAUDE.md - Bota React Native SDK
 
+**V2 resume packet accounting:** Keep transport-local packet numbering separate
+from a persisted checkpoint's prior `highestContiguousSequence`. A fresh resume
+retains verified offset/digest/revision, not the old packet counter; completed
+ciphertext resumes can return manifest/EOF with final sequence zero. Receiver
+regressions cover both partial and complete prefix resume. All byte/digest and
+manifest integrity checks remain required.
+
 > **Expiry recovery source preview (2026-09-09):** Capability bit9 (`0x200`)
 > and authorization flag `0x0008` permit a structurally validated higher owner
 > for the same recording/ciphertext. The provider supplies the recovered session;

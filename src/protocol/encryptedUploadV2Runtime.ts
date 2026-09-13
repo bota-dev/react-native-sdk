@@ -105,6 +105,8 @@ const MANIFEST_LENGTH = 580;
  * ProtocolHandler. */
 export class EncryptedUploadV2TransferReceiver {
   private checkpoint: EncryptedUploadV2Checkpoint;
+  // Packet numbering belongs to this transport attempt, not the saved prefix.
+  private highestContiguousSequence?: number;
   private readonly packets = new Map<number, PacketMetadata>();
   private pendingWindow?: PendingWindow;
   private readonly manifest = Buffer.alloc(MANIFEST_LENGTH);
@@ -241,9 +243,9 @@ export class EncryptedUploadV2TransferReceiver {
     prefixSha256: Buffer;
     checkpointRevision: number;
   }): Promise<EncryptedUploadV2ReceiverAction> {
-    const expectedFirst = this.checkpoint.highestContiguousSequence === undefined
+    const expectedFirst = this.highestContiguousSequence === undefined
       ? value.firstSequence
-      : this.checkpoint.highestContiguousSequence + 1;
+      : this.highestContiguousSequence + 1;
     const span = value.lastSequence - value.firstSequence + 1;
     if (
       value.firstSequence > value.lastSequence ||
@@ -319,6 +321,7 @@ export class EncryptedUploadV2TransferReceiver {
     await this.options.persistCheckpoint(copyCheckpoint(nextCheckpoint));
     throwIfEncryptedUploadV2Cancelled(this.options.signal);
     this.checkpoint = nextCheckpoint;
+    this.highestContiguousSequence = value.lastSequence;
     this.packets.clear();
     this.pendingWindow = undefined;
     return {
@@ -376,7 +379,7 @@ export class EncryptedUploadV2TransferReceiver {
     if (
       this.pendingWindow ||
       this.packets.size > 0 ||
-      this.checkpoint.highestContiguousSequence !== finalSequence ||
+      (this.highestContiguousSequence ?? 0) !== finalSequence ||
       blockCount === 0 ||
       ciphertextLength !== this.options.expectedCiphertextLength ||
       !secureEqual(ciphertextSha256, this.options.expectedCiphertextSha256) ||

@@ -10,6 +10,16 @@ GitHub Actions never publishes this maintenance line. It builds and preserves
 one checksum-bound candidate; a maintainer publishes that exact tarball from an
 interactive npm session protected by WebAuthn.
 
+## Pending 0.0.66 candidate
+
+Source version `0.0.66` includes the standalone encrypted-upload-v2 runtime,
+opaque file sinks, upload-context relay, and resume/confirmation fixes.
+The version bump is release preparation, not evidence of npm publication.
+Apps must keep their published `0.0.65` pins until the preserved `0.0.66`
+candidate passes the gates below and its registry checksum is verified.
+Local sibling-source testing does not verify the installed release package.
+Do not use the `app-sdk` beta line to bridge this release gap.
+
 ## 1. Prepare The Version
 
 1. Update `package.json` and `package-lock.json` to the same new `0.0.x`

@@ -1,5 +1,9 @@
 # CLAUDE.md - Bota React Native SDK
 
+Source version `0.0.66` is release preparation only. npm `latest` remains
+`0.0.65`; follow `PUBLISHING.md` for the exact CI candidate and interactive
+publication gates before updating app registry pins.
+
 **V2 resume packet accounting:** Keep transport-local packet numbering separate
 from a persisted checkpoint's prior `highestContiguousSequence`. A fresh resume
 retains verified offset/digest/revision, not the old packet counter; completed

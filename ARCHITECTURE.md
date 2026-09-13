@@ -24,6 +24,10 @@ Native package and preserve its `BotaClient` entry point during migration.
 
 ## Release Ownership
 
+The `0.0.66` source candidate includes the v2 runtime described below, but is
+not yet a published package. Apps retain `0.0.65` registry pins and use the
+standalone sibling source only for local validation. See `PUBLISHING.md`.
+
 | SDK line | Source | Version | Distribution channel |
 | --- | --- | --- | --- |
 | React Native maintenance | This repository | `0.0.x` | npm `latest` |

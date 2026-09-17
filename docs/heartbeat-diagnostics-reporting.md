@@ -52,7 +52,8 @@ Production operations:
 ```
 
 Responses are small ATT notifications: `0x90` metadata, `0x91` signature,
-`0x92` list end, `0x93` ACK result, `0x94` capabilities, and one or more `0x95`
+`0x92` two-byte list end carrying only the event count, `0x93` ACK result,
+`0x94` capabilities, and one or more `0x95`
 V1 detail chunks. The SDK requires contiguous chunks for the exact 176-byte
 detail before exposing an event. That detail carries build identity, context,
 allowlisted WL83 fault masks, normalized image-relative PCs, cached runtime

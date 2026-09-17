@@ -125,7 +125,7 @@ are little-endian and each frame fits the default 20-byte ATT payload.
 | --- | ---: | --- |
 | `0x90` | 17 | index u8, event type u8, reason u16, uptime u32, event sequence u64 |
 | `0x91` | 10 | index u8, signature u64 |
-| `0x92` | 6 | event count u8, cumulative dropped count u32 |
+| `0x92` | 2 | event count u8 |
 | `0x93` | 10 | status u8, acknowledged event sequence u64 |
 | `0x94` | 3 | protocol version u8, maximum batch size u8 |
 | `0x95` | 6-20 | index u8, chunk offset u16, total length u16, up to 14 V1 detail bytes |

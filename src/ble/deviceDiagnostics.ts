@@ -203,7 +203,7 @@ export class DeviceDiagnosticsDecoder {
       }
       return null;
     }
-    if (packet.length === 6 && packet[0] === DEVICE_DIAGNOSTICS_EVT_END) {
+    if (packet.length === 2 && packet[0] === DEVICE_DIAGNOSTICS_EVT_END) {
       const expected = packet[1];
       const events: DeviceDiagnosticEvent[] = [];
       for (let index = 0; index < expected; index++) {
@@ -218,7 +218,6 @@ export class DeviceDiagnosticsDecoder {
       }
       const batch: DeviceDiagnosticsBatch = {
         schema_version: 1,
-        dropped_count: packet.readUInt32LE(2),
         events,
       };
       this.reset();

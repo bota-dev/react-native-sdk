@@ -251,7 +251,6 @@ export interface DeviceDiagnosticEvent {
 
 export interface DeviceDiagnosticsBatch {
   schema_version: 1;
-  dropped_count: number;
   events: DeviceDiagnosticEvent[];
 }
 

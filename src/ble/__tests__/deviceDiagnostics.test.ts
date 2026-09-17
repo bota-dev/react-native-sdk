@@ -37,10 +37,9 @@ describe('DeviceDiagnosticsDecoder', () => {
     detail.writeInt32LE(-210, 96);
     detail.writeUInt16LE(3, 100);
     detail.writeInt32LE(2, 102);
-    const end = Buffer.alloc(6);
+    const end = Buffer.alloc(2);
     end[0] = 0x92;
     end[1] = 1;
-    end.writeUInt32LE(2, 2);
 
     expect(decoder.push(meta)).toBeNull();
     expect(decoder.push(signature)).toBeNull();
@@ -56,7 +55,6 @@ describe('DeviceDiagnosticsDecoder', () => {
     }
     expect(decoder.push(end)).toEqual({
       schema_version: 1,
-      dropped_count: 2,
       events: [{
         event_id: '000000000000002a',
         event_type: 'hard_fault',

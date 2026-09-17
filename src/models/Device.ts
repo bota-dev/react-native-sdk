@@ -199,6 +199,62 @@ export interface DeviceLogEvent {
   isBacklog: boolean;
 }
 
+export type DeviceDiagnosticEventType =
+  | 'reset' | 'watchdog' | 'hard_fault' | 'storage'
+  | 'power' | 'radio' | 'security';
+
+export type DeviceDiagnosticReasonCode =
+  | 'watchdog_timeout' | 'cpu_illegal_instruction'
+  | 'cpu_misaligned_access' | 'cpu_stack_overflow'
+  | 'cpu_usage_fault' | 'memory_protection_fault'
+  | 'invalid_register_read' | 'invalid_register_write'
+  | 'audio_subsystem_fault' | 'wireless_subsystem_fault'
+  | 'flash_mmu_fault' | 'low_voltage_reset'
+  | 'unknown_cpu_exception';
+
+/** A durable fault occurrence read from the device over BLE. */
+export interface DeviceDiagnosticEvent {
+  event_id: string;
+  event_type: DeviceDiagnosticEventType;
+  reason_code: DeviceDiagnosticReasonCode;
+  uptime_ms: number;
+  signature: string;
+  firmware_build_id: string;
+  subsystem: string;
+  state_before_event: string;
+  report?: {
+    fault: {
+      cpu_id: number;
+      cpu_emu: string;
+      core_emu: string;
+      hsb_emu: string;
+      audio_emu: string;
+      wireless_emu: string;
+    };
+    execution: {
+      task?: string;
+      reti?: string;
+      rets?: string;
+      pc_trace: string[];
+    };
+    runtime?: {
+      heap_free_bytes?: number;
+      task_stack_remaining_bytes?: number;
+    };
+    breadcrumbs?: Array<{
+      delta_ms: number;
+      code: string;
+      arg0: number;
+    }>;
+  };
+}
+
+export interface DeviceDiagnosticsBatch {
+  schema_version: 1;
+  dropped_count: number;
+  events: DeviceDiagnosticEvent[];
+}
+
 /**
  * Storage information from device
  */

@@ -64,6 +64,7 @@ function createDeviceLogManager() {
   manager.nonceCache = new Map();
   manager.deviceLogSubscriptions = new Map();
   manager.deviceLogDecoders = new Map();
+  manager.diagnosticReadsInFlight = new Set();
   manager.recordingStateCache = new Map();
   manager.stateCache = { clearAll: jest.fn(), removeAllListeners: jest.fn() };
   manager.stopAutoReconnectLoop = jest.fn();

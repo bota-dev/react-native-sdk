@@ -416,6 +416,15 @@ modules.
 
 - `src/ble/constants.ts` - All Bluetooth UUIDs and protocol constants
 - `src/ble/deviceLogs.ts` - Firmware diagnostic log packet decoder; normalizes Hermes `Uint8Array` views to `Buffer` before UTF-8 conversion
+
+> **Heartbeat diagnostics feature branch:** The SDK reuses
+> B07A0007 for versioned production fault-history list/capability/ACK operations
+> while keeping the existing raw log subscription DEBUG-only. It remains a
+> BLE-only library; the App owns the backend Heartbeat and may ACK firmware only
+> after backend acceptance. The `0x92` list terminator contains only the event
+> count; V1 exposes no cumulative dropped-event counter, and callers omit the
+> Heartbeat `diagnostics` object when the decoded event list is empty. See
+> [docs/heartbeat-diagnostics-reporting.md](docs/heartbeat-diagnostics-reporting.md).
 - `src/ble/parsers.ts` - Binary data parsing/encoding
 - `src/protocol/ProtocolHandler.ts` - Recording transfer protocol
 - `src/BotaClient.ts` - Main public API

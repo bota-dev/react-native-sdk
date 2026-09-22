@@ -50,7 +50,7 @@ All custom UUIDs use the `B07A` prefix with the Bluetooth base UUID
 | STORAGE | `B07A0004` | Recording list, recording transfer, transfer control |
 | AUTH | `B07A0005` | Device public key, session nonce, backend public key, device cert |
 | WIFI_CONFIG | `B07A0006` | WiFi grants, credentials, status, scan |
-| DIAGNOSTICS | `B07A0007` | Opt-in firmware debug log stream |
+| DIAGNOSTICS | `B07A0007` | Released DEBUG-only log stream; target production fault-history transport |
 
 See `src/ble/constants.ts` for the characteristic UUID constants used by the SDK.
 
@@ -85,15 +85,18 @@ finalization.
 
 ## Device Diagnostics
 
-`SERVICE_BOTA_DIAGNOSTICS` (`B07A0007`) exposes an opt-in firmware debug log
-stream. It requires firmware built with `DEBUG=1`; the SDK reports a failed Start
-write as `DeviceError` code `FEATURE_UNAVAILABLE`.
+`SERVICE_BOTA_DIAGNOSTICS` (`B07A0007`) is present in production firmware for
+bounded fault history. Its raw debug-log opcodes remain available only in
+firmware built with `DEBUG=1`.
 
-This service is not the v5 production support/repair interface and must remain
-absent from release firmware. The future grant-scoped health snapshot,
-fault-history, structured-event, and self-test operations are specified in
-[Device Diagnostics and Self-Test Design](../internal-docs/device/Device-Diagnostics-and-Self-Test-Design.md)
-and require separate versioned protocol allocation before SDK implementation.
+The log-stream operations are not the v5 production support/repair interface.
+The production implementation reuses B07A0007
+for bounded production fault-history operations while retaining strict opcode,
+framing and build-gate separation from raw logs. The Heartbeat delivery subset
+is specified by
+[Heartbeat Diagnostics Reporting](../internal-docs/device/Heartbeat-Diagnostics-Reporting.md),
+and the wider grant-scoped health snapshot and self-test behavior remains in
+[Device Diagnostics and Self-Test Design](../internal-docs/device/Device-Diagnostics-and-Self-Test-Design.md).
 
 | Characteristic | UUID | Direction | Use |
 | --- | --- | --- | --- |
@@ -106,6 +109,36 @@ LOG_CONTROL writes:
 | --- | --- |
 | `[0x01]` | Start log notifications |
 | `[0x00]` | Stop log notifications |
+
+### Production fault-history operations
+
+| Opcode | Direction | Meaning |
+| --- | --- | --- |
+| `0x10` | App -> Device | List at most four oldest unacknowledged structured fault events |
+| `0x11` | App -> Device | Acknowledge exact event IDs accepted by the backend |
+| `0x12` | App -> Device | Read Diagnostics protocol capabilities/version |
+
+List responses use the following notification frames. All multi-byte integers
+are little-endian and each frame fits the default 20-byte ATT payload.
+
+| Opcode | Length | Payload after opcode |
+| --- | ---: | --- |
+| `0x90` | 17 | index u8, event type u8, reason u16, uptime u32, event sequence u64 |
+| `0x91` | 10 | index u8, signature u64 |
+| `0x92` | 2 | event count u8 |
+| `0x93` | 10 | status u8, acknowledged event sequence u64 |
+| `0x94` | 3 | protocol version u8, maximum batch size u8 |
+| `0x95` | 6-20 | index u8, chunk offset u16, total length u16, up to 14 V1 detail bytes |
+
+Protocol version 1 sends contiguous `0x95` chunks for an exact 176-byte detail
+record after each signature. The detail carries `firmware_build_id`, subsystem,
+pre-fault state, allowlisted WL83 fault masks, normalized image-relative PCs,
+cached runtime counters and bounded structured breadcrumbs. The SDK rejects a
+partial or reordered detail and returns a `schema_version: 1` Heartbeat batch.
+`0x11` carries one event sequence as eight little-endian bytes. Debug streaming
+and production list reads cannot share a connection subscription. Recording
+transfer and BLE OTA retain priority. See
+[the SDK implementation plan](docs/heartbeat-diagnostics-reporting.md).
 
 LOG_DATA notification packet:
 

@@ -63,6 +63,10 @@ import { BotaClient } from '@bota.dev/react-native-sdk';
 await BotaClient.configure({
   environment: 'production',
   logLevel: 'info',
+  // Optional: required for restart-safe batch uploads.
+  recordingDataStore,
+  uploadRecoveryProvider: ({ recordingId }) =>
+    yourBackend.refreshUploadInfo(recordingId),
 });
 
 // Wait for Bluetooth
@@ -325,6 +329,15 @@ BotaClient.recordings.on('syncCompleted', (uuid, recordingId) => {});
 BotaClient.recordings.on('syncFailed', (uuid, error) => {});
 BotaClient.recordings.on('uploadProgress', (taskId, progress) => {});
 ```
+
+Batch upload recovery is opt-in. `recordingDataStore` must durably close an
+app-private file before its save promise resolves. Queue metadata contains the
+device recording UUID, backend `rec_*`, opaque local path, hash metadata, and
+route type; pre-signed URLs, upload tokens, relay bearer tokens, and signatures
+are deliberately omitted. On a later `configure()`, interrupted `uploading`
+tasks return to `pending` and `uploadRecoveryProvider` must issue fresh
+credentials for the same `recordingId`. Without a durable store, the SDK keeps
+the legacy in-memory behavior and cannot recover audio after process death.
 
 `syncAllRecordings` preserves device-side ownership while a WiFi or cellular
 upload may still be active. A busy response, Bluetooth disconnect, or

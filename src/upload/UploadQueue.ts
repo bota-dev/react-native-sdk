@@ -4,7 +4,11 @@
 
 import EventEmitter from 'eventemitter3';
 
-import type { UploadTask } from '../models/Recording';
+import type {
+  UploadInfo,
+  UploadRecoveryProvider,
+  UploadTask,
+} from '../models/Recording';
 import { StorageManager, generateTaskId } from '../storage/StorageManager';
 import { S3Uploader } from './S3Uploader';
 import { shouldContinueRetrying } from '../utils/retry';
@@ -34,6 +38,8 @@ export interface UploadQueueConfig {
   maxRetries?: number;
   /** Auto-start processing (default: true) */
   autoStart?: boolean;
+  /** Reissues short-lived credentials for tasks restored after process death. */
+  recoveryProvider?: UploadRecoveryProvider;
 }
 
 /**
@@ -48,6 +54,7 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
   private isPaused = false;
   private isProcessing = false;
   private abortControllers: Map<string, AbortController> = new Map();
+  private recoveryProvider?: UploadRecoveryProvider;
 
   constructor(storage: StorageManager, config: UploadQueueConfig = {}) {
     super();
@@ -55,6 +62,7 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
     this.uploader = new S3Uploader();
     this.maxConcurrent = config.maxConcurrent ?? 2;
     this.maxRetries = config.maxRetries ?? 6;
+    this.recoveryProvider = config.recoveryProvider;
 
     if (config.autoStart !== false) {
       this.processQueue();
@@ -67,6 +75,7 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
   async enqueue(params: {
     recordingId: string;
     deviceId: string;
+    recordingUuid: string;
     localPath: string;
     uploadUrl: string;
     uploadToken?: string;
@@ -81,6 +90,7 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
       id: generateTaskId(),
       recordingId: params.recordingId,
       deviceId: params.deviceId,
+      recordingUuid: params.recordingUuid,
       localPath: params.localPath,
       uploadUrl: params.uploadUrl,
       uploadToken: params.uploadToken,
@@ -88,6 +98,7 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
       contentType: params.contentType,
       contentSha256: params.contentSha256,
       relay: params.relay,
+      relayUpload: !!params.relay,
       status: 'pending',
       retryCount: 0,
       createdAt: new Date(),
@@ -210,12 +221,13 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
         // Get next pending task
         const pendingTasks = this.storage.getPendingUploads();
         const nextTask = pendingTasks.find(
-          (t) => !this.activeUploads.has(t.id) && t.status === 'pending'
+          (t) => !this.activeUploads.has(t.id) && t.status === 'pending' &&
+            (!!this.recoveryProvider || this.hasCredentials(t))
         );
 
         if (!nextTask) {
           // No more tasks to process
-          if (this.activeUploads.size === 0) {
+          if (this.activeUploads.size === 0 && pendingTasks.length === 0) {
             this.emit('queueEmpty');
           }
           break;
@@ -239,6 +251,8 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
     this.abortControllers.set(task.id, abortController);
 
     try {
+      const uploadInfo = await this.resolveUploadInfo(task);
+
       // Update status to uploading
       await this.storage.updateTaskStatus(task.id, 'uploading');
       this.emit('taskUpdated', { ...task, status: 'uploading' });
@@ -248,7 +262,7 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
       // Load the audio data
       const audioData = await this.storage.loadRecordingData(task.localPath);
 
-      if (task.relay) {
+      if (uploadInfo.relay) {
         // P10 BLE-e2e relay path: POST ciphertext to backend; backend
         // decrypts and writes plaintext to S3 server-side. The relay
         // endpoint also marks the recording uploaded — no separate
@@ -259,8 +273,8 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
         });
         await this.uploader.relayUpload(
           audioData,
-          task.relay.url,
-          task.relay.bearerToken,
+          uploadInfo.relay.url,
+          uploadInfo.relay.bearerToken,
           {
             onProgress: (progress) => {
               this.emit('uploadProgress', task.id, progress);
@@ -270,8 +284,8 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
         );
       } else {
         // Standard pre-signed S3 PUT
-        await this.uploader.upload(audioData, task.uploadUrl, {
-          contentType: task.contentType,
+        await this.uploader.upload(audioData, uploadInfo.uploadUrl, {
+          contentType: uploadInfo.contentType ?? task.contentType,
           onProgress: (progress) => {
             this.emit('uploadProgress', task.id, progress);
           },
@@ -279,11 +293,11 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
         });
 
         // Notify completion (only if completeUrl and uploadToken are provided)
-        if (task.completeUrl && task.uploadToken) {
+        if (uploadInfo.completeUrl && uploadInfo.uploadToken) {
           await this.uploader.notifyCompletion(
-            task.completeUrl,
+            uploadInfo.completeUrl,
             task.recordingId,
-            task.uploadToken,
+            uploadInfo.uploadToken,
             task.contentSha256
           );
         } else {
@@ -312,6 +326,16 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
         task.retryCount < this.maxRetries &&
         shouldContinueRetrying(task.createdAt)
       ) {
+        if (this.recoveryProvider) {
+          // Never reuse a credential after a failed attempt. These fields are
+          // volatile and are omitted from durable queue serialization.
+          await this.storage.updateUploadTask(task.id, {
+            uploadUrl: '',
+            uploadToken: undefined,
+            completeUrl: undefined,
+            relay: undefined,
+          });
+        }
         await this.storage.incrementRetryCount(task.id);
         await this.storage.updateTaskStatus(task.id, 'pending', err.message);
         log.info('Task will be retried', {
@@ -329,6 +353,42 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
       // Process next task
       this.processQueue();
     }
+  }
+
+  private hasCredentials(task: UploadTask): boolean {
+    return task.relayUpload ? !!task.relay : !!task.uploadUrl;
+  }
+
+  private async resolveUploadInfo(task: UploadTask): Promise<UploadInfo> {
+    if (this.hasCredentials(task)) {
+      return {
+        recordingId: task.recordingId,
+        uploadUrl: task.uploadUrl,
+        uploadToken: task.uploadToken,
+        completeUrl: task.completeUrl,
+        contentType: task.contentType,
+        relay: task.relay,
+      };
+    }
+    if (!this.recoveryProvider || !task.recordingUuid) {
+      throw new Error('Recovered upload requires an uploadRecoveryProvider and recordingUuid');
+    }
+    const recovered = await this.recoveryProvider({
+      taskId: task.id,
+      recordingId: task.recordingId,
+      deviceId: task.deviceId,
+      recordingUuid: task.recordingUuid,
+      relayUpload: !!task.relayUpload,
+      contentType: task.contentType,
+      contentSha256: task.contentSha256,
+    });
+    if (recovered.recordingId !== task.recordingId) {
+      throw new Error('Upload recovery provider returned a different recordingId');
+    }
+    if (!!recovered.relay !== !!task.relayUpload) {
+      throw new Error('Upload recovery provider changed the persisted upload route');
+    }
+    return recovered;
   }
 
   /**

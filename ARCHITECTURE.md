@@ -82,10 +82,10 @@ src/
 │   └── OTAManager.ts       # Firmware download → BLE transfer → reboot recovery
 │
 ├── upload/
-│   └── UploadQueue.ts      # Persistent SQLite queue, retry (exponential backoff, 24h max)
+│   └── UploadQueue.ts      # AsyncStorage metadata queue + restart recovery
 │
 ├── storage/
-│   └── StorageManager.ts   # Device registry, bonding data, transfer state (SQLite)
+│   └── StorageManager.ts   # AsyncStorage metadata + injectable durable audio store
 │
 └── models/                 # TypeScript types
     ├── Device.ts
@@ -334,9 +334,12 @@ RecordingManager.syncRecording(device, fileId)
   6. Bluetooth confirm: TRANSFER_CONTROL 0x07 + file_id (device deletes local file)
 
 UploadQueue handles retries:
-  - Persists to SQLite before upload attempt
-  - Retries on failure: exponential backoff (5s → 30s → 5min → 30min → 2h → 24h max)
-  - Resumes on app restart (reads queue from SQLite)
+  - Persists non-secret task identity/evidence to AsyncStorage before upload
+  - Never persists pre-signed URLs, upload tokens, relay bearer tokens, or signatures
+  - Uses a host-provided app-private RecordingDataStore for durable audio bytes
+  - Converts an interrupted `uploading` task back to `pending` on app restart
+  - Calls uploadRecoveryProvider for fresh credentials bound to the same rec_*
+  - Retries the whole object; byte-range resume remains a later BLE protocol phase
 ```
 
 ---

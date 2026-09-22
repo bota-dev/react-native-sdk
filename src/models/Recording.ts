@@ -75,6 +75,35 @@ export interface UploadInfo {
   };
 }
 
+/** Host-backed durable storage for a fully received recording. Implementations
+ * should use an app-private file and must not return until the bytes are
+ * durably closed. The SDK deliberately does not persist audio in AsyncStorage. */
+export interface RecordingDataStore {
+  saveRecordingData(input: {
+    deviceId: string;
+    recordingUuid: string;
+    data: Uint8Array;
+  }): Promise<string>;
+  loadRecordingData(localPath: string): Promise<Uint8Array>;
+  deleteRecordingData(localPath: string): Promise<void>;
+}
+
+/** Non-secret identity supplied when refreshing credentials for a recovered
+ * upload. URLs, bearer tokens, and signatures are never persisted by the SDK. */
+export interface UploadRecoveryContext {
+  taskId: string;
+  recordingId: string;
+  deviceId: string;
+  recordingUuid: string;
+  relayUpload: boolean;
+  contentType?: string;
+  contentSha256?: string;
+}
+
+export type UploadRecoveryProvider = (
+  context: UploadRecoveryContext
+) => Promise<UploadInfo>;
+
 /**
  * Sync progress stages
  */
@@ -128,6 +157,8 @@ export interface UploadTask {
   recordingId: string;
   /** Device ID the recording came from */
   deviceId: string;
+  /** Stable recording identity on the device, used to recover after restart. */
+  recordingUuid?: string;
   /** Local file path */
   localPath: string;
   /** Pre-signed S3 upload URL */
@@ -150,6 +181,8 @@ export interface UploadTask {
     url: string;
     bearerToken: string;
   };
+  /** Persisted non-secret route marker. The relay URL/token are never stored. */
+  relayUpload?: boolean;
   /** Current status */
   status: UploadTaskStatus;
   /** Number of retry attempts */

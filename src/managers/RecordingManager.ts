@@ -26,6 +26,8 @@ import type {
   StreamingSyncOptions,
   StreamingUploadProvider,
   PersistedEncryptedUploadV2Checkpoint,
+  RecordingDataStore,
+  UploadRecoveryProvider,
 } from '../models/Recording';
 import type { RecordingManagerEvents } from '../models/Status';
 import { DeviceError } from '../utils/errors';
@@ -77,6 +79,11 @@ const log = logger.tag('RecordingManager');
 export type UploadInfoProvider = (
   recording: DeviceRecording
 ) => Promise<UploadInfo>;
+
+export interface RecordingManagerOptions {
+  recordingDataStore?: RecordingDataStore;
+  uploadRecoveryProvider?: UploadRecoveryProvider;
+}
 
 export interface EncryptedUploadV2ProviderContext {
   recording: EncryptedUploadV2Recording;
@@ -132,11 +139,14 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
   private isInitialized = false;
   private activeEncryptedUploadV2Devices = new Set<string>();
 
-  constructor() {
+  constructor(options: RecordingManagerOptions = {}) {
     super();
     this.protocolHandler = new ProtocolHandler();
-    this.storage = new StorageManager();
-    this.uploadQueue = new UploadQueue(this.storage, { autoStart: false });
+    this.storage = new StorageManager(options.recordingDataStore);
+    this.uploadQueue = new UploadQueue(this.storage, {
+      autoStart: false,
+      recoveryProvider: options.uploadRecoveryProvider,
+    });
 
     this.setupUploadQueueListeners();
   }
@@ -690,20 +700,30 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
           recordingUuid: recording.uuid,
         });
       }
-      const task = await this.uploadQueue.enqueue({
-        recordingId: uploadInfo.recordingId,
-        deviceId: device.id,
-        localPath,
-        uploadUrl: uploadInfo.uploadUrl,
-        uploadToken: uploadInfo.uploadToken,
-        completeUrl: uploadInfo.completeUrl,
-        contentType: uploadInfo.contentType,
-        // P9.F2: forward the device-emitted SHA-256 (if any) so the host app's
-        // completeUrl receives it. Skip on the E2E relay path — the server
-        // decrypts and hashes plaintext on receipt, no client SHA in scope.
-        contentSha256: useRelay ? undefined : sha256,
-        relay: useRelay ? uploadInfo.relay : undefined,
-      });
+      let task: UploadTask;
+      try {
+        task = await this.uploadQueue.enqueue({
+          recordingId: uploadInfo.recordingId,
+          deviceId: device.id,
+          recordingUuid: recording.uuid,
+          localPath,
+          uploadUrl: uploadInfo.uploadUrl,
+          uploadToken: uploadInfo.uploadToken,
+          completeUrl: uploadInfo.completeUrl,
+          contentType: uploadInfo.contentType,
+          // P9.F2: forward the device-emitted SHA-256 (if any) so the host app's
+          // completeUrl receives it. Skip on the E2E relay path — the server
+          // decrypts and hashes plaintext on receipt, no client SHA in scope.
+          contentSha256: useRelay ? undefined : sha256,
+          relay: useRelay ? uploadInfo.relay : undefined,
+        });
+      } catch (error) {
+        // The device has not been confirmed, so its copy remains authoritative.
+        // Avoid leaking an unreferenced durable app-private file when queue
+        // metadata could not be committed.
+        await this.storage.deleteRecordingData(localPath).catch(() => undefined);
+        throw error;
+      }
 
       // Wait for upload to complete
       await this.waitForUpload(task.id);

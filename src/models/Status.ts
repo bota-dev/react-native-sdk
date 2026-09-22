@@ -3,7 +3,12 @@
  */
 
 import type { DeviceStatus, StorageInfo } from './Device';
-import type { SyncProgress, UploadTask } from './Recording';
+import type {
+  RecordingDataStore,
+  SyncProgress,
+  UploadRecoveryProvider,
+  UploadTask,
+} from './Recording';
 
 /**
  * SDK log level
@@ -24,6 +29,10 @@ export interface BotaConfig {
   logLevel?: LogLevel;
   /** Enable debug mode with verbose logging */
   debug?: boolean;
+  /** Durable app-private recording storage used for upload recovery. */
+  recordingDataStore?: RecordingDataStore;
+  /** Reissues ephemeral upload credentials for persisted tasks after restart. */
+  uploadRecoveryProvider?: UploadRecoveryProvider;
 }
 
 /**

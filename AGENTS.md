@@ -134,7 +134,14 @@ to these diagnostic logs. Phase entry is not completion evidence.
 
 **Bluetooth OTA flow control** — keep one TRANSFER_STATUS subscription for the full upload and retain ACK sequence state outside individual waits, because firmware notifications may arrive before the SDK reaches `waitForAck()`. A nonzero READY result after upload acceptance and a missing 8-packet window ACK are terminal; never continue sending after either condition.
 
-**Upload queue** — recordings are queued in `UploadQueue` (persistent SQLite). Never upload synchronously in the Bluetooth transfer callback.
+**Upload queue** — recordings are queued in `UploadQueue`; AsyncStorage holds
+only non-secret task identity/evidence, while an optional host-provided
+`RecordingDataStore` owns app-private durable audio bytes. Never persist
+pre-signed URLs, upload tokens, relay bearer tokens, or signatures. Restored
+`uploading` tasks become `pending` and require `uploadRecoveryProvider` to
+return fresh credentials for the same `recordingId`. Without a durable store,
+payloads remain in memory and are not restart-safe. Never upload synchronously
+in the Bluetooth transfer callback.
 
 **Direct-upload ownership** — `syncAllRecordings` may fall back from WiFi/cellular to BLE only after a fresh device status reports `syncActive=false`. Trigger-busy, BLE loss, and unreadable status preserve device ownership; a genuine monitor failure may use BLE only after that fresh inactive confirmation.
 
@@ -235,8 +242,8 @@ the target characteristics.
 | `src/managers/RecordingManager.ts` | Recording list, Bluetooth transfer, upload orchestration |
 | `src/sync/deviceUploadHandoff.ts` | Direct-upload ownership and safe BLE-fallback policy |
 | `src/managers/OTAManager.ts` | Firmware download progress, Bluetooth OTA transfer, reboot recovery |
-| `src/upload/UploadQueue.ts` | Persistent SQLite upload queue with retry |
-| `src/storage/StorageManager.ts` | Local SQLite persistence (device registry, transfer state) |
+| `src/upload/UploadQueue.ts` | AsyncStorage task metadata, whole-object retry, and credential-refresh recovery |
+| `src/storage/StorageManager.ts` | AsyncStorage metadata/checkpoints plus injectable durable recording-data store |
 | `src/models/` | TypeScript types (Device, Recording, DeviceStatus, etc.) |
 | `jest.config.js` | Jest/Babel transform config for TypeScript unit tests |
 | `scripts/release-candidate.mjs` | Creates and verifies immutable legacy npm candidate inventories |

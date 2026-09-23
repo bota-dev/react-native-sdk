@@ -496,7 +496,6 @@ Both platforms use the same TypeScript protocol layer. Platform differences are 
 Repository verification targets React Native 0.87 and React 19 using Node
 22.13+, TypeScript 6, Builder Bob 0.43, AsyncStorage 3, Jest 30, and ESLint 10
 with flat configuration. The published peer ranges remain backward-compatible.
-
 Upload recovery review (2026-09-23): source exposes `UPLOAD_RECOVERY_VERSION=1`.
 A configured provider runs before every attempt and receives `recoveryScope`,
 byte/hash evidence and `signal`. Return null to park an unavailable account;
@@ -509,3 +508,8 @@ completed-file unlink failures retry during initialization. Foreground sync
 reuses matching queued/completed tasks; reconnect is needed for BLE confirmation.
 Retry backoff is persisted, and explicit retries reset the exhausted budget.
 Validate with uploadRecovery tests, the full Jest suite, build and test:release.
+
+The repository's development lock patches the transitive browser-data toolchain
+(`browserslist` 4.28.7 and `baseline-browser-mapping` 2.11.0); source and
+published peer ranges are unchanged, and downstream application locks are
+outside this repository's verification.

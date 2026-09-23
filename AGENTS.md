@@ -63,6 +63,9 @@ npm run test:release # candidate-integrity and workflow-policy tests
 ```
 
 The development toolchain uses Jest 30 and ESLint 10 with flat configuration.
+The root development lock pins patched `browserslist` 4.28.7 and
+`baseline-browser-mapping` 2.11.0 within existing transitive ranges; this
+does not change the published SDK API or downstream application locks.
 
 ## Release Ownership
 

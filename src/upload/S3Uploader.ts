@@ -62,11 +62,10 @@ export class S3Uploader {
       });
 
       if (!response.ok) {
-        const errorText = await response.text().catch(() => 'Unknown error');
+
         log.error('S3 upload failed', undefined, {
           status: response.status,
           statusText: response.statusText,
-          error: errorText,
         });
 
         if (response.status === 403) {
@@ -101,7 +100,7 @@ export class S3Uploader {
       }
 
       throw new UploadError(
-        `Upload failed: ${err.message}`,
+        'Upload network request failed',
         'UPLOAD_FAILED',
         undefined,
         err
@@ -131,7 +130,6 @@ export class S3Uploader {
 
     log.info('Starting BLE-e2e relay upload', {
       size: ciphertext.length,
-      url: relayUrl,
     });
 
     try {
@@ -147,10 +145,9 @@ export class S3Uploader {
       });
 
       if (!response.ok) {
-        const errorText = await response.text().catch(() => 'Unknown error');
+
         log.error('Relay upload failed', undefined, {
           status: response.status,
-          error: errorText,
         });
         throw new UploadError(
           `Relay upload failed: ${response.status} ${response.statusText}`,
@@ -169,7 +166,7 @@ export class S3Uploader {
       if (err.message?.includes('Network request failed')) {
         throw UploadError.networkUnavailable();
       }
-      throw new UploadError(`Relay upload failed: ${err.message}`, 'RELAY_UPLOAD_FAILED', undefined, err);
+      throw new UploadError('Relay network request failed', 'RELAY_UPLOAD_FAILED', undefined, err);
     }
   }
 
@@ -194,7 +191,8 @@ export class S3Uploader {
     completeUrl: string,
     recordingId: string,
     uploadToken: string,
-    contentSha256?: string
+    contentSha256?: string,
+    signal?: AbortSignal
   ): Promise<void> {
     log.debug('Notifying upload completion', { recordingId, hasSha256: !!contentSha256 });
 
@@ -211,12 +209,13 @@ export class S3Uploader {
           Authorization: `Bearer ${uploadToken}`,
         },
         body: JSON.stringify(body),
+        signal,
       });
 
       if (!response.ok) {
-        const errorText = await response.text().catch(() => 'Unknown error');
+
         throw new UploadError(
-          `Completion notification failed: ${response.status} - ${errorText}`,
+          `Completion notification failed: ${response.status}`,
           'COMPLETION_FAILED'
         );
       }

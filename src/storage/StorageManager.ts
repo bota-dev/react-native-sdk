@@ -34,6 +34,13 @@ interface SdkState {
  */
 export class StorageManager {
   private uploadQueue: UploadTask[] = [];
+  private queueMutation: Promise<unknown> = Promise.resolve();
+
+  private mutateQueue<T>(mutation: () => Promise<T>): Promise<T> {
+    const result = this.queueMutation.then(mutation);
+    this.queueMutation = result.catch(() => undefined);
+    return result;
+  }
   private sdkState: SdkState = {
     lastSyncTimes: {},
     deviceInfo: {},
@@ -69,9 +76,10 @@ export class StorageManager {
           ...task,
           // Credentials are intentionally absent from current serialized
           // tasks. Empty legacy values make recovery-provider gating explicit.
-          uploadUrl: task.uploadUrl ?? '',
+          uploadUrl: '',
           uploadToken: undefined,
           completeUrl: undefined,
+          errorMessage: undefined,
           relay: undefined,
           relayUpload: task.relayUpload ?? !!task.relay,
           status: task.status === 'uploading' ? 'pending' : task.status,
@@ -106,14 +114,20 @@ export class StorageManager {
         );
       }
 
+      // A crash after durable completion but before unlink must not leak files
+      // or repeat network publication on the next initialization.
+      for (const task of this.uploadQueue.filter(value => value.status === 'completed')) {
+        await this.deleteRecordingData(task.localPath).catch(() => undefined);
+      }
       this.isInitialized = true;
       log.info('StorageManager initialized', {
         pendingUploads: this.uploadQueue.length,
       });
     } catch (error) {
       log.error('Failed to initialize storage', error as Error);
-      // Continue with empty state
-      this.isInitialized = true;
+      // Never overwrite a journal that could not be read or migrated.
+      this.uploadQueue = [];
+      throw error;
     }
   }
 
@@ -146,15 +160,17 @@ export class StorageManager {
    * Add a task to the upload queue
    */
   async addUploadTask(task: UploadTask): Promise<void> {
-    log.debug('Adding upload task', { taskId: task.id, recordingId: task.recordingId });
+    return this.mutateQueue(async () => {
+      log.debug('Adding upload task', { taskId: task.id, recordingId: task.recordingId });
 
-    this.uploadQueue.push(task);
-    try {
-      await this.saveUploadQueue();
-    } catch (error) {
-      this.uploadQueue = this.uploadQueue.filter((value) => value.id !== task.id);
-      throw error;
-    }
+      this.uploadQueue.push(task);
+      try {
+        await this.saveUploadQueue();
+      } catch (error) {
+        this.uploadQueue = this.uploadQueue.filter((value) => value.id !== task.id);
+        throw error;
+      }
+    });
   }
 
   /**
@@ -164,25 +180,27 @@ export class StorageManager {
     taskId: string,
     updates: Partial<UploadTask>
   ): Promise<void> {
-    const index = this.uploadQueue.findIndex((t) => t.id === taskId);
-    if (index === -1) {
-      log.warn('Upload task not found', { taskId });
-      return;
-    }
+    return this.mutateQueue(async () => {
+      const index = this.uploadQueue.findIndex((t) => t.id === taskId);
+      if (index === -1) {
+        log.warn('Upload task not found', { taskId });
+        return;
+      }
 
-    const previous = this.uploadQueue[index];
-    this.uploadQueue[index] = {
-      ...this.uploadQueue[index],
-      ...updates,
-      updatedAt: new Date(),
-    };
+      const previous = this.uploadQueue[index];
+      this.uploadQueue[index] = {
+        ...this.uploadQueue[index],
+        ...updates,
+        updatedAt: new Date(),
+      };
 
-    try {
-      await this.saveUploadQueue();
-    } catch (error) {
-      this.uploadQueue[index] = previous!;
-      throw error;
-    }
+      try {
+        await this.saveUploadQueue();
+      } catch (error) {
+        this.uploadQueue[index] = previous!;
+        throw error;
+      }
+    });
   }
 
   /**
@@ -210,46 +228,52 @@ export class StorageManager {
    * Remove a task from the queue
    */
   async removeUploadTask(taskId: string): Promise<void> {
-    log.debug('Removing upload task', { taskId });
+    return this.mutateQueue(async () => {
+      log.debug('Removing upload task', { taskId });
 
-    const previous = this.uploadQueue;
-    this.uploadQueue = this.uploadQueue.filter((t) => t.id !== taskId);
-    try {
-      await this.saveUploadQueue();
-    } catch (error) {
-      this.uploadQueue = previous;
-      throw error;
-    }
+      const previous = this.uploadQueue;
+      this.uploadQueue = this.uploadQueue.filter((t) => t.id !== taskId);
+      try {
+        await this.saveUploadQueue();
+      } catch (error) {
+        this.uploadQueue = previous;
+        throw error;
+      }
+    });
   }
 
   /**
    * Clear all completed tasks
    */
   async clearCompletedTasks(): Promise<void> {
-    const previous = this.uploadQueue;
-    this.uploadQueue = this.uploadQueue.filter(
-      (t) => t.status !== 'completed'
-    );
-    try {
-      await this.saveUploadQueue();
-    } catch (error) {
-      this.uploadQueue = previous;
-      throw error;
-    }
+    return this.mutateQueue(async () => {
+      const previous = this.uploadQueue;
+      this.uploadQueue = this.uploadQueue.filter(
+        (t) => t.status !== 'completed'
+      );
+      try {
+        await this.saveUploadQueue();
+      } catch (error) {
+        this.uploadQueue = previous;
+        throw error;
+      }
+    });
   }
 
   /**
    * Clear all tasks
    */
   async clearAllTasks(): Promise<void> {
-    const previous = this.uploadQueue;
-    this.uploadQueue = [];
-    try {
-      await this.saveUploadQueue();
-    } catch (error) {
-      this.uploadQueue = previous;
-      throw error;
-    }
+    return this.mutateQueue(async () => {
+      const previous = this.uploadQueue;
+      this.uploadQueue = [];
+      try {
+        await this.saveUploadQueue();
+      } catch (error) {
+        this.uploadQueue = previous;
+        throw error;
+      }
+    });
   }
 
   /**
@@ -264,14 +288,16 @@ export class StorageManager {
    */
   private async saveUploadQueue(): Promise<void> {
     try {
-      const durableTasks = this.uploadQueue.map((task) => {
-        const durable: Partial<UploadTask> = { ...task };
-        delete durable.uploadUrl;
-        delete durable.uploadToken;
-        delete durable.completeUrl;
-        delete durable.relay;
-        return durable;
-      });
+      // Explicit allowlist: callbacks, URLs, tokens and error messages never
+      // enter durable metadata (native/network errors may contain credentials).
+      const durableTasks = this.uploadQueue.map((task) => ({
+        id: task.id, recordingId: task.recordingId, deviceId: task.deviceId,
+        recordingUuid: task.recordingUuid, localPath: task.localPath, fileSizeBytes: task.fileSizeBytes,
+        recoveryScope: task.recoveryScope, contentType: task.contentType,
+        contentSha256: task.contentSha256, relayUpload: task.relayUpload,
+        status: task.status, retryCount: task.retryCount, nextAttemptAt: task.nextAttemptAt,
+        createdAt: task.createdAt, updatedAt: task.updatedAt,
+      }));
       await AsyncStorage.setItem(
         UPLOAD_QUEUE_KEY,
         JSON.stringify(durableTasks)
@@ -476,7 +502,8 @@ export class StorageManager {
    * Clean up resources
    */
   destroy(): void {
-    this.uploadQueue = [];
+    // In-flight serialized journal writes must retain the full queue snapshot.
+    // The destroyed manager is no longer scheduled and will be collected.
     this.sdkState = { lastSyncTimes: {}, deviceInfo: {} };
     this.encryptedUploadV2Checkpoints.clear();
     this.audioBuffers.clear();

@@ -50,6 +50,16 @@ export interface PersistedEncryptedUploadV2Checkpoint {
  * (obtained by calling customer's API, not Bota API directly)
  */
 export interface UploadInfo {
+  /** Non-secret host account/project/environment identity, persisted for recovery. */
+  recoveryScope?: string;
+  /** Server has already acknowledged this exact recording. Skip PUT. */
+  alreadyUploaded?: boolean;
+  /** Host completion must resolve only after durable backend acknowledgement. */
+  complete?: (context: { fileSizeBytes: number; contentSha256?: string; signal: AbortSignal }) => Promise<void>;
+  /** Cancels this attempt when the originating authorization context changes. */
+  signal?: AbortSignal;
+  /** Release host listeners/leases after every attempt, including failures. */
+  dispose?: () => void;
   /** Pre-signed S3 URL for upload */
   uploadUrl: string;
   /** Recording ID assigned by Bota API (rec_*) */
@@ -91,6 +101,9 @@ export interface RecordingDataStore {
 /** Non-secret identity supplied when refreshing credentials for a recovered
  * upload. URLs, bearer tokens, and signatures are never persisted by the SDK. */
 export interface UploadRecoveryContext {
+  fileSizeBytes?: number;
+  recoveryScope?: string;
+  signal: AbortSignal;
   taskId: string;
   recordingId: string;
   deviceId: string;
@@ -102,7 +115,7 @@ export interface UploadRecoveryContext {
 
 export type UploadRecoveryProvider = (
   context: UploadRecoveryContext
-) => Promise<UploadInfo>;
+) => Promise<UploadInfo | null>;
 
 /**
  * Sync progress stages
@@ -151,6 +164,12 @@ export type UploadTaskStatus = 'pending' | 'uploading' | 'completed' | 'failed';
  * Upload task in the queue
  */
 export interface UploadTask {
+  fileSizeBytes?: number;
+  recoveryScope?: string;
+  /** Earliest next retry, persisted across process death. */
+  nextAttemptAt?: number;
+  /** Volatile callback; never serialized. Recreated by recoveryProvider. */
+  complete?: UploadInfo['complete'];
   /** Unique task identifier */
   id: string;
   /** Recording ID from Bota API */

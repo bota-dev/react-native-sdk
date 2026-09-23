@@ -272,3 +272,16 @@ All design docs live in [`../internal-docs/`](../internal-docs/).
 | [Connection-Management](../internal-docs/device/Connection-Management.md) | Connection lifecycles, reconnect, failover, and policy | Target; implementation conformance is tracked in System Design v5 |
 | [Heartbeat-Channel-Control](../internal-docs/device/Heartbeat-Channel-Control.md) | Heartbeat channels and dynamic policy | Target; implementation conformance is tracked in System Design v5 |
 | [Device–App–Backend Security](../internal-docs/device/Device%E2%80%93App%E2%80%93Backend%20Security%20%26%20Communication%20Design.md) ([中文](../internal-docs/device/Device%E2%80%93App%E2%80%93Backend%20Security%20%26%20Communication%20Design_ZH.md)) | Authentication, authorization, credentials, local/cloud encryption and channel security | Authoritative target; implementation conformance is tracked in System Design v5 |
+
+Upload recovery review (2026-09-23): source exposes `UPLOAD_RECOVERY_VERSION=1`.
+A configured provider runs before every attempt and receives `recoveryScope`,
+byte/hash evidence and `signal`. Return null to park an unavailable account;
+return `alreadyUploaded` only after scoped backend status confirmation. Plain
+uploads require a host `complete` ACK callback or completion URL/token before
+local cleanup/device confirmation. Provider `signal`/`dispose` fence live auth
+changes. Scope, route, identity and retry deadline survive restart; credentials,
+callbacks and error text do not. Queue mutations serialize with rollback;
+completed-file unlink failures retry during initialization. Foreground sync
+reuses matching queued/completed tasks; reconnect is needed for BLE confirmation.
+Retry backoff is persisted, and explicit retries reset the exhausted budget.
+Validate with uploadRecovery tests, the full Jest suite, build and test:release.

@@ -150,3 +150,6 @@ export {
   SdkError,
   isBotaError,
 } from './utils/errors';
+
+/** Runtime capability for hosts staging a compatible SDK rollout. */
+export const UPLOAD_RECOVERY_VERSION = 1;

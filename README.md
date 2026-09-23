@@ -563,3 +563,16 @@ See the [Bota API documentation](https://docs.bota.dev) for backend integration 
 ## License
 
 MIT
+
+Upload recovery review (2026-09-23): source exposes `UPLOAD_RECOVERY_VERSION=1`.
+A configured provider runs before every attempt and receives `recoveryScope`,
+byte/hash evidence and `signal`. Return null to park an unavailable account;
+return `alreadyUploaded` only after scoped backend status confirmation. Plain
+uploads require a host `complete` ACK callback or completion URL/token before
+local cleanup/device confirmation. Provider `signal`/`dispose` fence live auth
+changes. Scope, route, identity and retry deadline survive restart; credentials,
+callbacks and error text do not. Queue mutations serialize with rollback;
+completed-file unlink failures retry during initialization. Foreground sync
+reuses matching queued/completed tasks; reconnect is needed for BLE confirmation.
+Retry backoff is persisted, and explicit retries reset the exhausted budget.
+Validate with uploadRecovery tests, the full Jest suite, build and test:release.

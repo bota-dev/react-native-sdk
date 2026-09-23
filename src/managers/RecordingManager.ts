@@ -655,6 +655,22 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
         totalBytes: recording.fileSizeBytes,
       };
 
+      // A restarted queue may already own the fully received bytes. Reuse
+      // that exact scoped task; a later foreground sync can acknowledge BLE.
+      const recovered = uploadInfo.recoveryScope && this.storage.getUploadQueue().find(task =>
+        task.recoveryScope === uploadInfo.recoveryScope && task.recordingId === uploadInfo.recordingId &&
+        task.recordingUuid === recording.uuid);
+      if (recovered) {
+        if (recovered.status === 'failed') await this.uploadQueue.retryTask(recovered.id);
+        await this.waitForUpload(recovered.id);
+        if (!this.isInitialized) throw new Error('Recording manager stopped');
+        await this.protocolHandler.confirmSync(device.id, recording.uuid);
+        await this.storage.setLastSyncTime(device.id);
+        yield { stage: 'completed', progress: 1, recordingId: uploadInfo.recordingId };
+        this.emit('syncCompleted', recording.uuid, uploadInfo.recordingId);
+        return;
+      }
+
       // Stage: Transferring from device
       const { data: audioData, e2eEncrypted, sha256 } = await this.protocolHandler.transferRecording(
         device.id,
@@ -696,14 +712,16 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
       // when it provisioned a backend pubkey on the device.
       const useRelay = e2eEncrypted && !!uploadInfo.relay;
       if (e2eEncrypted && !uploadInfo.relay) {
-        log.warn('Device delivered ciphertext but caller did not provide UploadInfo.relay — upload will go to S3 presigned and fail to decrypt', {
-          recordingUuid: recording.uuid,
-        });
+        await this.storage.deleteRecordingData(localPath);
+        throw new Error('Encrypted recording requires a relay upload route');
       }
       let task: UploadTask;
       try {
         task = await this.uploadQueue.enqueue({
           recordingId: uploadInfo.recordingId,
+          fileSizeBytes: audioData.length,
+          recoveryScope: uploadInfo.recoveryScope,
+          complete: uploadInfo.complete,
           deviceId: device.id,
           recordingUuid: recording.uuid,
           localPath,

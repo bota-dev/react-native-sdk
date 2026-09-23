@@ -90,6 +90,17 @@ export const DEVICE_LOG_CMD_START = 0x01;
 export const DEVICE_LOG_FLAG_BACKLOG = 0x01;
 export const DEVICE_LOG_FLAG_DROPPED = 0x02;
 
+// Production diagnostics commands/events on the same B07A0007 transport.
+export const DEVICE_DIAGNOSTICS_CMD_LIST = 0x10;
+export const DEVICE_DIAGNOSTICS_CMD_ACK = 0x11;
+export const DEVICE_DIAGNOSTICS_CMD_CAPABILITIES = 0x12;
+export const DEVICE_DIAGNOSTICS_EVT_META = 0x90;
+export const DEVICE_DIAGNOSTICS_EVT_SIGNATURE = 0x91;
+export const DEVICE_DIAGNOSTICS_EVT_END = 0x92;
+export const DEVICE_DIAGNOSTICS_EVT_ACK = 0x93;
+export const DEVICE_DIAGNOSTICS_EVT_CAPABILITIES = 0x94;
+export const DEVICE_DIAGNOSTICS_EVT_DETAIL = 0x95;
+
 // WiFi scan command / status codes
 export const WIFI_SCAN_CMD_START = 0x01;
 export const WIFI_SCAN_STATUS_SCANNING = 0x01;

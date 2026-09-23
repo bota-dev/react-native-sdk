@@ -47,6 +47,10 @@ export type {
   ConnectedDevice,
   DeviceStatus,
   DeviceLogEvent,
+  DeviceDiagnosticEvent,
+  DeviceDiagnosticEventType,
+  DeviceDiagnosticReasonCode,
+  DeviceDiagnosticsBatch,
   StorageInfo,
   ScanOptions,
   ReconnectOptions,
@@ -68,6 +72,7 @@ export type {
 } from './models/Device';
 
 export { DeviceLogDecoder } from './ble/deviceLogs';
+export { DeviceDiagnosticsDecoder, diagnosticEventIdCommand } from './ble/deviceDiagnostics';
 
 // Models - Recording
 export type {

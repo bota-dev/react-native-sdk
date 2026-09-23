@@ -53,6 +53,7 @@ import {
   SERVICE_BOTA_DIAGNOSTICS,
   DEVICE_LOG_CMD_START,
   DEVICE_LOG_CMD_STOP,
+  DEVICE_DIAGNOSTICS_CMD_LIST,
   WIFI_SCAN_TIMEOUT,
   DEVICE_CMD_BLE_DEPROVISION,
   DEVICE_CMD_BLE_FACTORY_RESET,
@@ -93,10 +94,12 @@ import type {
   DeviceWiFiScanResult,
   DeviceConnectionSettings,
   DeviceLogEvent,
+  DeviceDiagnosticsBatch,
 } from '../models/Device';
 import type { DeviceManagerEvents } from '../models/Status';
 import { DeviceStateCache, type CachedDeviceState } from '../cache/DeviceStateCache';
 import { DeviceLogDecoder } from '../ble/deviceLogs';
+import { DeviceDiagnosticsDecoder, diagnosticEventIdCommand } from '../ble/deviceDiagnostics';
 import {
   DeviceError,
   ProvisioningError,
@@ -196,6 +199,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   private nonceSubscriptions: Map<string, Subscription> = new Map();
   private deviceLogSubscriptions: Map<string, Subscription> = new Map();
   private deviceLogDecoders: Map<string, DeviceLogDecoder> = new Map();
+  private diagnosticReadsInFlight: Set<string> = new Set();
   // Cache of P6 session nonce per device (received via notify on connect, cleared on disconnect)
   private nonceCache: Map<string, string> = new Map();
   private reconnectRegistry: Record<string, ReconnectInfo> = {};
@@ -1325,6 +1329,13 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
         device.id
       );
     }
+    if (this.diagnosticReadsInFlight.has(device.id)) {
+      throw new DeviceError(
+        'Device diagnostics are being read',
+        'ALREADY_SUBSCRIBED',
+        device.id
+      );
+    }
 
     const decoder = new DeviceLogDecoder();
     const subscription = this.bleManager.subscribeToCharacteristic(
@@ -1375,6 +1386,88 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       ).catch(() => {});
       this.removeDeviceLogSubscription(device.id, subscription);
     };
+  }
+
+  /** Read the bounded durable crash/exception queue over BLE. */
+  async readDiagnosticEvents(device: ConnectedDevice): Promise<DeviceDiagnosticsBatch> {
+    if (!this.isConnected(device.id)) throw DeviceError.notConnected(device.id);
+    if (this.deviceLogSubscriptions.has(device.id)) {
+      throw new DeviceError(
+        'Diagnostics cannot be read while the debug log stream is active',
+        'ALREADY_SUBSCRIBED',
+        device.id
+      );
+    }
+    if (this.diagnosticReadsInFlight.has(device.id)) {
+      throw new DeviceError(
+        'A diagnostics read is already in progress',
+        'ALREADY_SUBSCRIBED',
+        device.id
+      );
+    }
+
+    const decoder = new DeviceDiagnosticsDecoder();
+    this.diagnosticReadsInFlight.add(device.id);
+    return new Promise<DeviceDiagnosticsBatch>((resolve, reject) => {
+      let settled = false;
+      let subscription: Subscription | null = null;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const finish = (error?: Error, batch?: DeviceDiagnosticsBatch) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        subscription?.remove();
+        decoder.reset();
+        this.diagnosticReadsInFlight.delete(device.id);
+        if (error) reject(error);
+        else resolve(batch!);
+      };
+      try {
+        subscription = this.bleManager.subscribeToCharacteristic(
+          device.id,
+          SERVICE_BOTA_DIAGNOSTICS,
+          CHAR_DEVICE_LOG_DATA,
+          (data) => {
+            try {
+              const batch = decoder.push(data);
+              if (batch) finish(undefined, batch);
+            } catch (error) {
+              finish(error as Error);
+            }
+          },
+          (error) => finish(error),
+          { logNotifications: false }
+        );
+        timer = setTimeout(
+          () => finish(new Error('Timed out reading device diagnostics')),
+          OPERATION_TIMEOUT
+        );
+        void this.bleManager.writeCharacteristic(
+          device.id,
+          SERVICE_BOTA_DIAGNOSTICS,
+          CHAR_DEVICE_LOG_CONTROL,
+          Buffer.from([DEVICE_DIAGNOSTICS_CMD_LIST])
+        ).catch((error) => finish(error as Error));
+      } catch (error) {
+        finish(error as Error);
+      }
+    });
+  }
+
+  /** Remove only events that the Heartbeat API durably acknowledged. */
+  async acknowledgeDiagnosticEvents(
+    device: ConnectedDevice,
+    acceptedEventIds: string[]
+  ): Promise<void> {
+    if (!this.isConnected(device.id)) throw DeviceError.notConnected(device.id);
+    for (const eventId of acceptedEventIds) {
+      await this.bleManager.writeCharacteristic(
+        device.id,
+        SERVICE_BOTA_DIAGNOSTICS,
+        CHAR_DEVICE_LOG_CONTROL,
+        diagnosticEventIdCommand(eventId)
+      );
+    }
   }
 
   /**
@@ -2784,6 +2877,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     for (const deviceId of this.deviceLogSubscriptions.keys()) {
       this.removeDeviceLogSubscription(deviceId);
     }
+    this.diagnosticReadsInFlight.clear();
 
     this.stateCache.clearAll();
     this.stateCache.removeAllListeners();

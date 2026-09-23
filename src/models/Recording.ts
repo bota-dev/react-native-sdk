@@ -50,6 +50,16 @@ export interface PersistedEncryptedUploadV2Checkpoint {
  * (obtained by calling customer's API, not Bota API directly)
  */
 export interface UploadInfo {
+  /** Non-secret host account/project/environment identity, persisted for recovery. */
+  recoveryScope?: string;
+  /** Server has already acknowledged this exact recording. Skip PUT. */
+  alreadyUploaded?: boolean;
+  /** Host completion must resolve only after durable backend acknowledgement. */
+  complete?: (context: { fileSizeBytes: number; contentSha256?: string; signal: AbortSignal }) => Promise<void>;
+  /** Cancels this attempt when the originating authorization context changes. */
+  signal?: AbortSignal;
+  /** Release host listeners/leases after every attempt, including failures. */
+  dispose?: () => void;
   /** Pre-signed S3 URL for upload */
   uploadUrl: string;
   /** Recording ID assigned by Bota API (rec_*) */
@@ -74,6 +84,38 @@ export interface UploadInfo {
     bearerToken: string;
   };
 }
+
+/** Host-backed durable storage for a fully received recording. Implementations
+ * should use an app-private file and must not return until the bytes are
+ * durably closed. The SDK deliberately does not persist audio in AsyncStorage. */
+export interface RecordingDataStore {
+  saveRecordingData(input: {
+    deviceId: string;
+    recordingUuid: string;
+    data: Uint8Array;
+  }): Promise<string>;
+  loadRecordingData(localPath: string): Promise<Uint8Array>;
+  deleteRecordingData(localPath: string): Promise<void>;
+}
+
+/** Non-secret identity supplied when refreshing credentials for a recovered
+ * upload. URLs, bearer tokens, and signatures are never persisted by the SDK. */
+export interface UploadRecoveryContext {
+  fileSizeBytes?: number;
+  recoveryScope?: string;
+  signal: AbortSignal;
+  taskId: string;
+  recordingId: string;
+  deviceId: string;
+  recordingUuid: string;
+  relayUpload: boolean;
+  contentType?: string;
+  contentSha256?: string;
+}
+
+export type UploadRecoveryProvider = (
+  context: UploadRecoveryContext
+) => Promise<UploadInfo | null>;
 
 /**
  * Sync progress stages
@@ -122,12 +164,20 @@ export type UploadTaskStatus = 'pending' | 'uploading' | 'completed' | 'failed';
  * Upload task in the queue
  */
 export interface UploadTask {
+  fileSizeBytes?: number;
+  recoveryScope?: string;
+  /** Earliest next retry, persisted across process death. */
+  nextAttemptAt?: number;
+  /** Volatile callback; never serialized. Recreated by recoveryProvider. */
+  complete?: UploadInfo['complete'];
   /** Unique task identifier */
   id: string;
   /** Recording ID from Bota API */
   recordingId: string;
   /** Device ID the recording came from */
   deviceId: string;
+  /** Stable recording identity on the device, used to recover after restart. */
+  recordingUuid?: string;
   /** Local file path */
   localPath: string;
   /** Pre-signed S3 upload URL */
@@ -150,6 +200,8 @@ export interface UploadTask {
     url: string;
     bearerToken: string;
   };
+  /** Persisted non-secret route marker. The relay URL/token are never stored. */
+  relayUpload?: boolean;
   /** Current status */
   status: UploadTaskStatus;
   /** Number of retry attempts */

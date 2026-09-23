@@ -82,10 +82,10 @@ src/
 │   └── OTAManager.ts       # Firmware download → BLE transfer → reboot recovery
 │
 ├── upload/
-│   └── UploadQueue.ts      # Persistent SQLite queue, retry (exponential backoff, 24h max)
+│   └── UploadQueue.ts      # AsyncStorage metadata queue + restart recovery
 │
 ├── storage/
-│   └── StorageManager.ts   # Device registry, bonding data, transfer state (SQLite)
+│   └── StorageManager.ts   # AsyncStorage metadata + injectable durable audio store
 │
 └── models/                 # TypeScript types
     ├── Device.ts
@@ -334,9 +334,12 @@ RecordingManager.syncRecording(device, fileId)
   6. Bluetooth confirm: TRANSFER_CONTROL 0x07 + file_id (device deletes local file)
 
 UploadQueue handles retries:
-  - Persists to SQLite before upload attempt
-  - Retries on failure: exponential backoff (5s → 30s → 5min → 30min → 2h → 24h max)
-  - Resumes on app restart (reads queue from SQLite)
+  - Persists non-secret task identity/evidence to AsyncStorage before upload
+  - Never persists pre-signed URLs, upload tokens, relay bearer tokens, or signatures
+  - Uses a host-provided app-private RecordingDataStore for durable audio bytes
+  - Converts an interrupted `uploading` task back to `pending` on app restart
+  - Calls uploadRecoveryProvider for fresh credentials bound to the same rec_*
+  - Retries the whole object; byte-range resume remains a later BLE protocol phase
 ```
 
 ---
@@ -493,3 +496,16 @@ Both platforms use the same TypeScript protocol layer. Platform differences are 
 Repository verification targets React Native 0.87 and React 19 using Node
 22.13+, TypeScript 6, Builder Bob 0.43, AsyncStorage 3, Jest 30, and ESLint 10
 with flat configuration. The published peer ranges remain backward-compatible.
+
+Upload recovery review (2026-09-23): source exposes `UPLOAD_RECOVERY_VERSION=1`.
+A configured provider runs before every attempt and receives `recoveryScope`,
+byte/hash evidence and `signal`. Return null to park an unavailable account;
+return `alreadyUploaded` only after scoped backend status confirmation. Plain
+uploads require a host `complete` ACK callback or completion URL/token before
+local cleanup/device confirmation. Provider `signal`/`dispose` fence live auth
+changes. Scope, route, identity and retry deadline survive restart; credentials,
+callbacks and error text do not. Queue mutations serialize with rollback;
+completed-file unlink failures retry during initialization. Foreground sync
+reuses matching queued/completed tasks; reconnect is needed for BLE confirmation.
+Retry backoff is persisted, and explicit retries reset the exhausted budget.
+Validate with uploadRecovery tests, the full Jest suite, build and test:release.

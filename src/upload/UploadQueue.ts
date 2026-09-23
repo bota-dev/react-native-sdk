@@ -4,10 +4,14 @@
 
 import EventEmitter from 'eventemitter3';
 
-import type { UploadTask } from '../models/Recording';
+import type {
+  UploadInfo,
+  UploadRecoveryProvider,
+  UploadTask,
+} from '../models/Recording';
 import { StorageManager, generateTaskId } from '../storage/StorageManager';
 import { S3Uploader } from './S3Uploader';
-import { shouldContinueRetrying } from '../utils/retry';
+import { calculateDelay, shouldContinueRetrying } from '../utils/retry';
 import { logger } from '../utils/logger';
 
 const log = logger.tag('UploadQueue');
@@ -34,6 +38,8 @@ export interface UploadQueueConfig {
   maxRetries?: number;
   /** Auto-start processing (default: true) */
   autoStart?: boolean;
+  /** Reissues short-lived credentials for tasks restored after process death. */
+  recoveryProvider?: UploadRecoveryProvider;
 }
 
 /**
@@ -47,7 +53,10 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
   private activeUploads: Set<string> = new Set();
   private isPaused = false;
   private isProcessing = false;
+  private destroyed = false;
+  private retryTimer?: ReturnType<typeof setTimeout>;
   private abortControllers: Map<string, AbortController> = new Map();
+  private recoveryProvider?: UploadRecoveryProvider;
 
   constructor(storage: StorageManager, config: UploadQueueConfig = {}) {
     super();
@@ -55,6 +64,7 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
     this.uploader = new S3Uploader();
     this.maxConcurrent = config.maxConcurrent ?? 2;
     this.maxRetries = config.maxRetries ?? 6;
+    this.recoveryProvider = config.recoveryProvider;
 
     if (config.autoStart !== false) {
       this.processQueue();
@@ -66,7 +76,11 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
    */
   async enqueue(params: {
     recordingId: string;
+    fileSizeBytes?: number;
+    recoveryScope?: string;
+    complete?: UploadInfo['complete'];
     deviceId: string;
+    recordingUuid: string;
     localPath: string;
     uploadUrl: string;
     uploadToken?: string;
@@ -80,7 +94,11 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
     const task: UploadTask = {
       id: generateTaskId(),
       recordingId: params.recordingId,
+      fileSizeBytes: params.fileSizeBytes,
+      recoveryScope: params.recoveryScope,
+      complete: params.complete,
       deviceId: params.deviceId,
+      recordingUuid: params.recordingUuid,
       localPath: params.localPath,
       uploadUrl: params.uploadUrl,
       uploadToken: params.uploadToken,
@@ -88,6 +106,7 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
       contentType: params.contentType,
       contentSha256: params.contentSha256,
       relay: params.relay,
+      relayUpload: !!params.relay,
       status: 'pending',
       retryCount: 0,
       createdAt: new Date(),
@@ -168,12 +187,17 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
 
     const failedTasks = this.storage.getFailedUploads();
     for (const task of failedTasks) {
-      if (task.retryCount < this.maxRetries) {
-        await this.storage.updateTaskStatus(task.id, 'pending');
-      }
+      await this.retryTask(task.id);
     }
 
     this.processQueue();
+  }
+
+  async retryTask(taskId: string): Promise<void> {
+    if (this.activeUploads.has(taskId)) return;
+    await this.storage.updateUploadTask(taskId, { status: 'pending', retryCount: 0,
+      nextAttemptAt: undefined, createdAt: new Date() });
+    void this.processQueue();
   }
 
   /**
@@ -194,7 +218,7 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
    * Process the upload queue
    */
   private async processQueue(): Promise<void> {
-    if (this.isPaused || this.isProcessing) {
+    if (this.destroyed || this.isPaused || this.isProcessing) {
       return;
     }
 
@@ -210,19 +234,32 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
         // Get next pending task
         const pendingTasks = this.storage.getPendingUploads();
         const nextTask = pendingTasks.find(
-          (t) => !this.activeUploads.has(t.id) && t.status === 'pending'
+          (t) => !this.activeUploads.has(t.id) && t.status === 'pending' &&
+            (!t.nextAttemptAt || t.nextAttemptAt <= Date.now()) &&
+            (!!this.recoveryProvider || this.hasCredentials(t))
         );
 
         if (!nextTask) {
+          const nextWake = pendingTasks.filter(t => !this.activeUploads.has(t.id) &&
+            t.nextAttemptAt && (!!this.recoveryProvider || this.hasCredentials(t)))
+            .reduce((earliest, t) => Math.min(earliest, t.nextAttemptAt!), Infinity);
+          if (Number.isFinite(nextWake)) {
+            if (this.retryTimer) clearTimeout(this.retryTimer);
+            this.retryTimer = setTimeout(() => { void this.processQueue(); }, Math.max(1, nextWake - Date.now()));
+          }
           // No more tasks to process
-          if (this.activeUploads.size === 0) {
+          if (this.activeUploads.size === 0 && pendingTasks.length === 0) {
             this.emit('queueEmpty');
           }
           break;
         }
 
         // Start upload in background
-        this.processTask(nextTask);
+        void this.processTask(nextTask).catch(() => {
+          // Persistence unavailable: retain bytes and stop rather than spin.
+          this.pause();
+          this.emit('taskFailed', nextTask.id, new Error('Upload journal unavailable'));
+        });
       }
     } finally {
       this.isProcessing = false;
@@ -238,7 +275,26 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
     const abortController = new AbortController();
     this.abortControllers.set(task.id, abortController);
 
+    let uploadInfo: UploadInfo | null = null;
+    const check = () => {
+      if (this.destroyed || abortController.signal.aborted || !this.storage.getUploadTask(task.id)) {
+        throw new Error('Upload cancelled');
+      }
+    };
+    const cancel = () => abortController.abort();
     try {
+      uploadInfo = await this.resolveUploadInfo(task, abortController.signal);
+      check();
+      if (!uploadInfo) {
+        // Host account not restored/current: park without consuming retries.
+        await this.storage.updateUploadTask(task.id, { nextAttemptAt: Date.now() + 30_000 });
+        this.emit('taskFailed', task.id, new Error('Upload waiting for its original account'));
+        return;
+      }
+      uploadInfo.signal?.addEventListener('abort', cancel);
+      if (uploadInfo.signal?.aborted) cancel();
+      check();
+
       // Update status to uploading
       await this.storage.updateTaskStatus(task.id, 'uploading');
       this.emit('taskUpdated', { ...task, status: 'uploading' });
@@ -246,9 +302,16 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
       log.info('Starting upload', { taskId: task.id, recordingId: task.recordingId });
 
       // Load the audio data
-      const audioData = await this.storage.loadRecordingData(task.localPath);
+      const audioData = uploadInfo.alreadyUploaded ? null : await this.storage.loadRecordingData(task.localPath);
+      if (audioData && task.fileSizeBytes !== undefined && audioData.length !== task.fileSizeBytes) {
+        throw new Error('Stored recording length changed');
+      }
 
-      if (task.relay) {
+      check();
+      if (uploadInfo.alreadyUploaded) {
+        // The previous completion response may have been lost. Never PUT over
+        // an already-published object or require an expired presign.
+      } else if (uploadInfo.relay) {
         // P10 BLE-e2e relay path: POST ciphertext to backend; backend
         // decrypts and writes plaintext to S3 server-side. The relay
         // endpoint also marks the recording uploaded — no separate
@@ -258,9 +321,9 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
           recordingId: task.recordingId,
         });
         await this.uploader.relayUpload(
-          audioData,
-          task.relay.url,
-          task.relay.bearerToken,
+          audioData!,
+          uploadInfo.relay.url,
+          uploadInfo.relay.bearerToken,
           {
             onProgress: (progress) => {
               this.emit('uploadProgress', task.id, progress);
@@ -270,8 +333,8 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
         );
       } else {
         // Standard pre-signed S3 PUT
-        await this.uploader.upload(audioData, task.uploadUrl, {
-          contentType: task.contentType,
+        await this.uploader.upload(audioData!, uploadInfo.uploadUrl, {
+          contentType: uploadInfo.contentType ?? task.contentType,
           onProgress: (progress) => {
             this.emit('uploadProgress', task.id, progress);
           },
@@ -279,13 +342,20 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
         });
 
         // Notify completion (only if completeUrl and uploadToken are provided)
-        if (task.completeUrl && task.uploadToken) {
+        check();
+        if (uploadInfo.complete) {
+          await uploadInfo.complete({ fileSizeBytes: audioData!.length,
+            contentSha256: task.contentSha256, signal: abortController.signal });
+        } else if (uploadInfo.completeUrl && uploadInfo.uploadToken) {
           await this.uploader.notifyCompletion(
-            task.completeUrl,
+            uploadInfo.completeUrl,
             task.recordingId,
-            task.uploadToken,
-            task.contentSha256
+            uploadInfo.uploadToken,
+            task.contentSha256,
+            abortController.signal
           );
+        } else if (this.recoveryProvider) {
+          throw new Error('Recoverable upload requires backend completion acknowledgement');
         } else {
           log.debug('Skipping completion notification (custom completion flow)', {
             taskId: task.id,
@@ -294,35 +364,57 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
         }
       }
 
+      check();
       // Mark as completed
       await this.storage.updateTaskStatus(task.id, 'completed');
 
       // Clean up local file
-      await this.storage.deleteRecordingData(task.localPath);
+      await this.storage.deleteRecordingData(task.localPath).catch(() => {
+        log.warn('Completed upload file cleanup deferred', { taskId: task.id });
+      });
 
       log.info('Upload completed', { taskId: task.id, recordingId: task.recordingId });
 
       this.emit('taskCompleted', task.id, task.recordingId);
     } catch (error) {
       const err = error as Error;
-      log.error('Upload failed', err, { taskId: task.id });
+      log.warn('Upload attempt failed', { taskId: task.id });
+      if (this.destroyed || !this.storage.getUploadTask(task.id)) return;
+      if (abortController.signal.aborted) {
+        await this.storage.updateUploadTask(task.id, { status: 'pending', nextAttemptAt: Date.now() + 30_000 });
+        this.emit('taskFailed', task.id, new Error('Upload paused after cancellation'));
+        return;
+      }
 
       // Check if we should retry
       if (
         task.retryCount < this.maxRetries &&
         shouldContinueRetrying(task.createdAt)
       ) {
+        if (this.recoveryProvider) {
+          // Never reuse a credential after a failed attempt. These fields are
+          // volatile and are omitted from durable queue serialization.
+          await this.storage.updateUploadTask(task.id, {
+            uploadUrl: '',
+            uploadToken: undefined,
+            completeUrl: undefined,
+            relay: undefined,
+          });
+        }
         await this.storage.incrementRetryCount(task.id);
-        await this.storage.updateTaskStatus(task.id, 'pending', err.message);
+        await this.storage.updateUploadTask(task.id, { status: 'pending',
+          nextAttemptAt: Date.now() + calculateDelay(Math.min(task.retryCount + 1, 5)), errorMessage: 'Upload attempt failed' });
         log.info('Task will be retried', {
           taskId: task.id,
           retryCount: task.retryCount + 1,
         });
       } else {
-        await this.storage.updateTaskStatus(task.id, 'failed', err.message);
+        await this.storage.updateTaskStatus(task.id, 'failed', 'Upload failed; retry when connected');
         this.emit('taskFailed', task.id, err);
       }
     } finally {
+      uploadInfo?.signal?.removeEventListener('abort', cancel);
+      uploadInfo?.dispose?.();
       this.activeUploads.delete(task.id);
       this.abortControllers.delete(task.id);
 
@@ -331,11 +423,54 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
     }
   }
 
+  private hasCredentials(task: UploadTask): boolean {
+    return task.relayUpload ? !!task.relay : !!task.uploadUrl;
+  }
+
+  private async resolveUploadInfo(task: UploadTask, signal: AbortSignal): Promise<UploadInfo | null> {
+    if (!this.recoveryProvider && this.hasCredentials(task)) {
+      return {
+        recordingId: task.recordingId,
+        complete: task.complete,
+        uploadUrl: task.uploadUrl,
+        uploadToken: task.uploadToken,
+        completeUrl: task.completeUrl,
+        contentType: task.contentType,
+        relay: task.relay,
+      };
+    }
+    if (!this.recoveryProvider || !task.recordingUuid) {
+      throw new Error('Recovered upload requires an uploadRecoveryProvider and recordingUuid');
+    }
+    const recovered = await this.recoveryProvider({
+      taskId: task.id,
+      recoveryScope: task.recoveryScope, signal, fileSizeBytes: task.fileSizeBytes,
+      recordingId: task.recordingId,
+      deviceId: task.deviceId,
+      recordingUuid: task.recordingUuid,
+      relayUpload: !!task.relayUpload,
+      contentType: task.contentType,
+      contentSha256: task.contentSha256,
+    });
+    if (!recovered) return null;
+    if (recovered.recordingId !== task.recordingId) {
+      recovered.dispose?.();
+      throw new Error('Upload recovery provider returned a different recordingId');
+    }
+    if (!recovered.alreadyUploaded && !!recovered.relay !== !!task.relayUpload) {
+      recovered.dispose?.();
+      throw new Error('Upload recovery provider changed the persisted upload route');
+    }
+    return recovered;
+  }
+
   /**
    * Clean up resources
    */
   destroy(): void {
     this.isPaused = true;
+    this.destroyed = true;
+    if (this.retryTimer) clearTimeout(this.retryTimer);
 
     // Abort all active uploads
     for (const controller of this.abortControllers.values()) {

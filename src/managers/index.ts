@@ -7,6 +7,7 @@ export {
   RecordingManager,
   StreamingSession,
   type UploadInfoProvider,
+  type RecordingManagerOptions,
   type EncryptedUploadV2Provider,
   type EncryptedUploadV2ProviderContext,
   type EncryptedUploadV2Material,

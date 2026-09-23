@@ -7,6 +7,7 @@ import { Buffer } from 'buffer';
 
 import type {
   PersistedEncryptedUploadV2Checkpoint,
+  RecordingDataStore,
   UploadTask,
   UploadTaskStatus,
 } from '../models/Recording';
@@ -33,6 +34,13 @@ interface SdkState {
  */
 export class StorageManager {
   private uploadQueue: UploadTask[] = [];
+  private queueMutation: Promise<unknown> = Promise.resolve();
+
+  private mutateQueue<T>(mutation: () => Promise<T>): Promise<T> {
+    const result = this.queueMutation.then(mutation);
+    this.queueMutation = result.catch(() => undefined);
+    return result;
+  }
   private sdkState: SdkState = {
     lastSyncTimes: {},
     deviceInfo: {},
@@ -45,6 +53,8 @@ export class StorageManager {
   private encryptedUploadV2CheckpointMutation = Promise.resolve();
   // Audio buffers held in memory — avoids AsyncStorage size limits for large files
   private audioBuffers: Map<string, Buffer> = new Map();
+
+  constructor(private recordingDataStore?: RecordingDataStore) {}
 
   /**
    * Initialize storage manager
@@ -64,9 +74,21 @@ export class StorageManager {
         // Restore dates
         this.uploadQueue = this.uploadQueue.map((task) => ({
           ...task,
+          // Credentials are intentionally absent from current serialized
+          // tasks. Empty legacy values make recovery-provider gating explicit.
+          uploadUrl: '',
+          uploadToken: undefined,
+          completeUrl: undefined,
+          errorMessage: undefined,
+          relay: undefined,
+          relayUpload: task.relayUpload ?? !!task.relay,
+          status: task.status === 'uploading' ? 'pending' : task.status,
           createdAt: new Date(task.createdAt),
           updatedAt: new Date(task.updatedAt),
         }));
+        // Remove credentials left by older SDK versions and persist the
+        // uploading -> pending crash-recovery transition before scheduling.
+        await this.saveUploadQueue();
       }
 
       // Load SDK state
@@ -92,14 +114,20 @@ export class StorageManager {
         );
       }
 
+      // A crash after durable completion but before unlink must not leak files
+      // or repeat network publication on the next initialization.
+      for (const task of this.uploadQueue.filter(value => value.status === 'completed')) {
+        await this.deleteRecordingData(task.localPath).catch(() => undefined);
+      }
       this.isInitialized = true;
       log.info('StorageManager initialized', {
         pendingUploads: this.uploadQueue.length,
       });
     } catch (error) {
       log.error('Failed to initialize storage', error as Error);
-      // Continue with empty state
-      this.isInitialized = true;
+      // Never overwrite a journal that could not be read or migrated.
+      this.uploadQueue = [];
+      throw error;
     }
   }
 
@@ -132,10 +160,17 @@ export class StorageManager {
    * Add a task to the upload queue
    */
   async addUploadTask(task: UploadTask): Promise<void> {
-    log.debug('Adding upload task', { taskId: task.id, recordingId: task.recordingId });
+    return this.mutateQueue(async () => {
+      log.debug('Adding upload task', { taskId: task.id, recordingId: task.recordingId });
 
-    this.uploadQueue.push(task);
-    await this.saveUploadQueue();
+      this.uploadQueue.push(task);
+      try {
+        await this.saveUploadQueue();
+      } catch (error) {
+        this.uploadQueue = this.uploadQueue.filter((value) => value.id !== task.id);
+        throw error;
+      }
+    });
   }
 
   /**
@@ -145,19 +180,27 @@ export class StorageManager {
     taskId: string,
     updates: Partial<UploadTask>
   ): Promise<void> {
-    const index = this.uploadQueue.findIndex((t) => t.id === taskId);
-    if (index === -1) {
-      log.warn('Upload task not found', { taskId });
-      return;
-    }
+    return this.mutateQueue(async () => {
+      const index = this.uploadQueue.findIndex((t) => t.id === taskId);
+      if (index === -1) {
+        log.warn('Upload task not found', { taskId });
+        return;
+      }
 
-    this.uploadQueue[index] = {
-      ...this.uploadQueue[index],
-      ...updates,
-      updatedAt: new Date(),
-    };
+      const previous = this.uploadQueue[index];
+      this.uploadQueue[index] = {
+        ...this.uploadQueue[index],
+        ...updates,
+        updatedAt: new Date(),
+      };
 
-    await this.saveUploadQueue();
+      try {
+        await this.saveUploadQueue();
+      } catch (error) {
+        this.uploadQueue[index] = previous!;
+        throw error;
+      }
+    });
   }
 
   /**
@@ -185,28 +228,52 @@ export class StorageManager {
    * Remove a task from the queue
    */
   async removeUploadTask(taskId: string): Promise<void> {
-    log.debug('Removing upload task', { taskId });
+    return this.mutateQueue(async () => {
+      log.debug('Removing upload task', { taskId });
 
-    this.uploadQueue = this.uploadQueue.filter((t) => t.id !== taskId);
-    await this.saveUploadQueue();
+      const previous = this.uploadQueue;
+      this.uploadQueue = this.uploadQueue.filter((t) => t.id !== taskId);
+      try {
+        await this.saveUploadQueue();
+      } catch (error) {
+        this.uploadQueue = previous;
+        throw error;
+      }
+    });
   }
 
   /**
    * Clear all completed tasks
    */
   async clearCompletedTasks(): Promise<void> {
-    this.uploadQueue = this.uploadQueue.filter(
-      (t) => t.status !== 'completed'
-    );
-    await this.saveUploadQueue();
+    return this.mutateQueue(async () => {
+      const previous = this.uploadQueue;
+      this.uploadQueue = this.uploadQueue.filter(
+        (t) => t.status !== 'completed'
+      );
+      try {
+        await this.saveUploadQueue();
+      } catch (error) {
+        this.uploadQueue = previous;
+        throw error;
+      }
+    });
   }
 
   /**
    * Clear all tasks
    */
   async clearAllTasks(): Promise<void> {
-    this.uploadQueue = [];
-    await this.saveUploadQueue();
+    return this.mutateQueue(async () => {
+      const previous = this.uploadQueue;
+      this.uploadQueue = [];
+      try {
+        await this.saveUploadQueue();
+      } catch (error) {
+        this.uploadQueue = previous;
+        throw error;
+      }
+    });
   }
 
   /**
@@ -221,12 +288,23 @@ export class StorageManager {
    */
   private async saveUploadQueue(): Promise<void> {
     try {
+      // Explicit allowlist: callbacks, URLs, tokens and error messages never
+      // enter durable metadata (native/network errors may contain credentials).
+      const durableTasks = this.uploadQueue.map((task) => ({
+        id: task.id, recordingId: task.recordingId, deviceId: task.deviceId,
+        recordingUuid: task.recordingUuid, localPath: task.localPath, fileSizeBytes: task.fileSizeBytes,
+        recoveryScope: task.recoveryScope, contentType: task.contentType,
+        contentSha256: task.contentSha256, relayUpload: task.relayUpload,
+        status: task.status, retryCount: task.retryCount, nextAttemptAt: task.nextAttemptAt,
+        createdAt: task.createdAt, updatedAt: task.updatedAt,
+      }));
       await AsyncStorage.setItem(
         UPLOAD_QUEUE_KEY,
-        JSON.stringify(this.uploadQueue)
+        JSON.stringify(durableTasks)
       );
     } catch (error) {
       log.error('Failed to save upload queue', error as Error);
+      throw error;
     }
   }
 
@@ -354,14 +432,20 @@ export class StorageManager {
 
   // Recording File Methods
 
-  /**
-   * Save recording data locally (held in memory, not persisted to SQLite)
-   */
+  /** Save recording data through the configured durable store. The in-memory
+   * fallback preserves legacy behavior but cannot recover across app restart. */
   async saveRecordingData(
     deviceId: string,
     recordingUuid: string,
     data: Buffer
   ): Promise<string> {
+    if (this.recordingDataStore) {
+      return this.recordingDataStore.saveRecordingData({
+        deviceId,
+        recordingUuid,
+        data,
+      });
+    }
     const key = `${STORAGE_PREFIX}recording:${deviceId}:${recordingUuid}`;
     this.audioBuffers.set(key, data);
     log.debug('Saved recording data', { deviceId, recordingUuid, size: data.length });
@@ -372,6 +456,9 @@ export class StorageManager {
    * Load recording data
    */
   async loadRecordingData(localPath: string): Promise<Buffer> {
+    if (this.recordingDataStore) {
+      return Buffer.from(await this.recordingDataStore.loadRecordingData(localPath));
+    }
     const buf = this.audioBuffers.get(localPath);
     if (!buf) {
       throw new Error(`Recording not found: ${localPath}`);
@@ -383,6 +470,10 @@ export class StorageManager {
    * Delete recording data
    */
   async deleteRecordingData(localPath: string): Promise<void> {
+    if (this.recordingDataStore) {
+      await this.recordingDataStore.deleteRecordingData(localPath);
+      return;
+    }
     this.audioBuffers.delete(localPath);
     log.debug('Deleted recording data', { localPath });
   }
@@ -411,7 +502,8 @@ export class StorageManager {
    * Clean up resources
    */
   destroy(): void {
-    this.uploadQueue = [];
+    // In-flight serialized journal writes must retain the full queue snapshot.
+    // The destroyed manager is no longer scheduled and will be collected.
     this.sdkState = { lastSyncTimes: {}, deviceInfo: {} };
     this.encryptedUploadV2Checkpoints.clear();
     this.audioBuffers.clear();

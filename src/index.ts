@@ -19,6 +19,7 @@ export type {
   EncryptedUploadV2ProviderContext,
   EncryptedUploadV2Material,
   EncryptedUploadV2SyncOptions,
+  RecordingManagerOptions,
   FirmwareInfo,
   FirmwareDownloadProgressCallback,
   OtaStage,
@@ -82,6 +83,9 @@ export type {
   SyncProgress,
   UploadTaskStatus,
   UploadTask,
+  RecordingDataStore,
+  UploadRecoveryContext,
+  UploadRecoveryProvider,
   PersistedEncryptedUploadV2Checkpoint,
   TransferPacket,
   StreamingState,
@@ -146,3 +150,6 @@ export {
   SdkError,
   isBotaError,
 } from './utils/errors';
+
+/** Runtime capability for hosts staging a compatible SDK rollout. */
+export const UPLOAD_RECOVERY_VERSION = 1;

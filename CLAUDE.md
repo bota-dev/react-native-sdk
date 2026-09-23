@@ -215,6 +215,13 @@ normative behavior and System Design v5 for implementation conformance.
 - **`transferRecording`** returns `{ data, e2eEncrypted, sha256? }` (hex string, 64 chars).
 - **`streamTransfer`** returns `{ totalBytes, checksum, sha256? }`.
 - **`RecordingManager.syncRecording`** emits `contentSha256` on the `transferring` and `completed` stages of its `SyncProgress` generator AND forwards it on the upload-task so the SDK's `notifyCompletion` includes `content_sha256` in the `/upload-complete` POST body.
+- **Restart-safe batch upload is opt-in.** `BotaConfig.recordingDataStore`
+  durably stores fully received bytes in an app-private file, while
+  `uploadRecoveryProvider` refreshes credentials for the same backend
+  `recordingId`. AsyncStorage persists only non-secret task identity/evidence;
+  interrupted `uploading` tasks reload as `pending`. Without the store the
+  legacy in-memory payload behavior remains. The queue retries whole objects,
+  not BLE byte ranges.
 - **Backward-compat both directions**: old SDKs ignore the unknown 0x04 packet type; new SDK on old firmware sees the 200ms grace window time out and resolves without a hash (no integrity verify, same as before). E2E relay path (P10) suppresses SHA forwarding — backend decrypts and hashes plaintext on receipt, no client SHA in scope.
 
 This repository retains released v1/P10 runtime behavior. It now also carries
@@ -516,3 +523,16 @@ Serialization helpers live in `src/ble/parsers.ts`: `serializeConnectionSettings
 
 - `bota-dev/examples` - Example apps using this SDK
 - `bota-dev/docs` - API documentation (docs.bota.dev)
+
+Upload recovery review (2026-09-23): source exposes `UPLOAD_RECOVERY_VERSION=1`.
+A configured provider runs before every attempt and receives `recoveryScope`,
+byte/hash evidence and `signal`. Return null to park an unavailable account;
+return `alreadyUploaded` only after scoped backend status confirmation. Plain
+uploads require a host `complete` ACK callback or completion URL/token before
+local cleanup/device confirmation. Provider `signal`/`dispose` fence live auth
+changes. Scope, route, identity and retry deadline survive restart; credentials,
+callbacks and error text do not. Queue mutations serialize with rollback;
+completed-file unlink failures retry during initialization. Foreground sync
+reuses matching queued/completed tasks; reconnect is needed for BLE confirmation.
+Retry backoff is persisted, and explicit retries reset the exhausted budget.
+Validate with uploadRecovery tests, the full Jest suite, build and test:release.

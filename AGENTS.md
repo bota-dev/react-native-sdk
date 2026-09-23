@@ -134,7 +134,14 @@ to these diagnostic logs. Phase entry is not completion evidence.
 
 **Bluetooth OTA flow control** — keep one TRANSFER_STATUS subscription for the full upload and retain ACK sequence state outside individual waits, because firmware notifications may arrive before the SDK reaches `waitForAck()`. A nonzero READY result after upload acceptance and a missing 8-packet window ACK are terminal; never continue sending after either condition.
 
-**Upload queue** — recordings are queued in `UploadQueue` (persistent SQLite). Never upload synchronously in the Bluetooth transfer callback.
+**Upload queue** — recordings are queued in `UploadQueue`; AsyncStorage holds
+only non-secret task identity/evidence, while an optional host-provided
+`RecordingDataStore` owns app-private durable audio bytes. Never persist
+pre-signed URLs, upload tokens, relay bearer tokens, or signatures. Restored
+`uploading` tasks become `pending` and require `uploadRecoveryProvider` to
+return fresh credentials for the same `recordingId`. Without a durable store,
+payloads remain in memory and are not restart-safe. Never upload synchronously
+in the Bluetooth transfer callback.
 
 **Direct-upload ownership** — `syncAllRecordings` may fall back from WiFi/cellular to BLE only after a fresh device status reports `syncActive=false`. Trigger-busy, BLE loss, and unreadable status preserve device ownership; a genuine monitor failure may use BLE only after that fresh inactive confirmation.
 
@@ -235,8 +242,8 @@ the target characteristics.
 | `src/managers/RecordingManager.ts` | Recording list, Bluetooth transfer, upload orchestration |
 | `src/sync/deviceUploadHandoff.ts` | Direct-upload ownership and safe BLE-fallback policy |
 | `src/managers/OTAManager.ts` | Firmware download progress, Bluetooth OTA transfer, reboot recovery |
-| `src/upload/UploadQueue.ts` | Persistent SQLite upload queue with retry |
-| `src/storage/StorageManager.ts` | Local SQLite persistence (device registry, transfer state) |
+| `src/upload/UploadQueue.ts` | AsyncStorage task metadata, whole-object retry, and credential-refresh recovery |
+| `src/storage/StorageManager.ts` | AsyncStorage metadata/checkpoints plus injectable durable recording-data store |
 | `src/models/` | TypeScript types (Device, Recording, DeviceStatus, etc.) |
 | `jest.config.js` | Jest/Babel transform config for TypeScript unit tests |
 | `scripts/release-candidate.mjs` | Creates and verifies immutable legacy npm candidate inventories |
@@ -265,3 +272,16 @@ All design docs live in [`../internal-docs/`](../internal-docs/).
 | [Connection-Management](../internal-docs/device/Connection-Management.md) | Connection lifecycles, reconnect, failover, and policy | Target; implementation conformance is tracked in System Design v5 |
 | [Heartbeat-Channel-Control](../internal-docs/device/Heartbeat-Channel-Control.md) | Heartbeat channels and dynamic policy | Target; implementation conformance is tracked in System Design v5 |
 | [Device–App–Backend Security](../internal-docs/device/Device%E2%80%93App%E2%80%93Backend%20Security%20%26%20Communication%20Design.md) ([中文](../internal-docs/device/Device%E2%80%93App%E2%80%93Backend%20Security%20%26%20Communication%20Design_ZH.md)) | Authentication, authorization, credentials, local/cloud encryption and channel security | Authoritative target; implementation conformance is tracked in System Design v5 |
+
+Upload recovery review (2026-09-23): source exposes `UPLOAD_RECOVERY_VERSION=1`.
+A configured provider runs before every attempt and receives `recoveryScope`,
+byte/hash evidence and `signal`. Return null to park an unavailable account;
+return `alreadyUploaded` only after scoped backend status confirmation. Plain
+uploads require a host `complete` ACK callback or completion URL/token before
+local cleanup/device confirmation. Provider `signal`/`dispose` fence live auth
+changes. Scope, route, identity and retry deadline survive restart; credentials,
+callbacks and error text do not. Queue mutations serialize with rollback;
+completed-file unlink failures retry during initialization. Foreground sync
+reuses matching queued/completed tasks; reconnect is needed for BLE confirmation.
+Retry backoff is persisted, and explicit retries reset the exhausted budget.
+Validate with uploadRecovery tests, the full Jest suite, build and test:release.

@@ -138,6 +138,8 @@ class BotaClientImpl extends EventEmitter<BotaClientEvents> {
       wifiOnlyUpload: config.wifiOnlyUpload ?? false,
       logLevel: config.logLevel ?? 'warn',
       debug: config.debug ?? false,
+      recordingDataStore: config.recordingDataStore,
+      uploadRecoveryProvider: config.uploadRecoveryProvider,
     };
 
     // Set log level
@@ -166,7 +168,10 @@ class BotaClientImpl extends EventEmitter<BotaClientEvents> {
       this._deviceManager = new DeviceManager();
       await this._deviceManager.initialize();
 
-      this._recordingManager = new RecordingManager();
+      this._recordingManager = new RecordingManager({
+        recordingDataStore: this._config.recordingDataStore,
+        uploadRecoveryProvider: this._config.uploadRecoveryProvider,
+      });
       await this._recordingManager.initialize();
 
       this._otaManager = new OTAManager(this._deviceManager);

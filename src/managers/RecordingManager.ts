@@ -26,6 +26,8 @@ import type {
   StreamingSyncOptions,
   StreamingUploadProvider,
   PersistedEncryptedUploadV2Checkpoint,
+  RecordingDataStore,
+  UploadRecoveryProvider,
 } from '../models/Recording';
 import type { RecordingManagerEvents } from '../models/Status';
 import { DeviceError } from '../utils/errors';
@@ -77,6 +79,11 @@ const log = logger.tag('RecordingManager');
 export type UploadInfoProvider = (
   recording: DeviceRecording
 ) => Promise<UploadInfo>;
+
+export interface RecordingManagerOptions {
+  recordingDataStore?: RecordingDataStore;
+  uploadRecoveryProvider?: UploadRecoveryProvider;
+}
 
 export interface EncryptedUploadV2ProviderContext {
   recording: EncryptedUploadV2Recording;
@@ -132,11 +139,14 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
   private isInitialized = false;
   private activeEncryptedUploadV2Devices = new Set<string>();
 
-  constructor() {
+  constructor(options: RecordingManagerOptions = {}) {
     super();
     this.protocolHandler = new ProtocolHandler();
-    this.storage = new StorageManager();
-    this.uploadQueue = new UploadQueue(this.storage, { autoStart: false });
+    this.storage = new StorageManager(options.recordingDataStore);
+    this.uploadQueue = new UploadQueue(this.storage, {
+      autoStart: false,
+      recoveryProvider: options.uploadRecoveryProvider,
+    });
 
     this.setupUploadQueueListeners();
   }
@@ -645,6 +655,22 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
         totalBytes: recording.fileSizeBytes,
       };
 
+      // A restarted queue may already own the fully received bytes. Reuse
+      // that exact scoped task; a later foreground sync can acknowledge BLE.
+      const recovered = uploadInfo.recoveryScope && this.storage.getUploadQueue().find(task =>
+        task.recoveryScope === uploadInfo.recoveryScope && task.recordingId === uploadInfo.recordingId &&
+        task.recordingUuid === recording.uuid);
+      if (recovered) {
+        if (recovered.status === 'failed') await this.uploadQueue.retryTask(recovered.id);
+        await this.waitForUpload(recovered.id);
+        if (!this.isInitialized) throw new Error('Recording manager stopped');
+        await this.protocolHandler.confirmSync(device.id, recording.uuid);
+        await this.storage.setLastSyncTime(device.id);
+        yield { stage: 'completed', progress: 1, recordingId: uploadInfo.recordingId };
+        this.emit('syncCompleted', recording.uuid, uploadInfo.recordingId);
+        return;
+      }
+
       // Stage: Transferring from device
       const { data: audioData, e2eEncrypted, sha256 } = await this.protocolHandler.transferRecording(
         device.id,
@@ -686,24 +712,36 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
       // when it provisioned a backend pubkey on the device.
       const useRelay = e2eEncrypted && !!uploadInfo.relay;
       if (e2eEncrypted && !uploadInfo.relay) {
-        log.warn('Device delivered ciphertext but caller did not provide UploadInfo.relay — upload will go to S3 presigned and fail to decrypt', {
-          recordingUuid: recording.uuid,
-        });
+        await this.storage.deleteRecordingData(localPath);
+        throw new Error('Encrypted recording requires a relay upload route');
       }
-      const task = await this.uploadQueue.enqueue({
-        recordingId: uploadInfo.recordingId,
-        deviceId: device.id,
-        localPath,
-        uploadUrl: uploadInfo.uploadUrl,
-        uploadToken: uploadInfo.uploadToken,
-        completeUrl: uploadInfo.completeUrl,
-        contentType: uploadInfo.contentType,
-        // P9.F2: forward the device-emitted SHA-256 (if any) so the host app's
-        // completeUrl receives it. Skip on the E2E relay path — the server
-        // decrypts and hashes plaintext on receipt, no client SHA in scope.
-        contentSha256: useRelay ? undefined : sha256,
-        relay: useRelay ? uploadInfo.relay : undefined,
-      });
+      let task: UploadTask;
+      try {
+        task = await this.uploadQueue.enqueue({
+          recordingId: uploadInfo.recordingId,
+          fileSizeBytes: audioData.length,
+          recoveryScope: uploadInfo.recoveryScope,
+          complete: uploadInfo.complete,
+          deviceId: device.id,
+          recordingUuid: recording.uuid,
+          localPath,
+          uploadUrl: uploadInfo.uploadUrl,
+          uploadToken: uploadInfo.uploadToken,
+          completeUrl: uploadInfo.completeUrl,
+          contentType: uploadInfo.contentType,
+          // P9.F2: forward the device-emitted SHA-256 (if any) so the host app's
+          // completeUrl receives it. Skip on the E2E relay path — the server
+          // decrypts and hashes plaintext on receipt, no client SHA in scope.
+          contentSha256: useRelay ? undefined : sha256,
+          relay: useRelay ? uploadInfo.relay : undefined,
+        });
+      } catch (error) {
+        // The device has not been confirmed, so its copy remains authoritative.
+        // Avoid leaking an unreferenced durable app-private file when queue
+        // metadata could not be committed.
+        await this.storage.deleteRecordingData(localPath).catch(() => undefined);
+        throw error;
+      }
 
       // Wait for upload to complete
       await this.waitForUpload(task.id);

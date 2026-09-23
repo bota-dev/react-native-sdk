@@ -383,3 +383,14 @@ A nonzero `0x08` result after upload acceptance fails with
 `FW_STORAGE_WRITE_FAILED`; a missing window ACK fails with
 `FW_UPLOAD_ACK_TIMEOUT`. Neither condition is safe to ignore because the device
 may already have stopped writing data.
+
+### V2 resume reconciliation (source, 2026-09-23)
+
+Wire allocations are unchanged. After a RESUME_REJECT reason `0x000f`, the SDK
+may reconcile once to a strictly smaller revision AND offset whose prefix
+SHA-256 matches its durable file. Zero requires revision zero and SHA-256(empty),
+and is a device-proved absence of acknowledged bytes, not a fallback after
+corruption. Save the lower checkpoint before truncating, then require an exact
+START_ACK or RESUME_ACCEPT. Repeated rejection, owner/identity errors, forward
+offsets or digest mismatch preserve evidence and fail. A new transport can
+negotiate different bounds; updated firmware persists bounds before ACCEPT.

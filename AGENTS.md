@@ -285,3 +285,17 @@ completed-file unlink failures retry during initialization. Foreground sync
 reuses matching queued/completed tasks; reconnect is needed for BLE confirmation.
 Retry backoff is persisted, and explicit retries reset the exhausted budget.
 Validate with uploadRecovery tests, the full Jest suite, build and test:release.
+
+## Phase 3 BLE recovery (2026-09-23)
+
+A lost WINDOW_ACK can leave the App ahead. V2 accepts at most one strictly
+earlier device checkpoint per transfer, only for CHECKPOINT_MISMATCH and a
+locally verified prefix. Persist that checkpoint before sink truncation and
+retry START/RESUME on the same scoped attempt. All other conflicts retain
+recovery evidence. Changed MTU/window bounds do not reset object progress;
+updated firmware persists them during rebind. Old-connection continuations
+cannot write ACK/RESUME/ABORT to a replacement link. Run the protocol-handler,
+recording-manager, file-sink and storage suites plus build/release checks.
+Legacy v1 and HTTP uploads still restart from zero. This is source behavior,
+not evidence of package publication or physical power-loss qualification. See
+[BLE recovery review](../internal-docs/test/2026-09-23-ble-resume-review.md).

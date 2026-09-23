@@ -509,3 +509,12 @@ completed-file unlink failures retry during initialization. Foreground sync
 reuses matching queued/completed tasks; reconnect is needed for BLE confirmation.
 Retry backoff is persisted, and explicit retries reset the exhausted budget.
 Validate with uploadRecovery tests, the full Jest suite, build and test:release.
+
+## Phase 3 BLE recovery (source, 2026-09-23)
+
+V2 reconciles one locally verified earlier device checkpoint, persists before
+truncation, retains conflicts, and fences writes from old connections.
+Legacy v1/HTTP behavior is unchanged. Matching firmware/SDK release and physical
+acceptance remain separate gates. See
+[BLE recovery review](../internal-docs/test/2026-09-23-ble-resume-review.md)
+and this repository's `AGENTS.md` for verification.

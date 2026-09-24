@@ -285,3 +285,9 @@ completed-file unlink failures retry during initialization. Foreground sync
 reuses matching queued/completed tasks; reconnect is needed for BLE confirmation.
 Retry backoff is persisted, and explicit retries reset the exhausted budget.
 Validate with uploadRecovery tests, the full Jest suite, build and test:release.
+
+Integrity-gated completion (2026-09-24): `alreadyUploaded` skips only the S3
+PUT. It must still replay the host completion callback/endpoint and receive
+success before marking the task complete, deleting app-private audio, or
+allowing foreground BLE confirmation. Backend `425` remains a failed attempt
+and keeps the source for retry.

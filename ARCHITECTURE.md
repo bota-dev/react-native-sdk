@@ -509,3 +509,8 @@ completed-file unlink failures retry during initialization. Foreground sync
 reuses matching queued/completed tasks; reconnect is needed for BLE confirmation.
 Retry backoff is persisted, and explicit retries reset the exhausted budget.
 Validate with uploadRecovery tests, the full Jest suite, build and test:release.
+
+Integrity-gated completion (2026-09-24): recovery separates object presence
+from a verified completion receipt. `alreadyUploaded` suppresses duplicate PUT
+bytes but still executes completion reconciliation. A pending SHA response
+therefore preserves the durable private file and prevents BLE `CONFIRM`.

@@ -228,10 +228,18 @@ describe('upload recovery review regressions', () => {
 
   it('recovers a lost ACK without PUT or requesting new upload credentials', async () => {
     const upload = jest.spyOn(S3Uploader.prototype, 'upload');
-    const f = await fixture(async () => ({ recordingId: 'rec_existing', uploadUrl: '', alreadyUploaded: true }));
+    const complete = jest.fn().mockResolvedValue(undefined);
+    const f = await fixture(async () => ({
+      recordingId: 'rec_existing', uploadUrl: '', alreadyUploaded: true, complete,
+    }));
     const completed = new Promise<void>(resolve => f.queue.once('taskCompleted', () => resolve()));
     f.queue.resume(); await completed;
-    expect(upload).not.toHaveBeenCalled(); expect(f.files.files.has(f.path)).toBe(false);
+    expect(upload).not.toHaveBeenCalled();
+    expect(complete).toHaveBeenCalledWith(expect.objectContaining({
+      fileSizeBytes: 5,
+      contentSha256: '11'.repeat(32),
+    }));
+    expect(f.files.files.has(f.path)).toBe(false);
     f.queue.destroy();
   });
 
@@ -255,7 +263,10 @@ describe('upload recovery review regressions', () => {
   });
 
   it('keeps completion durable if unlink fails and cleans up after restart', async () => {
-    const f = await fixture(async () => ({ recordingId: 'rec_existing', uploadUrl: '', alreadyUploaded: true }));
+    const f = await fixture(async () => ({
+      recordingId: 'rec_existing', uploadUrl: '', alreadyUploaded: true,
+      complete: jest.fn().mockResolvedValue(undefined),
+    }));
     jest.spyOn(f.files, 'deleteRecordingData').mockRejectedValueOnce(new Error('disk'));
     const completed = new Promise<void>(resolve => f.queue.once('taskCompleted', () => resolve()));
     f.queue.resume(); await completed;

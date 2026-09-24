@@ -310,7 +310,28 @@ export class UploadQueue extends EventEmitter<UploadQueueEvents> {
       check();
       if (uploadInfo.alreadyUploaded) {
         // The previous completion response may have been lost. Never PUT over
-        // an already-published object or require an expired presign.
+        // an already-published object or require an expired presign, but still
+        // replay completion: status=uploaded can mean server-side integrity
+        // verification is pending and is not yet a source-delete receipt.
+        const fileSizeBytes = task.fileSizeBytes ??
+          (await this.storage.loadRecordingData(task.localPath)).length;
+        if (uploadInfo.complete) {
+          await uploadInfo.complete({
+            fileSizeBytes,
+            contentSha256: task.contentSha256,
+            signal: abortController.signal,
+          });
+        } else if (uploadInfo.completeUrl && uploadInfo.uploadToken) {
+          await this.uploader.notifyCompletion(
+            uploadInfo.completeUrl,
+            task.recordingId,
+            uploadInfo.uploadToken,
+            task.contentSha256,
+            abortController.signal,
+          );
+        } else if (this.recoveryProvider) {
+          throw new Error('Recoverable upload requires backend completion acknowledgement');
+        }
       } else if (uploadInfo.relay) {
         // P10 BLE-e2e relay path: POST ciphertext to backend; backend
         // decrypts and writes plaintext to S3 server-side. The relay

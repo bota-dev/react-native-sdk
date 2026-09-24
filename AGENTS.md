@@ -22,6 +22,17 @@ repositories remain migration inputs until their parity and release gates pass.
 Do not describe incomplete target packages as shipped. See
 [App SDK Architecture](../internal-docs/App%20SDK%20Architecture.md).
 
+## Pull request language
+
+All PR titles and descriptions must be bilingual: English first, Chinese second.
+Use `English title / 中文标题` for GitHub's single-line title. Put the complete
+English description above the complete Chinese translation, with equivalent
+changes, validation and limitations. Apply this when creating or updating PRs.
+
+所有 PR 标题和描述使用中英双语：英文在上，中文在下。标题采用
+`English title / 中文标题`；描述先放完整英文，再放完整中文，改动、验证和限制
+必须一致。创建或更新 PR 时均遵循此规则。
+
 ## Documentation Rule
 
 **Every code change must be accompanied by documentation updates.** After any change, check and update as needed:
@@ -63,6 +74,9 @@ npm run test:release # candidate-integrity and workflow-policy tests
 ```
 
 The development toolchain uses Jest 30 and ESLint 10 with flat configuration.
+The root development lock pins patched `browserslist` 4.28.7 and
+`baseline-browser-mapping` 2.11.0 within existing transitive ranges; this
+does not change the published SDK API or downstream application locks.
 
 ## Release Ownership
 

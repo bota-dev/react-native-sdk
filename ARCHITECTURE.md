@@ -513,3 +513,12 @@ The repository's development lock patches the transitive browser-data toolchain
 (`browserslist` 4.28.7 and `baseline-browser-mapping` 2.11.0); source and
 published peer ranges are unchanged, and downstream application locks are
 outside this repository's verification.
+
+## Phase 3 BLE recovery (source, 2026-09-23)
+
+V2 reconciles one locally verified earlier device checkpoint, persists before
+truncation, retains conflicts, and fences writes from old connections.
+Legacy v1/HTTP behavior is unchanged. Matching firmware/SDK release and physical
+acceptance remain separate gates. See
+[BLE recovery review](../internal-docs/test/2026-09-23-ble-resume-review.md)
+and this repository's `AGENTS.md` for verification.

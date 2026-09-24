@@ -173,12 +173,14 @@ export class ProtocolHandler {
     mutableOperations: Set<Promise<unknown>>;
   }>();
   private encryptedUploadV2ConnectionRevisions = new Map<string, number>();
+  private encryptedUploadV2TransferOwners = new Map<string, { session: bigint; revision: number }>();
   private activeEncryptedUploadV2CapabilityReads = new Map<string, object>();
   private readonly clearEncryptedUploadV2ContextOnConnect = (deviceId: string) => {
     this.encryptedUploadV2ConnectionRevisions.set(
       deviceId,
       (this.encryptedUploadV2ConnectionRevisions.get(deviceId) ?? 0) + 1
     );
+    this.encryptedUploadV2TransferOwners.delete(deviceId);
     this.activeEncryptedUploadV2Contexts.delete(deviceId);
     this.activeEncryptedUploadV2CapabilityReads.delete(deviceId);
   };
@@ -680,7 +682,16 @@ export class ProtocolHandler {
       );
     }
 
-    const receiver = new EncryptedUploadV2TransferReceiver({
+    const connectionRevision = this.encryptedUploadV2ConnectionRevisions.get(deviceId) ?? 0;
+    const assertConnection = () => {
+      if (!this.bleManager.isConnected(deviceId) ||
+          (this.encryptedUploadV2ConnectionRevisions.get(deviceId) ?? 0) !== connectionRevision) {
+        throw DeviceError.notConnected(deviceId);
+      }
+    };
+    // Keep negotiation local: callers retain their original durable evidence.
+    request = { ...request, checkpoint: { ...request.checkpoint } };
+    const createReceiver = () => new EncryptedUploadV2TransferReceiver({
       transportSessionId: request.transportSessionId,
       expectedCiphertextLength: request.recording.ciphertextLength,
       expectedCiphertextSha256: request.recording.ciphertextSha256,
@@ -692,12 +703,16 @@ export class ProtocolHandler {
       signal: request.signal,
       persistCheckpoint: request.persistCheckpoint,
     });
+    let receiver = createReceiver();
     await receiver.prepare();
+    assertConnection();
+    this.encryptedUploadV2TransferOwners.set(deviceId, { session: request.transportSessionId, revision: connectionRevision });
 
     return new Promise((resolve, reject) => {
       let subscription: Subscription | undefined;
       let timer: number | undefined;
       let opened = false;
+      let reconciled = false;
       let stopping = false;
       let settled = false;
       let processing = Promise.resolve();
@@ -714,6 +729,9 @@ export class ProtocolHandler {
       const releaseOwnership = () => {
         stopIntake();
         this.activeEncryptedUploadV2Transfers.delete(request.transportSessionId);
+        if (stopping && this.encryptedUploadV2TransferOwners.get(deviceId)?.session === request.transportSessionId) {
+          this.encryptedUploadV2TransferOwners.delete(deviceId);
+        }
       };
       const resetTimer = () => {
         if (timer !== undefined) clearTimeout(timer);
@@ -739,6 +757,7 @@ export class ProtocolHandler {
             reason: 0x00ff,
           });
           try {
+            assertConnection();
             await this.bleManager.writeCharacteristic(
               deviceId,
               SERVICE_BOTA_STORAGE,
@@ -756,6 +775,44 @@ export class ProtocolHandler {
         });
       };
 
+      const sendOpening = async () => {
+        assertConnection();
+        throwIfEncryptedUploadV2Cancelled(request.signal);
+        const commonHeader = {
+          flags: 0,
+          transportSessionId: request.transportSessionId,
+        };
+        const frame = request.checkpoint.nextCiphertextOffset > 0n
+          ? encodeEncryptedUploadV2Transfer({
+              type: 'resumeRequest',
+              common: { ...commonHeader, messageType: 0x22 },
+              uploadSessionUuid: parseFullUuid(request.uploadSessionUuid),
+              recordingUuid: parseFullUuid(request.recording.uuid),
+              recordingGeneration: request.recording.generation,
+              checkpointRevision: request.checkpoint.revision,
+              nextCiphertextOffset: request.checkpoint.nextCiphertextOffset,
+              prefixSha256: request.checkpoint.prefixSha256,
+              windowPackets: request.windowPackets,
+              dataPayloadBytes: request.dataPayloadBytes,
+            })
+          : encodeEncryptedUploadV2Transfer({
+              type: 'start',
+              common: { ...commonHeader, messageType: 0x20 },
+              uploadSessionUuid: parseFullUuid(request.uploadSessionUuid),
+              recordingUuid: parseFullUuid(request.recording.uuid),
+              recordingGeneration: request.recording.generation,
+              authorizationSha256: request.authorizationSha256,
+              checkpointRevision: request.checkpoint.revision,
+              nextCiphertextOffset: request.checkpoint.nextCiphertextOffset,
+              prefixSha256: request.checkpoint.prefixSha256,
+              windowPackets: request.windowPackets,
+              dataPayloadBytes: request.dataPayloadBytes,
+            });
+        await this.bleManager.writeCharacteristic(
+          deviceId, SERVICE_BOTA_STORAGE, CHAR_TRANSFER_CONTROL_V2, frame, true
+        );
+      };
+
       try {
         subscription = this.bleManager.subscribeToCharacteristic(
           deviceId,
@@ -770,6 +827,7 @@ export class ProtocolHandler {
             }
             processing = processing.then(async () => {
               if (stopping || settled) return;
+              assertConnection();
               const value = decodeEncryptedUploadV2Transfer(rawValue);
               if (value.common.transportSessionId !== request.transportSessionId) {
                 throw new EncryptedUploadV2RuntimeError(
@@ -783,6 +841,33 @@ export class ProtocolHandler {
                   (!resuming && value.type !== 'startAck')
                 ) {
                   if (value.type === 'resumeReject') {
+                    // Lost WINDOW_ACK: the app may be one durable window ahead.
+                    // Only accept a strictly older, locally proved device prefix;
+                    // corruption, foreign ownership and repeated rejection fail closed.
+                    if (resuming && !reconciled && value.reason === 0x000f &&
+                        value.checkpointRevision < request.checkpoint.revision &&
+                        value.nextCiphertextOffset < request.checkpoint.nextCiphertextOffset &&
+                        ((value.nextCiphertextOffset === 0n) === (value.checkpointRevision === 0)) &&
+                        constantTimeEqual(await request.sink.sha256Prefix(
+                          value.nextCiphertextOffset, request.signal), value.prefixSha256)) {
+                      throwIfEncryptedUploadV2Cancelled(request.signal);
+                      const checkpoint = {
+                        revision: value.checkpointRevision,
+                        nextCiphertextOffset: value.nextCiphertextOffset,
+                        prefixSha256: Buffer.from(value.prefixSha256),
+                        highestContiguousSequence: value.nextCiphertextOffset === 0n ? undefined : 0,
+                      };
+                      // Persist BEFORE truncating: a crash can leave surplus bytes,
+                      // never metadata claiming bytes we just removed.
+                      await request.persistCheckpoint(checkpoint);
+                      request.checkpoint = checkpoint;
+                      receiver = createReceiver();
+                      await receiver.prepare();
+                      if (stopping || settled) return;
+                      reconciled = true;
+                      await sendOpening();
+                      return;
+                    }
                     throw new EncryptedUploadV2RuntimeError(
                       'encrypted_upload_v2_checkpoint_mismatch',
                       value.reason
@@ -816,6 +901,7 @@ export class ProtocolHandler {
                   Number(request.recording.ciphertextLength)
                 );
               }
+              assertConnection();
               if (action.type === 'control') {
                 await this.bleManager.writeCharacteristic(
                   deviceId,
@@ -855,46 +941,10 @@ export class ProtocolHandler {
         }
         resetTimer();
 
-        const commonHeader = {
-          flags: 0,
-          transportSessionId: request.transportSessionId,
-        };
-        const frame = request.checkpoint.nextCiphertextOffset > 0n
-          ? encodeEncryptedUploadV2Transfer({
-              type: 'resumeRequest',
-              common: { ...commonHeader, messageType: 0x22 },
-              uploadSessionUuid: parseFullUuid(request.uploadSessionUuid),
-              recordingUuid: parseFullUuid(request.recording.uuid),
-              recordingGeneration: request.recording.generation,
-              checkpointRevision: request.checkpoint.revision,
-              nextCiphertextOffset: request.checkpoint.nextCiphertextOffset,
-              prefixSha256: request.checkpoint.prefixSha256,
-              windowPackets: request.windowPackets,
-              dataPayloadBytes: request.dataPayloadBytes,
-            })
-          : encodeEncryptedUploadV2Transfer({
-              type: 'start',
-              common: { ...commonHeader, messageType: 0x20 },
-              uploadSessionUuid: parseFullUuid(request.uploadSessionUuid),
-              recordingUuid: parseFullUuid(request.recording.uuid),
-              recordingGeneration: request.recording.generation,
-              authorizationSha256: request.authorizationSha256,
-              checkpointRevision: request.checkpoint.revision,
-              nextCiphertextOffset: request.checkpoint.nextCiphertextOffset,
-              prefixSha256: request.checkpoint.prefixSha256,
-              windowPackets: request.windowPackets,
-              dataPayloadBytes: request.dataPayloadBytes,
-            });
         openingWrite = new Promise<void>((resolveOpening) => {
           finishOpeningWrite = resolveOpening;
         });
-        this.bleManager.writeCharacteristic(
-          deviceId,
-          SERVICE_BOTA_STORAGE,
-          CHAR_TRANSFER_CONTROL_V2,
-          frame,
-          true
-        ).then(
+        sendOpening().then(
           () => finishOpeningWrite(),
           (error) => {
             finishOpeningWrite();
@@ -913,6 +963,11 @@ export class ProtocolHandler {
     transportSessionId: bigint,
     reason: number = 0x00ff
   ): Promise<void> {
+    const owner = this.encryptedUploadV2TransferOwners.get(deviceId);
+    if (!owner || owner.session !== transportSessionId ||
+        owner.revision !== (this.encryptedUploadV2ConnectionRevisions.get(deviceId) ?? 0) ||
+        !this.bleManager.isConnected(deviceId)) return;
+    this.encryptedUploadV2TransferOwners.delete(deviceId);
     const frame = encodeEncryptedUploadV2Transfer({
       type: 'abort',
       common: { messageType: 0x24, flags: 0, transportSessionId },
@@ -2185,6 +2240,7 @@ export class ProtocolHandler {
       subscription.remove();
     }
     this.activeEncryptedUploadV2Transfers.clear();
+    this.encryptedUploadV2TransferOwners.clear();
     this.activeEncryptedUploadV2Contexts.clear();
     this.activeEncryptedUploadV2CapabilityReads.clear();
     this.encryptedUploadV2ConnectionRevisions.clear();

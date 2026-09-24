@@ -766,6 +766,99 @@ describe('ProtocolHandler encrypted upload v2', () => {
     expect(staleAborts).toHaveLength(0);
   });
 
+  it.each([0, 3])('reconciles a lost ACK to verified device prefix %i before retransmission', async (offset) => {
+    const ciphertext = Buffer.from('opaque');
+    const manifest = document('BOTAMNF2', 580, 0x33);
+    const sink = new TestSink();
+    sink.bytes = Buffer.from(ciphertext);
+    const order: string[] = [];
+    const prepare = sink.prepare.bind(sink);
+    sink.prepare = async checkpoint => { order.push(`prepare:${checkpoint.nextCiphertextOffset}`); await prepare(checkpoint); };
+    let openings = 0;
+    mockGetBleManager().writeCharacteristic.mockImplementation(async (_d, _s, characteristic, data) => {
+      if (characteristic !== CHAR_TRANSFER_CONTROL_V2) return;
+      const frame = decodeEncryptedUploadV2Transfer(data);
+      if (frame.type !== 'start' && frame.type !== 'resumeRequest') return;
+      openings++;
+      const notify = (value) => subscriptions.get(CHAR_RECORDING_TRANSFER_V2)?.(encodeEncryptedUploadV2Transfer(value));
+      if (openings === 1) {
+        expect(frame.type).toBe('resumeRequest');
+        notify({ type: 'resumeReject', common: common(0x46), reason: 0x0f,
+          checkpointRevision: offset ? 1 : 0, nextCiphertextOffset: BigInt(offset),
+          prefixSha256: digest(ciphertext.subarray(0, offset)) });
+        return;
+      }
+      expect(order.slice(-2)).toEqual([`persist:${offset}`, `prepare:${offset}`]);
+      expect(frame.type).toBe(offset ? 'resumeRequest' : 'start');
+      expect(frame.nextCiphertextOffset).toBe(BigInt(offset));
+      expect(sink.bytes.length).toBe(offset);
+      if (frame.type === 'start') notify({ ...frame, type: 'startAck', common: common(0x40),
+        ciphertextLength: 6n, ciphertextSha256: digest(ciphertext), checkpointIntervalBlocks: 1 });
+      else notify({ ...frame, type: 'resumeAccept', common: common(0x45) });
+      notify({ type: 'data', common: common(0x41), sequence: 1, offset: BigInt(offset), data: ciphertext.subarray(offset) });
+      notify({ type: 'windowEnd', common: common(0x42), windowIndex: 0, firstSequence: 1, lastSequence: 1,
+        nextCiphertextOffset: 6n, prefixSha256: digest(ciphertext), checkpointRevision: offset ? 2 : 1 });
+      for (let i = 0; i < manifest.length; i += 200) notify({ type: 'manifestChunk', common: common(0x43),
+        totalManifestLength: 580, chunkOffset: i, manifestSha256: digest(manifest), chunk: manifest.subarray(i, i + 200) });
+      notify({ type: 'eof', common: common(0x44), finalSequence: 1, blockCount: 1,
+        ciphertextLength: 6n, ciphertextSha256: digest(ciphertext), manifestSha256: digest(manifest) });
+    });
+    const checkpoint = { revision: 2, nextCiphertextOffset: 6n, prefixSha256: digest(ciphertext), highestContiguousSequence: 9 };
+    const result = await new ProtocolHandler().transferEncryptedUploadV2('device-1', {
+      transportSessionId: 7n, uploadSessionUuid: sessionUuid,
+      recording: { uuid, generation: 3, storageFormat: 3, startedAt: new Date(0), durationMs: 0,
+        plaintextLength: 3n, ciphertextLength: 6n, ciphertextSha256: digest(ciphertext) },
+      authorizationSha256: Buffer.alloc(32, 1), windowPackets: 4, dataPayloadBytes: 64,
+      checkpointIntervalBlocks: 1, maximumMissingSequences: 2, checkpoint, sink,
+      persistCheckpoint: async value => { order.push(`persist:${value.nextCiphertextOffset}`); },
+    });
+    expect(result.manifest).toEqual(manifest);
+    expect(sink.bytes).toEqual(ciphertext);
+    expect(openings).toBe(2);
+    expect(checkpoint.nextCiphertextOffset).toBe(6n);
+  });
+
+  it.each(['digest', 'owner', 'ahead', 'persistence', 'repeat', 'reconnect'])('retains evidence on unsafe resume reconciliation: %s', async failure => {
+    const sink = new TestSink(); sink.bytes = Buffer.from('opaque');
+    const persistCheckpoint = jest.fn(async () => {
+      if (failure === 'persistence') throw new Error('disk failure');
+      if (failure === 'reconnect') mockGetBleManager().on.mock.calls.find(([event]) => event === 'deviceConnected')[1]('device-1');
+    });
+    let openings = 0;
+    let aborts = 0;
+    const handler = new ProtocolHandler();
+    mockGetBleManager().writeCharacteristic.mockImplementation(async (_d, _s, characteristic, data) => {
+      if (characteristic !== CHAR_TRANSFER_CONTROL_V2) return;
+      const frame = decodeEncryptedUploadV2Transfer(data);
+      if (frame.type === 'abort') aborts++;
+      if (frame.type !== 'resumeRequest') return;
+      openings++;
+      const offset = failure === 'ahead' ? 6 : openings === 1 ? 3 : 0;
+      subscriptions.get(CHAR_RECORDING_TRANSFER_V2)?.(encodeEncryptedUploadV2Transfer({
+        type: 'resumeReject', common: common(0x46), reason: failure === 'owner' ? 0x13 : 0x0f,
+        checkpointRevision: failure === 'ahead' ? 3 : openings === 1 ? 1 : 0,
+        nextCiphertextOffset: BigInt(offset),
+        prefixSha256: failure === 'digest' ? Buffer.alloc(32) : digest(sink.bytes.subarray(0, offset)),
+      }));
+    });
+    await expect(handler.transferEncryptedUploadV2('device-1', {
+      transportSessionId: 7n, uploadSessionUuid: sessionUuid,
+      recording: { uuid, generation: 3, storageFormat: 3, startedAt: new Date(0), durationMs: 0,
+        plaintextLength: 3n, ciphertextLength: 6n, ciphertextSha256: digest(sink.bytes) },
+      authorizationSha256: Buffer.alloc(32, 1), windowPackets: 4, dataPayloadBytes: 64,
+      checkpointIntervalBlocks: 1, maximumMissingSequences: 2,
+      checkpoint: { revision: 2, nextCiphertextOffset: 6n, prefixSha256: digest(sink.bytes), highestContiguousSequence: 9 },
+      sink, persistCheckpoint,
+    })).rejects.toThrow(failure === 'persistence' ? 'disk failure' : failure === 'reconnect' ? 'not connected' : 'checkpoint_mismatch');
+    expect(sink.bytes.toString()).toBe(['repeat', 'reconnect'].includes(failure) ? 'opa' : 'opaque');
+    expect(persistCheckpoint).toHaveBeenCalledTimes(['persistence', 'repeat', 'reconnect'].includes(failure) ? 1 : 0);
+    expect(openings).toBe(failure === 'repeat' ? 2 : 1);
+    if (failure === 'reconnect') {
+      await handler.abortEncryptedUploadV2('device-1', 7n);
+      expect(aborts).toBe(0);
+    }
+  });
+
   it('transfers ciphertext and manifest through 0409 and ACKs windows through 0408', async () => {
     const ciphertext = Buffer.from('opaque');
     const manifest = document('BOTAMNF2', 580, 0x33);

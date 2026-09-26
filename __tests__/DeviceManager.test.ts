@@ -1,3 +1,5 @@
+jest.mock('react-native', () => ({ Platform: { OS: 'ios' } }), { virtual: true });
+
 jest.mock(
   'react-native-ble-plx',
   () => ({
@@ -23,6 +25,13 @@ jest.mock(
 );
 
 import { DeviceManager } from '../src/managers/DeviceManager';
+import { ConnectionClientPresence } from '../src/clientPresence';
+
+function createPartialManager() {
+  const manager = Object.create(DeviceManager.prototype) as any;
+  manager.presence = new ConnectionClientPresence(() => null);
+  return manager;
+}
 import {
   CHAR_DEVICE_COMMAND,
   CHAR_DEVICE_LOG_CONTROL,
@@ -56,7 +65,7 @@ function createDeviceLogManager() {
     writeCharacteristic: jest.fn().mockResolvedValue(undefined),
     disconnect: jest.fn().mockResolvedValue(undefined),
   });
-  const manager = Object.create(DeviceManager.prototype) as any;
+  const manager = createPartialManager();
   manager.bleManager = bleManager;
   manager.connectedDevices = new Map([[connectedDevice.id, connectedDevice]]);
   manager.statusSubscriptions = new Map();
@@ -443,7 +452,7 @@ describe('DeviceManager reconnect matching', () => {
       id: 'ios-peripheral-id',
       serialNumber: 'GDPPSBZJN6',
     };
-    const manager = Object.create(DeviceManager.prototype) as any;
+    const manager = createPartialManager();
     manager.connectedDevices = new Map([[staleDevice.id, staleDevice]]);
     manager.bleManager = { isConnected: jest.fn(() => false) };
 
@@ -468,7 +477,7 @@ describe('DeviceManager reconnect matching', () => {
     };
     const freshDevice = { ...staleDevice };
 
-    const manager = Object.create(DeviceManager.prototype) as any;
+    const manager = createPartialManager();
     manager.connectedDevices = new Map([[staleDevice.id, staleDevice]]);
     manager.reconnectRegistry = {
       GDPPSBZJN6: {
@@ -710,7 +719,7 @@ describe('DeviceManager connect identity reads', () => {
       writeCharacteristic: jest.fn().mockResolvedValue(undefined),
     };
 
-    const manager = Object.create(DeviceManager.prototype) as any;
+    const manager = createPartialManager();
     manager.bleManager = bleManager;
     manager.connectedDevices = new Map([
       ['ios-peripheral-id', {
@@ -765,7 +774,7 @@ describe('DeviceManager connect identity reads', () => {
       writeCharacteristic: jest.fn().mockRejectedValue(new Error('not supported')),
     };
 
-    const manager = Object.create(DeviceManager.prototype) as any;
+    const manager = createPartialManager();
     manager.bleManager = bleManager;
     manager.connectedDevices = new Map();
     manager.reconnectRegistry = {

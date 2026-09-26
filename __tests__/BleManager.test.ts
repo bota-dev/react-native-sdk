@@ -94,3 +94,28 @@ describe('BleManager connection failure logging', () => {
     manager.destroy();
   });
 });
+
+it('ignores a late disconnect from the previous connection of the same peripheral', async () => {
+  const manager = new BleManager();
+  const callbacks: Array<(error: null, device: any) => void> = [];
+  const makeDevice = () => ({
+    id: 'device-1', isConnected: async () => false,
+    discoverAllServicesAndCharacteristics: async () => {},
+    onDisconnected: (callback: typeof callbacks[number]) => { callbacks.push(callback); return { remove: jest.fn() }; },
+  });
+  const first = makeDevice();
+  const second = makeDevice();
+  (manager as any).manager.connectToDevice.mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+  const disconnected = jest.fn();
+  manager.on('deviceDisconnected', disconnected);
+  await manager.connect(first.id, 'background');
+  await manager.connect(second.id, 'background');
+  callbacks[0](null, first);
+  expect(manager.isConnected(second.id)).toBe(true);
+  expect(manager.getConnectionIdentity(second.id)).toBe(second);
+  expect(disconnected).not.toHaveBeenCalled();
+  callbacks[1](null, second);
+  expect(manager.getConnectionIdentity(second.id)).toBeNull();
+  expect(disconnected).toHaveBeenCalledTimes(1);
+  manager.destroy();
+});

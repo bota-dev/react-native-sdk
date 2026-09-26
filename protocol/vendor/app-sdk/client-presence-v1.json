@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "description": "Passive client metadata only; no Bluetooth protocol effects or network calls.",
+  "sessions": ["f5dd6f48-1f35-4f67-aac1-7d90888da169", "485e44e3-8f30-41ba-b361-f64e971ab243"],
+  "steps": [
+    {"action": "report", "device_id": "device-1", "expected": null},
+    {"action": "verified_connect", "device_id": "device-1", "connection": "first"},
+    {"action": "report", "device_id": "device-1", "expected": {"session": 0, "sequence": 1}},
+    {"action": "report", "device_id": "wrong-device", "expected": null},
+    {"action": "report", "device_id": "device-1", "expected": {"session": 0, "sequence": 2}},
+    {"action": "disconnect", "connection": "first"},
+    {"action": "report", "device_id": "device-1", "expected": null},
+    {"action": "verified_connect", "device_id": "device-1", "connection": "second"},
+    {"action": "disconnect", "connection": "first"},
+    {"action": "report", "device_id": "device-1", "expected": {"session": 1, "sequence": 1}},
+    {"action": "destroy"},
+    {"action": "verified_connect", "device_id": "device-1", "connection": "late"},
+    {"action": "report", "device_id": "device-1", "expected": null}
+  ]
+}

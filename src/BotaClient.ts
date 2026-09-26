@@ -9,6 +9,7 @@ import { getBleManager, resetBleManager, BleManager } from './ble/BleManager';
 import { DeviceManager } from './managers/DeviceManager';
 import { RecordingManager } from './managers/RecordingManager';
 import { OTAManager } from './managers/OTAManager';
+import type { ClientPresence } from './clientPresence';
 import type {
   BotaConfig,
   SdkState,
@@ -47,6 +48,10 @@ function mapBluetoothState(state: State): BluetoothState {
  * Bota Client class - singleton SDK entry point
  */
 class BotaClientImpl extends EventEmitter<BotaClientEvents> {
+  /** Passive optional metadata; the host explicitly relays it with a fresh heartbeat. */
+  readonly clientPresence: ClientPresence = {
+    nextReport: async (deviceId) => this._deviceManager?.clientPresence.nextReport(deviceId) ?? null,
+  };
   private _config: BotaConfig | null = null;
   private _state: SdkState = 'uninitialized';
   private _bluetoothState: BluetoothState = 'unknown';

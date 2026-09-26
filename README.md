@@ -539,6 +539,33 @@ The SDK does not communicate directly with the Bota API. Your mobile app should:
 3. Call your backend to create recordings and get upload URLs
 4. The SDK uploads directly to S3 using the pre-signed URLs
 
+### Bluetooth client presence (source, not yet published)
+
+`await BotaClient.clientPresence.nextReport(device.id)` returns optional
+`SdkClientContext` metadata for a verified SDK connection, or `null`. The
+snake-case fields are `schema_version`, `session_id`, `sequence`, `platform`,
+`sdk_package`, and `sdk_version`. Package identity is generated from this
+package's manifest by `npm run identity:generate` and checked at release.
+
+The host may attach this to **its existing authenticated BLE heartbeat**, after
+reading fresh status, adding its current backend `binding_generation` and an
+optional developer-configured `app_identifier`. Capture account/project/device,
+binding generation and connection session before asynchronous work; discard the
+report if any changes before submission. Never replay cached/offline metadata.
+The getter makes no HTTP requests, GATT operations, subscriptions or timers.
+It does not fetch commands or apply returned configuration.
+
+Sessions are random, memory-only and rotate on reconnection; sequence increases
+per report. Disconnect, adapter power loss and SDK destruction invalidate them.
+The optional existing `react-native-quick-crypto` provider must supply secure
+randomness; otherwise metadata is unavailable while BLE remains usable. No app
+name, bundle ID, phone identity, MAC or stable installation identifier is inferred.
+This is a client observation, not proof of device identity or command delivery.
+
+The shared lifecycle fixture is pinned under `protocol/vendor/app-sdk/` with
+source revision and digest. Local tests/build do not publish this API; consumers
+need a separately verified package release before enabling the integration.
+
 ### Upload Methods
 
 **Bluetooth Sync** (current implementation):

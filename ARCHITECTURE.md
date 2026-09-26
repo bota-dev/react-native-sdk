@@ -522,3 +522,16 @@ Legacy v1/HTTP behavior is unchanged. Matching firmware/SDK release and physical
 acceptance remain separate gates. See
 [BLE recovery review](../internal-docs/test/2026-09-23-ble-resume-review.md)
 and this repository's `AGENTS.md` for verification.
+
+## Passive client presence (source, 2026-09-25)
+
+`BotaClient.clientPresence` delegates to a DeviceManager-owned in-memory session
+tracker. Only completion of the existing verified connection path publishes a
+session. Cached connected reuse preserves it; reconnect rotates it. Existing
+disconnect/state callbacks invalidate metadata, including pending publishers;
+destroy is terminal for that manager. The BLE handle read is memory-only and
+stale disconnect callbacks are fenced against the current connection owner.
+No command routing, transfer, GATT subscription, storage or heartbeat scheduler
+is added. Hosts explicitly relay metadata with fresh status and current binding
+scope; package identity is generated from `package.json`. See README for the
+privacy and release boundaries. Verify full Jest, build, and test:release.

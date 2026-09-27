@@ -356,6 +356,10 @@ npm run test         # Jest unit tests
 The development toolchain uses Node 22.13+, React Native 0.87, React 19,
 TypeScript 6, Builder Bob 0.43, AsyncStorage 3, Jest 30, and ESLint 10. ESLint
 configuration is defined in `eslint.config.mjs` using the flat-config format.
+The root development lock uses patched `browserslist` 4.28.7 and
+`baseline-browser-mapping` 2.11.0 with compatible browser-data dependencies.
+This is a lock-only remediation; no SDK source, peer ranges, or npm release
+artifact has changed.
 
 ### Release
 
@@ -541,3 +545,12 @@ Integrity-gated completion (2026-09-24): never let `alreadyUploaded` bypass the
 completion callback. It means only that PUT must not be repeated. Completion
 must still return success; HTTP `425` follows the normal retry path and retains
 the source bytes/device copy.
+
+## Phase 3 BLE recovery (source, 2026-09-23)
+
+V2 reconciles one locally verified earlier device checkpoint, persists before
+truncation, retains conflicts, and fences writes from old connections.
+Legacy v1/HTTP behavior is unchanged. Matching firmware/SDK release and physical
+acceptance remain separate gates. See
+[BLE recovery review](../internal-docs/test/2026-09-23-ble-resume-review.md)
+and this repository's `AGENTS.md` for verification.

@@ -307,7 +307,6 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
     let confirmed = false;
     let confirmationUncertain = false;
     let cleanupAttempted = false;
-    let replacementAttempt = false;
     let phase = 'capability';
     const enterPhase = (next: string) => {
       phase = next;
@@ -404,10 +403,6 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
       });
       throwIfEncryptedUploadV2Cancelled(options.signal);
       enterPhase('material-validation');
-      replacementAttempt = storedCheckpoint !== undefined && (
-        storedCheckpoint.uploadSessionUuid.toLowerCase() !== material.uploadSessionUuid.toLowerCase() ||
-        storedCheckpoint.ownerRevision !== material.ownerRevision
-      );
       validateEncryptedUploadProfileSelection(
         { policy: material.policy, profile: material.profile },
         {
@@ -426,8 +421,6 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
         storedCheckpoint,
         material,
         recording,
-        windowPackets,
-        dataPayloadBytes,
         bounds.durableCheckpointIntervalBlocks
       );
 
@@ -576,24 +569,8 @@ export class RecordingManager extends EventEmitter<RecordingManagerEvents> {
       confirmationUncertain =
         error instanceof EncryptedUploadV2RuntimeError &&
         error.code === 'encrypted_upload_v2_confirmation_uncertain';
-      if (
-        error instanceof EncryptedUploadV2RuntimeError &&
-        error.code === 'encrypted_upload_v2_checkpoint_mismatch' && !replacementAttempt
-      ) {
-        try {
-          await this.storage.deleteEncryptedUploadV2Checkpoint(
-            device.id,
-            recording.uuid,
-            recording.generation
-          );
-        } catch (cleanupError) {
-          log.warn('Rejected encrypted upload v2 checkpoint remains pending', {
-            deviceId: device.id,
-            recordingUuid: recording.uuid,
-            error: (cleanupError as Error).message,
-          });
-        }
-      }
+      // A rejected proof is not permission to discard recovery evidence.
+      // The protocol reconciles a verified older device checkpoint explicitly.
       await cleanupUnconfirmed();
       const failure = error as Error;
       yield { stage: 'failed', progress: 0, error: failure.message };
@@ -1349,8 +1326,6 @@ function compatibleEncryptedUploadV2Checkpoint(
   stored: PersistedEncryptedUploadV2Checkpoint | undefined,
   material: EncryptedUploadV2Material,
   recording: EncryptedUploadV2Recording,
-  windowPackets: number,
-  dataPayloadBytes: number,
   checkpointIntervalBlocks: number
 ): EncryptedUploadV2Checkpoint {
   if (
@@ -1359,8 +1334,6 @@ function compatibleEncryptedUploadV2Checkpoint(
     stored.ownerRevision === material.ownerRevision &&
     stored.recordingUuid.toLowerCase() === recording.uuid.toLowerCase() &&
     stored.recordingGeneration === recording.generation &&
-    stored.windowPackets === windowPackets &&
-    stored.dataPayloadBytes === dataPayloadBytes &&
     stored.checkpointIntervalBlocks === checkpointIntervalBlocks &&
     stored.ciphertextLength === recording.ciphertextLength &&
     Buffer.from(stored.ciphertextSha256).equals(recording.ciphertextSha256)
@@ -1371,6 +1344,9 @@ function compatibleEncryptedUploadV2Checkpoint(
       prefixSha256: Buffer.from(stored.prefixSha256),
       highestContiguousSequence: stored.highestContiguousSequence,
     };
+  }
+  if (stored && stored.uploadSessionUuid.toLowerCase() === material.uploadSessionUuid.toLowerCase()) {
+    throw new EncryptedUploadV2RuntimeError('encrypted_upload_v2_checkpoint_mismatch');
   }
   return {
     revision: 0,

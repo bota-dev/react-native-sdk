@@ -486,7 +486,7 @@ describe('RecordingManager encrypted upload v2', () => {
     );
   });
 
-  it('discards a locally advanced checkpoint after device resume rejection', async () => {
+  it('retains recovery evidence after unresolved device resume rejection', async () => {
     const operations: string[] = [];
     const manager = createManager(operations);
     manager.protocolHandler.transferEncryptedUploadV2.mockRejectedValue(
@@ -497,7 +497,7 @@ describe('RecordingManager encrypted upload v2', () => {
       manager.syncEncryptedRecordingV2(device, recording, provider(operations))
     )).rejects.toMatchObject({ code: 'encrypted_upload_v2_checkpoint_mismatch' });
 
-    expect(operations).toContain('delete-checkpoint');
+    expect(operations).not.toContain('delete-checkpoint');
     expect(operations).toContain('cancel');
   });
 
@@ -576,10 +576,12 @@ describe('RecordingManager encrypted upload v2', () => {
     expect(operations.indexOf('confirm')).toBeLessThan(operations.indexOf('delete-checkpoint'));
   });
 
-  it('resumes the same accepted replacement checkpoint without resetting its offset', async () => {
+  it.each([64, 32])('resumes the same accepted checkpoint across negotiated payload changes (%i)', async payload => {
     const operations: string[] = []; const { manager, stored } = replacement(operations);
     const material = await provider(operations)(); material.authorization.writeUInt16LE(9, 30);
     stored.ownerRevision = material.ownerRevision; stored.uploadSessionUuid = material.uploadSessionUuid;
+    stored.dataPayloadBytes = payload;
+    stored.windowPackets = 1;
     await collect(manager.syncEncryptedRecordingV2(device, recording, async () => material));
     expect(manager.protocolHandler.transferEncryptedUploadV2).toHaveBeenCalledWith(device.id, expect.objectContaining({ checkpoint: expect.objectContaining({ revision: 7, nextCiphertextOffset: 100n }) }));
   });

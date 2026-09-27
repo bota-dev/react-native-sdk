@@ -577,6 +577,11 @@ reuses matching queued/completed tasks; reconnect is needed for BLE confirmation
 Retry backoff is persisted, and explicit retries reset the exhausted budget.
 Validate with uploadRecovery tests, the full Jest suite, build and test:release.
 
+Integrity-gated completion (2026-09-24): a recovered `alreadyUploaded` task
+still replays completion and waits for success. This allows the backend to
+return `425` while verifying SHA-256 without causing early local deletion or
+device confirmation.
+
 ## Phase 3 BLE recovery (source, 2026-09-23)
 
 V2 reconciles one locally verified earlier device checkpoint, persists before

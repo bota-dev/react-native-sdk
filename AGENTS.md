@@ -285,7 +285,7 @@ All design docs live in [`../internal-docs/`](../internal-docs/).
 | [WiFi-Configuration](../internal-docs/device/WiFi-Configuration.md) | WiFi credential provisioning and protection | Target; implementation conformance is tracked in System Design v5 |
 | [Connection-Management](../internal-docs/device/Connection-Management.md) | Connection lifecycles, reconnect, failover, and policy | Target; implementation conformance is tracked in System Design v5 |
 | [Heartbeat-Channel-Control](../internal-docs/device/Heartbeat-Channel-Control.md) | Heartbeat channels and dynamic policy | Target; implementation conformance is tracked in System Design v5 |
-| [Device–App–Backend Security](../internal-docs/device/Device%E2%80%93App%E2%80%93Backend%20Security%20%26%20Communication%20Design.md) ([中文](../internal-docs/device/Device%E2%80%93App%E2%80%93Backend%20Security%20%26%20Communication%20Design_ZH.md)) | Authentication, authorization, credentials, local/cloud encryption and channel security | Authoritative target; implementation conformance is tracked in System Design v5 |
+| [Device-App-Backend Security](../internal-docs/device/Device-App-Backend%20Security%20%26%20Communication%20Design.md) ([中文](../internal-docs/device/Device-App-Backend%20Security%20%26%20Communication%20Design_ZH.md)) | Authentication, authorization, credentials, local/cloud encryption and channel security | Authoritative target; implementation conformance is tracked in System Design v5 |
 
 Upload recovery review (2026-09-23): source exposes `UPLOAD_RECOVERY_VERSION=1`.
 A configured provider runs before every attempt and receives `recoveryScope`,
@@ -299,6 +299,12 @@ completed-file unlink failures retry during initialization. Foreground sync
 reuses matching queued/completed tasks; reconnect is needed for BLE confirmation.
 Retry backoff is persisted, and explicit retries reset the exhausted budget.
 Validate with uploadRecovery tests, the full Jest suite, build and test:release.
+
+Integrity-gated completion (2026-09-24): `alreadyUploaded` skips only the S3
+PUT. It must still replay the host completion callback/endpoint and receive
+success before marking the task complete, deleting app-private audio, or
+allowing foreground BLE confirmation. Backend `425` remains a failed attempt
+and keeps the source for retry.
 
 ## Phase 3 BLE recovery (2026-09-23)
 

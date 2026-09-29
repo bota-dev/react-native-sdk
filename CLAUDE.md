@@ -271,7 +271,7 @@ The SDK supports app-driven firmware updates via Bluetooth:
 - Treats any nonzero READY result received after upload acceptance as a terminal SD/FAT write failure (`FW_STORAGE_WRITE_FAILED`) instead of continuing to report transfer progress
 - Progress events via `OtaStage`: `downloading` → `preparing` → `updating` → `verifying` → `completed`
 
-The SDK is an untrusted byte relay for firmware authenticity. Its CRC32 and progress/completion states protect transport behavior but do not authorize an artifact or prove that it is safe to execute. The device and boot chain own signature, compatibility, rollback and recovery enforcement as defined in [Firmware Integrity, Secure Boot & OTA Security](../internal-docs/device/Device%E2%80%93App%E2%80%93Backend%20OTA%20Security%20Design.md); current conformance remains in [System Design v5](../internal-docs/System%20Design%20v5.md).
+The SDK is an untrusted byte relay for firmware authenticity. Its CRC32 and progress/completion states protect transport behavior but do not authorize an artifact or prove that it is safe to execute. The device and boot chain own signature, compatibility, rollback and recovery enforcement as defined in [Firmware Integrity, Secure Boot & OTA Security](../internal-docs/device/Device-App-Backend%20OTA%20Security%20Design.md); current conformance remains in [System Design v5](../internal-docs/System%20Design%20v5.md).
 
 ### Bluetooth Services (defined in `src/ble/constants.ts`)
 
@@ -540,6 +540,11 @@ completed-file unlink failures retry during initialization. Foreground sync
 reuses matching queued/completed tasks; reconnect is needed for BLE confirmation.
 Retry backoff is persisted, and explicit retries reset the exhausted budget.
 Validate with uploadRecovery tests, the full Jest suite, build and test:release.
+
+Integrity-gated completion (2026-09-24): never let `alreadyUploaded` bypass the
+completion callback. It means only that PUT must not be repeated. Completion
+must still return success; HTTP `425` follows the normal retry path and retains
+the source bytes/device copy.
 
 ## Phase 3 BLE recovery (source, 2026-09-23)
 

@@ -1,5 +1,10 @@
 # AGENTS.md — @bota.dev/react-native-sdk
 
+## Post-Implementation Design Review
+
+- Before reporting completion, use `bota-skills:compound-engineering` (1.2.5+) to compare results with the current authoritative design and acceptance criteria. See the [shared review workflow](../claude-code-plugins/plugins/bota-skills/skills/compound-engineering/SKILL.md).
+- If the skill/source is unavailable, perform the review directly: record each relevant requirement, evidence, conformance status, and remaining verification; update affected docs and report deviations or unavailable checks without claiming full conformance.
+
 Public React Native SDK for communicating with Bota wearable devices via Bluetooth. Full context in [CLAUDE.md](CLAUDE.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## SDK Family

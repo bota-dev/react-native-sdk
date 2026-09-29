@@ -1,5 +1,7 @@
 # CLAUDE.md - Bota React Native SDK
 
+Read and follow [AGENTS.md](AGENTS.md), including its required post-implementation design review, before reporting completion.
+
 The immutable `0.0.66` candidate failed release verification because archive
 parsing ran before integrity validation and was not portable across tar
 implementations. Source version `0.0.67` is release preparation only; its

@@ -161,6 +161,14 @@ in the Bluetooth transfer callback.
 
 **No server calls** — the SDK communicates only with the Bota device (BLE) and S3 (presigned URLs provided by the customer backend). It never calls the Bota API directly. Auth tokens are passed in by the customer app.
 
+**Passive client presence** — `BotaClient.clientPresence.nextReport(deviceId)`
+returns optional memory-only connection metadata, not fresh device status or
+authorization. The host owns fresh-status/binding-scope checks and reporting;
+never add a hidden heartbeat timer or infer an app identifier. Disconnect,
+adapter loss and destruction invalidate sessions; old callbacks cannot revive
+them. `npm run identity:check` verifies package/version constants. See the
+presence conformance review in `ARCHITECTURE.md` and integration in `README.md`.
+
 **Minimal permissions** — only request Bluetooth + background processing. Never request location or camera.
 
 **Device diagnostics ownership** — allow one device-log subscription per device, including while the Start write is pending. Reject overlaps without replacing the original monitor or cleanup.

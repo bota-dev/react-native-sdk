@@ -442,6 +442,16 @@ modules.
 
 ## Public API
 
+`BotaClient.clientPresence.nextReport(deviceId)` is an additive passive API for
+the host's existing heartbeat integration. It returns null before verified
+connection or without secure randomness. Sessions rotate on reconnect and are
+invalidated on disconnect, adapter loss and destruction. Hosts must pair the
+report with fresh BLE status and their captured authorized binding scope, and
+stop reporting on logout/project/binding changes. The SDK adds no telemetry,
+command routing or heartbeat timer. `src/sdkIdentity.ts` is generated from
+`package.json`; run `npm run identity:check` after version changes. See README
+for privacy and release boundaries; source availability is not npm publication.
+
 ```typescript
 import { BotaClient } from '@bota.dev/react-native-sdk';
 

@@ -604,6 +604,8 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
 
       // Set up disconnect listener
       const disconnectSub = device.onDisconnected((error, disconnectedDevice) => {
+        // A queued callback from an old handle must not invalidate the new session.
+        if (this.connectedDevices.get(deviceId) !== device) return;
         const errorMsg = error ? describeBleError(error) : undefined;
         log.info('Device disconnected', {
           deviceId: disconnectedDevice.id,
@@ -693,6 +695,11 @@ export class BleManager extends EventEmitter<BleManagerEvents> {
    */
   isConnected(deviceId: string): boolean {
     return this.connectedDevices.has(deviceId);
+  }
+
+  /** @internal Local handle only: no discovery, GATT read, or native probe. */
+  getConnectionIdentity(deviceId: string): object | null {
+    return this.connectedDevices.get(deviceId) ?? null;
   }
 
   /**

@@ -527,3 +527,34 @@ Legacy v1/HTTP behavior is unchanged. Matching firmware/SDK release and physical
 acceptance remain separate gates. See
 [BLE recovery review](../internal-docs/test/2026-09-23-ble-resume-review.md)
 and this repository's `AGENTS.md` for verification.
+
+## Passive client presence (source, 2026-09-25)
+
+`BotaClient.clientPresence` delegates to a DeviceManager-owned in-memory session
+tracker. Only completion of the existing verified connection path publishes a
+session. Cached connected reuse preserves it; reconnect rotates it. Existing
+disconnect/state callbacks invalidate metadata, including pending publishers;
+destroy is terminal for that manager. The BLE handle read is memory-only and
+stale disconnect callbacks are fenced against the current connection owner.
+No command routing, transfer, GATT subscription, storage or heartbeat scheduler
+is added. Hosts explicitly relay metadata with fresh status and current binding
+scope; package identity is generated from `package.json`. See README for the
+privacy and release boundaries. Verify full Jest, build, and test:release.
+
+### Pre-merge conformance review (2026-09-28)
+
+Reviewed against the [client-presence design](../internal-docs/docs/superpowers/specs/2026-09-25-bluetooth-client-presence-design.md)
+§§3, 4, 7 and 8, after integrating current main's upload-completion fix.
+
+| Requirement | Evidence and status |
+| --- | --- |
+| Optional passive metadata; no new BLE/network work | **Matched (unit/source):** getter I/O assertions and cross-platform lifecycle fixture in `clientPresence.test.ts`; no routing/scheduler additions |
+| Verified connection, rotating sessions and stale-callback cleanup | **Matched (unit):** reconnect, disconnect, pending publisher, destroy, adapter-loss and stale native callback regressions |
+| Actual package identity; random session, no persistent fingerprint | **Matched (unit/build):** generated identity check, UUID validation and secure-randomness failure regression; tracker is memory-only |
+| Fresh-status, account/binding scope and explicit relay ownership | **Host responsibility:** README documents the boundary; the getter cannot establish backend authorization or observation freshness |
+| Published consumer and two-client physical acceptance | **Unverified here:** no npm publication or physical-device test is part of this branch merge |
+
+Local verification: 20 Jest suites / 261 tests, CJS/ESM/declaration build,
+type-check and 11 release-policy/integrity tests passed. Lint: zero errors,
+four existing unused-disable warnings. These checks do not establish deployed
+or hardware acceptance.

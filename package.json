@@ -15,12 +15,14 @@
     "!**/__mocks__"
   ],
   "scripts": {
-    "build": "bob build",
+    "build": "npm run identity:generate && bob build",
+    "identity:generate": "node scripts/generate-sdk-identity.mjs",
+    "identity:check": "node scripts/generate-sdk-identity.mjs --check",
     "prepublishOnly": "npm run build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
     "test": "jest --passWithNoTests",
-    "test:release": "node --test scripts/release-candidate.test.mjs scripts/publish-workflow.test.mjs",
+    "test:release": "npm run identity:check && node --test scripts/release-candidate.test.mjs scripts/publish-workflow.test.mjs",
     "sync:encrypted-upload-v2": "node scripts/sync-encrypted-upload-v2-vectors.mjs",
     "sync:encrypted-upload-v2:check": "node scripts/sync-encrypted-upload-v2-vectors.mjs --check",
     "clean": "rm -rf lib",

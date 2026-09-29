@@ -8,6 +8,7 @@
 
 // Main client
 export { BotaClient } from './BotaClient';
+export type { ClientPresence, SdkClientContext } from './clientPresence';
 export type { BotaConfig, SdkState, BluetoothState } from './BotaClient';
 export type { EncryptedUploadV2ContextProvider } from './protocol/encryptedUploadV2Context';
 

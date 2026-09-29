@@ -6,6 +6,7 @@ import { Buffer } from 'buffer';
 import { State, Subscription } from 'react-native-ble-plx';
 import EventEmitter from 'eventemitter3';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { ConnectionClientPresence, type ClientPresence } from '../clientPresence';
 
 import { getBleManager, BleManager, type RadioPriority } from '../ble/BleManager';
 import {
@@ -193,6 +194,8 @@ export interface ProvisionOptions {
  * Device Manager class
  */
 export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
+  private readonly presence = new ConnectionClientPresence((id) => this.bleManager.getConnectionIdentity(id));
+  readonly clientPresence: ClientPresence = { nextReport: (id) => this.presence.nextReport(id) };
   private bleManager: BleManager;
   private connectedDevices: Map<string, ConnectedDevice> = new Map();
   private statusSubscriptions: Map<string, Subscription> = new Map();
@@ -271,6 +274,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     });
 
     this.bleManager.on('deviceDisconnected', (deviceId, error) => {
+      this.presence.disconnected(deviceId);
       const device = this.connectedDevices.get(deviceId);
       if (device) {
         // Update connection state
@@ -298,6 +302,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
     // Auto-reconnect when Bluetooth powers back on
     let prevState: State = State.Unknown;
     this.bleManager.on('stateChange', (state) => {
+      if (state !== State.PoweredOn) this.presence.invalidateAll();
       if (state === State.PoweredOn && prevState !== State.PoweredOn) {
         log.info('Bluetooth powered on — emitting bluetoothReady');
         this.emit('bluetoothReady');
@@ -355,6 +360,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
   }
 
   private discardStaleConnectedDevice(device: ConnectedDevice): void {
+    this.presence.disconnected(device.id);
     log.info('Discarding stale connected-device entry', {
       deviceId: device.id,
       serialNumber: device.serialNumber,
@@ -419,6 +425,8 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       this.discardStaleConnectedDevice(existing);
     }
 
+    const publishPresence = this.presence.connecting(device.id);
+
     // Emit connecting state
     this.emit('connectionStateChanged', device.id, 'connecting');
 
@@ -435,7 +443,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
 
     try {
       // Connect via Bluetooth manager
-      await this.bleManager.connect(device.id, priority);
+      const connectionIdentity = await this.bleManager.connect(device.id, priority);
 
       // Background reconnects may use cached info for speed. User-initiated
       // pairing/manual connects must refresh identity from GATT: iOS can
@@ -543,6 +551,9 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
       }
 
       this.connectedDevices.set(device.id, connectedDevice);
+      if (serialNumber && connectionIdentity && this.bleManager.getConnectionIdentity(device.id) === connectionIdentity) {
+        publishPresence(connectionIdentity);
+      }
       this.emit('deviceConnected', connectedDevice);
 
       // Persist reconnect info for future reconnect() calls. Include the
@@ -596,6 +607,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
    * Disconnect from a device (user-initiated)
    */
   async disconnect(device: ConnectedDevice): Promise<void> {
+    this.presence.disconnected(device.id);
     log.info('Disconnecting from device', { deviceId: device.id });
 
     this.userDisconnected = true;
@@ -2866,6 +2878,7 @@ export class DeviceManager extends EventEmitter<DeviceManagerEvents> {
    * Clean up resources
    */
   destroy(): void {
+    this.presence.destroy();
     log.info('Destroying DeviceManager');
 
     // Clean up all status subscriptions

@@ -5,7 +5,11 @@
 - Before reporting completion, use `bota-skills:compound-engineering` (1.2.5+) to compare results with the current authoritative design and acceptance criteria. See the [shared review workflow](../claude-code-plugins/plugins/bota-skills/skills/compound-engineering/SKILL.md).
 - If the skill/source is unavailable, perform the review directly: record each relevant requirement, evidence, conformance status, and remaining verification; update affected docs and report deviations or unavailable checks without claiming full conformance.
 
-Public React Native SDK for communicating with Bota wearable devices via Bluetooth. Full context in [CLAUDE.md](CLAUDE.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
+Retired standalone React Native SDK. Maintenance ended September 29, 2026;
+new work belongs in `app-sdk`. See [SUNSET.md](SUNSET.md) for migration and
+retained-history policy. The development and release instructions below are
+historical; do not create another legacy release as part of retirement.
+Full context is in [CLAUDE.md](CLAUDE.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## SDK Family
 
@@ -21,9 +25,9 @@ Public React Native SDK for communicating with Bota wearable devices via Bluetoo
 - Target application-embedded family name: **Bota App SDK**
 - Future backend-facing family name: **Bota API SDK**
 
-The `app-sdk` repository is the target Rust-core source monorepo. This React
-Native package remains supported throughout migration, while the legacy native
-repositories remain migration inputs until their parity and release gates pass.
+The `app-sdk` repository is the Rust-core source monorepo. This React Native
+package is retired; the legacy native repositories remain separate migration
+inputs until their own parity and release gates pass.
 Do not describe incomplete target packages as shipped. See
 [App SDK Architecture](../internal-docs/App%20SDK%20Architecture.md).
 
@@ -85,11 +89,10 @@ does not change the published SDK API or downstream application locks.
 
 ## Release Ownership
 
-The immutable `0.0.66` candidate failed release verification because archive
-parsing preceded integrity checks and behaved differently across tar
-implementations. Source `0.0.67` is pending a new candidate; npm `latest`
-remains `0.0.65` until the candidate and registry verification in
-`PUBLISHING.md` completes.
+The final published `latest` is `0.0.67`; the historical `beta` remains
+`1.2.0-beta.11`. Preserve both tags and every existing tarball. Retirement adds
+a registry warning; it does not publish a forwarding package or a new version.
+The rules below describe the historical release process in `PUBLISHING.md`.
 
 - This repository publishes only `0.0.x`, which owns npm `latest`.
 - GitHub Actions creates a checksum-bound candidate but cannot publish it.

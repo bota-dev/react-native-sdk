@@ -2,13 +2,12 @@
 
 Read and follow [AGENTS.md](AGENTS.md), including its required post-implementation design review, before reporting completion.
 
-The immutable `0.0.66` candidate failed release verification because archive
-parsing ran before integrity validation and was not portable across tar
-implementations. Source version `0.0.67` is release preparation only; its
-candidate verifier checks basename, byte length, SHA-1, and SHA-256 before
-archive extraction. npm `latest` remains `0.0.65`; follow `PUBLISHING.md` for
-the exact new CI candidate and interactive publication gates before updating
-app registry pins.
+Maintenance ended September 29, 2026. This repository and its development notes
+are historical; current SDK work belongs in `app-sdk`. The old npm `latest`
+remains `0.0.67`, and its historical `beta` remains `1.2.0-beta.11`. Both are
+retired in favor of the distinct `@bota.dev/react-native-app-sdk` package.
+See [SUNSET.md](SUNSET.md). The source-preview notes below retain their original
+dates and are not current migration instructions.
 
 **V2 resume packet accounting:** Keep transport-local packet numbering separate
 from a persisted checkpoint's prior `highestContiguousSequence`. A fresh resume
@@ -363,7 +362,7 @@ The root development lock uses patched `browserslist` 4.28.7 and
 This is a lock-only remediation; no SDK source, peer ranges, or npm release
 artifact has changed.
 
-### Release
+### Historical release process
 
 This repository owns only the production `0.0.x` maintenance line and npm
 `latest`. CI accepts an annotated `v0.0.x` tag on `main`, builds the package
@@ -372,7 +371,8 @@ checksum-bound candidate. CI has no npm publication authority. A maintainer
 publishes only that downloaded tarball interactively with WebAuthn and verifies
 that npm `beta` did not move. Follow [PUBLISHING.md](PUBLISHING.md).
 
-The synchronized App SDK is published from `app-sdk` and owns npm `beta`.
+Current App SDK publication uses the separate `@bota.dev/react-native-app-sdk`
+name. Do not move the old package's `beta` or publish another legacy version.
 
 ### Local Development (testing SDK changes in a consuming app)
 

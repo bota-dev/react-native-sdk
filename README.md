@@ -1,12 +1,19 @@
 # Bota SDK for React Native
 
+> **Deprecated — September 29, 2026.** Maintenance has moved to
+> [`@bota.dev/react-native-app-sdk`](https://github.com/bota-dev/app-sdk).
+> Existing package versions and source history remain available. Read the
+> [sunset notice](SUNSET.md) and
+> [migration guide](https://github.com/bota-dev/app-sdk/blob/main/docs/migrations/app-sdk-package-names.md).
+> The successor is currently `2.0.0-beta.7`; migration requires a native rebuild.
+
 `DeviceConnectionSettings` optionally accepts `heartbeat_enabled_connections`; serialization writes the explicit DEVICE_SETTINGS byte-9 mask and parsing resolves legacy payloads to both channels enabled. Missing or `null` individual radio idle timeouts serialize as the 180-second default, while legacy 1-9 second values round up to the wire minimum of 10 seconds.
 
-**Bota SDK for React Native** is the official React Native SDK for Bota wearable
-devices. Its npm package remains `@bota.dev/react-native-sdk`, with `BotaClient`
-as the compatibility entry point.
+This repository preserves the retired standalone SDK for Bota wearable devices.
+The API and setup reference below describes `@bota.dev/react-native-sdk`, with
+`BotaClient` as its compatibility entry point; new integrations use App SDK.
 
-## Installation
+## Historical standalone installation
 
 Building the SDK from source requires Node.js 22.13 or newer.
 
@@ -16,11 +23,10 @@ npm install @bota.dev/react-native-sdk react-native-ble-plx
 yarn add @bota.dev/react-native-sdk react-native-ble-plx
 ```
 
-The untagged install is the supported production maintenance line and resolves
-through npm `latest` to a `0.0.x` version. The synchronized cross-platform Bota
-App SDK is available separately as a beta with
-`npm install @bota.dev/react-native-sdk@beta`; do not switch production apps to
-that line implicitly.
+The old package remains installable for existing applications, with `latest`
+at `0.0.67` and its historical `beta` at `1.2.0-beta.11`. Neither is the current
+App SDK. New integrations use the distinct `@bota.dev/react-native-app-sdk`
+package through the migration guide above.
 
 ### iOS Setup
 
@@ -119,12 +125,12 @@ for await (const progress of BotaClient.recordings.syncRecording(
 
 ## Bota App SDK Family
 
-- **Bota SDK for React Native**: this supported package
+- **Standalone React Native SDK**: this retired package
   (`@bota.dev/react-native-sdk`) retains the `BotaClient` compatibility entry
   point.
-- Apple target: `BotaAppleSDK` from the
+- Current Apple package: `BotaAppSDK` from the
   [`app-sdk`](https://github.com/bota-dev/app-sdk) source monorepo.
-- Android target: the future `dev.bota:bota-android-sdk` artifact from
+- Current Android package: `dev.bota:bota-app-sdk` from
   [`app-sdk`](https://github.com/bota-dev/app-sdk).
 - Legacy Apple migration input:
   [`bota-mobile-sdk-ios`](https://github.com/bota-dev/bota-mobile-sdk-ios), whose

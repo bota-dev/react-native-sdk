@@ -1,5 +1,12 @@
 # Publishing The Legacy React Native SDK
 
+> **Historical procedure.** Maintenance ended September 29, 2026. Do not create
+> another legacy candidate, move old dist-tags, or replace existing artifacts.
+> The final published `latest` is `0.0.67`; the old `beta` is `1.2.0-beta.11`.
+> Both lines are retired. See [SUNSET.md](SUNSET.md) for the distinct App SDK
+> replacement and migration requirements. Earlier pending-state notes below
+> describe their original release checkpoints.
+
 This repository owns the production `0.0.x` maintenance line of
 `@bota.dev/react-native-sdk`. Untagged npm installs resolve through the
 `latest` dist-tag. The synchronized Bota App SDK is published from

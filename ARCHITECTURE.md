@@ -2,7 +2,9 @@
 
 > Connection settings preserve the 12-byte v0x02 layout and use byte 9 for legacy-safe heartbeat channel control.
 
-Public React Native SDK for Bluetooth communication with Bota wearable devices.
+Retired standalone React Native SDK for Bluetooth communication with Bota
+wearable devices. Maintenance ended September 29, 2026. See [SUNSET.md](SUNSET.md);
+the implementation details below are retained as historical reference.
 
 ---
 
@@ -10,27 +12,25 @@ Public React Native SDK for Bluetooth communication with Bota wearable devices.
 
 | Repository | Platform | Package/module |
 | --- | --- | --- |
-| `react-native-sdk` | Supported React Native package | `@bota.dev/react-native-sdk` (`BotaClient` compatibility entry point) |
-| [`app-sdk`](https://github.com/bota-dev/app-sdk) | Target Apple package | `BotaAppleSDK` |
-| [`app-sdk`](https://github.com/bota-dev/app-sdk) | Future target Android artifact | `dev.bota:bota-android-sdk` |
+| `react-native-sdk` | Retired standalone React Native package | `@bota.dev/react-native-sdk` (`BotaClient` compatibility entry point) |
+| [`app-sdk`](https://github.com/bota-dev/app-sdk) | Current React Native package | `@bota.dev/react-native-app-sdk` |
+| [`app-sdk`](https://github.com/bota-dev/app-sdk) | Current Apple package | `BotaAppSDK` |
+| [`app-sdk`](https://github.com/bota-dev/app-sdk) | Current Android artifact | `dev.bota:bota-app-sdk` |
 | [`bota-mobile-sdk-ios`](https://github.com/bota-dev/bota-mobile-sdk-ios) | Legacy Apple migration input | `BotaSDK` (legacy module) |
 | [`bota-mobile-sdk-android`](https://github.com/bota-dev/bota-mobile-sdk-android) | Legacy Android migration input | `com.bota.sdk` (legacy namespace) |
 
 The Bota App SDK family implements the same device-facing behavior through each
 platform's native APIs. The `app-sdk` repository is the target source monorepo;
 the legacy Apple and Android repositories remain migration inputs until their
-parity and release gates pass. This repository continues to publish the React
-Native package and preserve its `BotaClient` entry point during migration.
+parity and release gates pass. This repository preserves the old React Native
+implementation and releases; new work belongs in the monorepo.
 
 ## Release Ownership
 
-The immutable `0.0.66` candidate failed its release gate because candidate
-verification parsed the archive before checking its bound length and hashes,
-making tamper rejection depend on the host tar implementation. The `0.0.67`
-source candidate checks basename, byte length, SHA-1, and SHA-256 before archive
-extraction and includes the v2 runtime described below, but is not yet a
-published package. Apps retain `0.0.65` registry pins and use the standalone
-sibling source only for local validation. See `PUBLISHING.md`.
+The final published standalone `latest` is `0.0.67`. Existing registry artifacts
+are preserved. The following table and CI description record the historical
+release ownership; they do not authorize new standalone releases. See
+`PUBLISHING.md` and the current migration guidance in `SUNSET.md`.
 
 | SDK line | Source | Version | Distribution channel |
 | --- | --- | --- | --- |
